@@ -47,7 +47,7 @@ describe("findSimilarProjects", () => {
     id: "p_1",
     title: "Sunlit Brazilian Modernism",
     niche: "modernist living rooms",
-    format: "yt-long" as const,
+    format: "reel" as const,
     createdAt: new Date(),
   };
 

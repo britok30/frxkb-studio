@@ -1,6 +1,7 @@
 import { put } from "@vercel/blob";
+import { nanoid } from "nanoid";
 
-export type AssetKind = "images" | "videos" | "thumbnails" | "exports";
+export type AssetKind = "images" | "videos" | "thumbnails" | "exports" | "uploads";
 
 export type StoredAsset = {
   /** Public CDN URL served from Vercel Blob. */
@@ -60,6 +61,31 @@ export async function storeBuffer(opts: {
   contentType?: string;
 }): Promise<StoredAsset> {
   const pathname = blobPath(opts.kind, opts.projectId, opts.filename);
+  const result = await put(pathname, opts.buffer, {
+    access: "public",
+    addRandomSuffix: false,
+    contentType: opts.contentType,
+  });
+  return { url: result.url, pathname: result.pathname };
+}
+
+/**
+ * Store an operator-uploaded file (e.g. the "before" image for a before-after
+ * project). Lives under uploads/{operator-suffix}/{nanoid}.{ext} — no
+ * projectId because uploads happen BEFORE project creation. The returned URL
+ * is later persisted as the before scene's imageUrl.
+ */
+export async function storeOperatorUpload(opts: {
+  operatorEmail: string;
+  buffer: Buffer;
+  ext: string;
+  contentType: string;
+}): Promise<StoredAsset> {
+  const suffix = opts.operatorEmail.split("@")[0].toLowerCase().replace(/[^a-z0-9]/g, "");
+  assertSafeSegment(suffix, "operator suffix");
+  const filename = `${nanoid(12)}.${opts.ext}`;
+  assertSafeSegment(filename, "filename");
+  const pathname = `uploads/${suffix}/${filename}`;
   const result = await put(pathname, opts.buffer, {
     access: "public",
     addRandomSuffix: false,

@@ -7,15 +7,18 @@ import { motion, AnimatePresence } from "motion/react";
 import { toast } from "sonner";
 import { ease } from "@/lib/motion";
 import { estimateProjectTotal, estimateSuggestWorld, formatCost } from "@/lib/pricing";
+import { NICHE_POOL, sampleN } from "@/lib/prompts/niche-pool";
 
-type Format = "yt-long" | "reel" | "carousel";
+type Format = "reel" | "carousel" | "before-after";
+type WorldType = "interior" | "exterior";
+type AspectRatio = "16:9" | "9:16" | "1:1" | "4:3" | "3:4";
 
 const FORMAT_PRESETS: Record<
   Format,
   {
     label: string;
-    /** Where this format actually lives (YouTube / Instagram). Sits as a tiny
-     *  uppercase eyebrow above the format title — same pattern as the home cards. */
+    /** Where this format actually lives. Sits as a tiny uppercase eyebrow
+     *  above the format title — same pattern as the home cards. */
     kicker: string;
     hint: string;
     sceneCount: number;
@@ -23,20 +26,12 @@ const FORMAT_PRESETS: Record<
     aspectClass: string;
   }
 > = {
-  "yt-long": {
-    label: "YouTube long-form",
-    kicker: "YouTube",
-    hint: "An ambient slideshow people leave on in the background. Slow, calm, restrained.",
-    sceneCount: 60,
-    sceneDurationSec: 10,
-    aspectClass: "aspect-video", // 16:9
-  },
   reel: {
     label: "Reel",
     kicker: "Instagram · TikTok · YouTube Shorts",
     hint: "Each scene animated via Seedance 2.0 then upscaled to 2K with Topaz Proteus. Premium feel, slow cuts.",
-    sceneCount: 5,
-    sceneDurationSec: 3,
+    sceneCount: 3,
+    sceneDurationSec: 5,
     aspectClass: "aspect-[9/16]",
   },
   carousel: {
@@ -47,20 +42,23 @@ const FORMAT_PRESETS: Record<
     sceneDurationSec: 0,
     aspectClass: "aspect-square",
   },
+  "before-after": {
+    label: "Before / after",
+    kicker: "Instagram · TikTok",
+    hint: "Drop a real photo, describe the transformation. Live demo content for ArchitectGPT.",
+    sceneCount: 2, // before + after
+    sceneDurationSec: 9,
+    aspectClass: "aspect-square", // overridden by uploaded image's actual aspect
+  },
 };
 
-const NICHE_PRESETS = [
-  "1960s Brazilian modernist living rooms",
-  "Sun-bleached Mediterranean villas at golden hour",
-  "Minimalist Japanese tea rooms with shoji light",
-  "Rural Tuscan farmhouse interiors with terracotta and linen",
-  "Mid-century desert modern homes, Palm Springs era",
-];
+// NICHE_POOL + sampleN live in lib/prompts/niche-pool.ts so suggest-world
+// can reuse them as altitude-calibration examples for the AI-suggest flow.
 
 const STEPS = ["Format", "World", "Review"] as const;
 
 function isFormat(v: string | null): v is Format {
-  return v === "yt-long" || v === "reel" || v === "carousel";
+  return v === "reel" || v === "carousel" || v === "before-after";
 }
 
 export default function NewProjectPage() {
@@ -69,14 +67,38 @@ export default function NewProjectPage() {
 
   // If the dashboard cards linked here with ?format=…, skip step 1 and land
   // straight on the niche step with the right defaults already loaded.
+  // Default to reel — short-form is the channel's primary surface.
   const initialFormatParam = searchParams.get("format");
-  const initialFormat: Format = isFormat(initialFormatParam) ? initialFormatParam : "yt-long";
+  const initialFormat: Format = isFormat(initialFormatParam) ? initialFormatParam : "reel";
   const initialStep: 1 | 2 | 3 = isFormat(initialFormatParam) ? 2 : 1;
 
   const [step, setStep] = useState<1 | 2 | 3>(initialStep);
   const [direction, setDirection] = useState<1 | -1>(1);
 
   const [format, setFormat] = useState<Format>(initialFormat);
+  // Operator-allowed visual lanes (e.g., InteriorGPT operators only get
+  // "interior"). Fetched from /api/me on mount; drives the WorldTypePicker.
+  // Null while the request is in flight.
+  const [allowedWorldTypes, setAllowedWorldTypes] = useState<WorldType[] | null>(null);
+  // No default — operator must explicitly pick a side, EXCEPT when their
+  // operator config only allows one (we auto-select to skip the friction).
+  const [worldType, setWorldType] = useState<WorldType | null>(null);
+
+  useEffect(() => {
+    void (async () => {
+      try {
+        const res = await fetch("/api/me");
+        if (!res.ok) return;
+        const data = (await res.json()) as { worldTypes: WorldType[] };
+        setAllowedWorldTypes(data.worldTypes);
+        if (data.worldTypes.length === 1) {
+          setWorldType(data.worldTypes[0]);
+        }
+      } catch {
+        // Silent — operator can still pick interior or exterior manually.
+      }
+    })();
+  }, []);
   const [niche, setNiche] = useState("");
   const [operatorNotes, setOperatorNotes] = useState("");
   const [showCustomize, setShowCustomize] = useState(false);
@@ -85,6 +107,23 @@ export default function NewProjectPage() {
     FORMAT_PRESETS[initialFormat].sceneDurationSec
   );
   const [submitting, setSubmitting] = useState(false);
+
+  // Before-after-only state. Populated by the upload step.
+  const [beforeImageUrl, setBeforeImageUrl] = useState<string | null>(null);
+  const [beforeAspect, setBeforeAspect] = useState<AspectRatio | null>(null);
+  const [transformationPrompt, setTransformationPrompt] = useState("");
+
+  // Per-session rotated examples. useMemo keyed on worldType so the operator
+  // gets a stable set within one session per lane (no jumpy re-rolls on every
+  // re-render) but a fresh set each visit and on lane-switch.
+  const presets = useMemo(
+    () => (worldType ? sampleN(NICHE_POOL[worldType], 5) : []),
+    [worldType]
+  );
+  const placeholderExample = useMemo(
+    () => (worldType ? sampleN(NICHE_POOL[worldType], 1)[0] : ""),
+    [worldType]
+  );
 
   function changeFormat(f: Format) {
     setFormat(f);
@@ -113,17 +152,47 @@ export default function NewProjectPage() {
   const [similarProjects, setSimilarProjects] = useState<SimilarProject[]>([]);
 
   const canContinueStep1 = !!format;
-  const canContinueStep2 = niche.trim().length >= 2;
+  const canContinueStep2 =
+    format === "before-after"
+      ? !!worldType && !!beforeImageUrl && transformationPrompt.trim().length >= 8
+      : !!worldType && niche.trim().length >= 2;
 
   async function submit() {
     setSubmitting(true);
     try {
+      if (!worldType) throw new Error("Pick interior or exterior first.");
+
+      if (format === "before-after") {
+        if (!beforeImageUrl || !beforeAspect) {
+          throw new Error("Upload a 'before' image first.");
+        }
+        const res = await fetch("/api/projects/before-after", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            beforeImageUrl,
+            transformationPrompt: transformationPrompt.trim(),
+            aspectRatio: beforeAspect,
+            worldType,
+          }),
+        });
+        if (!res.ok) {
+          const err = await res.json().catch(() => ({}));
+          throw new Error(err.error ?? `HTTP ${res.status}`);
+        }
+        const data = await res.json();
+        toast.success("Project created");
+        router.push(`/projects/${data.project.id}`);
+        return;
+      }
+
       const res = await fetch("/api/projects", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           niche: niche.trim(),
           format,
+          worldType,
           sceneCount,
           sceneDurationSec,
           operatorNotes: operatorNotes.trim() || undefined,
@@ -211,18 +280,46 @@ export default function NewProjectPage() {
             <StepShell key="2" direction={direction}>
               <StepHeader
                 eyebrow="Step 2 of 3"
-                title="What's the world?"
-                hint="Pick a tight, specific angle — a region, an era, a material palette. Or have the studio suggest one based on what hasn't been made yet."
+                title={format === "before-after" ? "Drop the before, describe the after." : "What's the world?"}
+                hint={
+                  format === "before-after"
+                    ? "Upload a real photo of an interior or exterior. Describe what should change. The studio generates the after, animates it, and bundles a transformation triptych."
+                    : "Describe a home a designer would screenshot — a place with strong identity, a quality of light, materials and the kind of objects (plants, art, books) that fill it. Or have the studio suggest one."
+                }
               />
 
-              <WorldChooser
-                niche={niche}
-                onNiche={setNiche}
-                format={format}
-                presets={NICHE_PRESETS}
+              <WorldTypePicker
+                value={worldType}
+                onChange={setWorldType}
+                allowed={allowedWorldTypes ?? ["interior", "exterior"]}
               />
+
+              {format === "before-after" ? (
+                <BeforeAfterStep
+                  beforeImageUrl={beforeImageUrl}
+                  beforeAspect={beforeAspect}
+                  onUploaded={(url, aspect) => {
+                    setBeforeImageUrl(url);
+                    setBeforeAspect(aspect);
+                  }}
+                  transformationPrompt={transformationPrompt}
+                  onTransformationChange={setTransformationPrompt}
+                />
+              ) : (
+                worldType && (
+                  <WorldChooser
+                    niche={niche}
+                    onNiche={setNiche}
+                    format={format}
+                    worldType={worldType}
+                    presets={presets}
+                    placeholderExample={placeholderExample}
+                  />
+                )
+              )}
 
               <div className="flex flex-col gap-3">
+                {format !== "before-after" && (
                 <button
                   type="button"
                   onClick={() => setShowCustomize((v) => !v)}
@@ -234,8 +331,11 @@ export default function NewProjectPage() {
                   >
                     ›
                   </span>
-                  Customize ({sceneCount}{format === "carousel" ? " slides" : ` × ${sceneDurationSec}s`})
+                  {format === "reel"
+                    ? "Add notes for Claude"
+                    : `Customize (${sceneCount} slides)`}
                 </button>
+                )}
 
                 <AnimatePresence>
                   {showCustomize && (
@@ -247,23 +347,18 @@ export default function NewProjectPage() {
                       className="overflow-hidden"
                     >
                       <div className="flex flex-col gap-5 pt-2">
-                        <div className="grid grid-cols-2 gap-4">
+                        {/* Reel is locked at 3 × 5s — that's the format's
+                            shape, not a knob to tune. Carousel still exposes
+                            slide count since it varies legitimately. */}
+                        {format === "carousel" && (
                           <NumberField
-                            label={format === "carousel" ? "Slides" : "Scenes"}
+                            label="Slides"
                             value={sceneCount}
                             onChange={setSceneCount}
                             min={1}
                             max={120}
                           />
-                          <NumberField
-                            label="Per-scene duration (s)"
-                            value={sceneDurationSec}
-                            onChange={setSceneDurationSec}
-                            min={0}
-                            max={15}
-                            disabled={format === "carousel"}
-                          />
-                        </div>
+                        )}
 
                         <label className="flex flex-col gap-1.5">
                           <span className="text-xs text-muted-foreground tracking-tight">
@@ -273,7 +368,7 @@ export default function NewProjectPage() {
                             value={operatorNotes}
                             onChange={(e) => setOperatorNotes(e.target.value)}
                             rows={3}
-                            placeholder="Pin to a specific era, region, or material palette. Any visual rules to lock in."
+                            placeholder="Anchor a feeling, a quality of light, a material palette, the kinds of plants/art/objects that fill the home. Anything that has to stay consistent."
                             className="w-full rounded-md border bg-transparent px-3 py-2 text-sm focus:border-foreground outline-none resize-none"
                           />
                         </label>
@@ -308,18 +403,43 @@ export default function NewProjectPage() {
                   value={FORMAT_PRESETS[format].label}
                   onEdit={() => go(1)}
                 />
-                <ReviewRow label="Niche" value={niche.trim()} onEdit={() => go(2)} />
-                <ReviewRow
-                  label={format === "carousel" ? "Slides" : "Scenes"}
-                  value={`${sceneCount}${format === "carousel" ? "" : ` × ${sceneDurationSec}s`}`}
-                  onEdit={() => go(2)}
-                />
-                <ReviewRow label="Target" value={targetLabel} />
+                {worldType && (
+                  <ReviewRow
+                    label="Visual lane"
+                    value={worldType === "interior" ? "Interior" : "Exterior"}
+                    onEdit={() => go(2)}
+                  />
+                )}
+                {format === "before-after" ? (
+                  <>
+                    <ReviewRow
+                      label="Before"
+                      value={beforeImageUrl ? `Uploaded (${beforeAspect})` : "Not uploaded"}
+                      onEdit={() => go(2)}
+                    />
+                    <ReviewRow
+                      label="Transformation"
+                      value={transformationPrompt.trim()}
+                      onEdit={() => go(2)}
+                    />
+                  </>
+                ) : (
+                  <>
+                    <ReviewRow label="Niche" value={niche.trim()} onEdit={() => go(2)} />
+                    <ReviewRow
+                      label={format === "carousel" ? "Slides" : "Scenes"}
+                      value={`${sceneCount}${format === "carousel" ? "" : ` × ${sceneDurationSec}s`}`}
+                      // Reel is locked at 3 × 5s — no edit affordance for that row.
+                      onEdit={format === "carousel" ? () => go(2) : undefined}
+                    />
+                    <ReviewRow label="Target" value={targetLabel} />
+                  </>
+                )}
                 <ReviewRow
                   label="Est. cost"
                   value={`~${formatCost(estimateProjectTotal(format, sceneCount))} all-in`}
                 />
-                {operatorNotes.trim() && (
+                {format !== "before-after" && operatorNotes.trim() && (
                   <ReviewRow label="Notes" value={operatorNotes.trim()} onEdit={() => go(2)} />
                 )}
               </div>
@@ -646,6 +766,185 @@ function SimilarPanel({
   );
 }
 
+// ── World type picker (interior vs exterior) ────────────────────────────────
+
+function WorldTypePicker({
+  value,
+  onChange,
+  allowed,
+}: {
+  value: WorldType | null;
+  onChange: (v: WorldType) => void;
+  /** Which lanes the operator's config covers (e.g., InteriorGPT = ["interior"]
+   *  only). When the list has one entry we render a static badge instead of a
+   *  picker — there's no choice to make. */
+  allowed: WorldType[];
+}) {
+  // Single-lane operators don't need a picker; show a tiny pinned tag so they
+  // know which lane will be used.
+  if (allowed.length === 1) {
+    return (
+      <div className="flex flex-col gap-2">
+        <span className="text-[10px] uppercase tracking-[0.22em] text-muted-foreground">
+          Visual lane
+        </span>
+        <div className="text-sm tracking-tight">
+          <span className="capitalize font-medium">{allowed[0]}</span>{" "}
+          <span className="text-xs text-muted-foreground">
+            (only lane this operator's apps cover)
+          </span>
+        </div>
+      </div>
+    );
+  }
+  return (
+    <div className="flex flex-col gap-2">
+      <span className="text-[10px] uppercase tracking-[0.22em] text-muted-foreground">
+        Visual lane
+      </span>
+      <div className="grid grid-cols-2 gap-3">
+        {allowed.map((wt) => (
+          <motion.button
+            key={wt}
+            type="button"
+            onClick={() => onChange(wt)}
+            whileTap={{ scale: 0.98 }}
+            transition={{ duration: 0.12 }}
+            className={`text-left rounded-xl border px-4 py-3 transition-colors ${
+              value === wt
+                ? "border-foreground bg-foreground/[0.03]"
+                : "hover:border-foreground/30"
+            }`}
+          >
+            <div className="text-sm font-semibold tracking-tight capitalize">{wt}</div>
+            <div className="text-[11px] text-muted-foreground tracking-tight mt-0.5">
+              {wt === "interior"
+                ? "Inside a home — rooms, plants, art, things in use."
+                : "A home from outside — house, garden, porch, the life around it."}
+            </div>
+          </motion.button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// ── Before-after step (upload + transformation prompt) ────────────────────
+
+function BeforeAfterStep({
+  beforeImageUrl,
+  beforeAspect,
+  onUploaded,
+  transformationPrompt,
+  onTransformationChange,
+}: {
+  beforeImageUrl: string | null;
+  beforeAspect: AspectRatio | null;
+  onUploaded: (url: string, aspect: AspectRatio) => void;
+  transformationPrompt: string;
+  onTransformationChange: (s: string) => void;
+}) {
+  const [uploading, setUploading] = useState(false);
+  const inputRef = useRef<HTMLInputElement>(null);
+  const [dragOver, setDragOver] = useState(false);
+
+  async function handleFile(file: File) {
+    if (uploading) return;
+    setUploading(true);
+    const toastId = toast.loading("Uploading…");
+    try {
+      const form = new FormData();
+      form.set("file", file);
+      const res = await fetch("/api/upload", { method: "POST", body: form });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.error ?? `HTTP ${res.status}`);
+      }
+      const data = (await res.json()) as { url: string; aspectRatio: AspectRatio };
+      onUploaded(data.url, data.aspectRatio);
+      toast.success(`Uploaded (${data.aspectRatio})`, { id: toastId });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Unknown error";
+      toast.error("Upload failed", { id: toastId, description: message });
+    } finally {
+      setUploading(false);
+    }
+  }
+
+  return (
+    <div className="flex flex-col gap-4">
+      <div
+        onDragOver={(e) => {
+          e.preventDefault();
+          setDragOver(true);
+        }}
+        onDragLeave={() => setDragOver(false)}
+        onDrop={(e) => {
+          e.preventDefault();
+          setDragOver(false);
+          const file = e.dataTransfer.files?.[0];
+          if (file) void handleFile(file);
+        }}
+        onClick={() => inputRef.current?.click()}
+        className={`relative cursor-pointer rounded-xl border-2 border-dashed transition-colors flex flex-col items-center justify-center gap-2 p-6 ${
+          dragOver
+            ? "border-foreground bg-foreground/[0.04]"
+            : "border-foreground/30 hover:border-foreground/60"
+        }`}
+      >
+        <input
+          ref={inputRef}
+          type="file"
+          accept="image/jpeg,image/png,image/webp"
+          className="hidden"
+          onChange={(e) => {
+            const file = e.target.files?.[0];
+            if (file) void handleFile(file);
+          }}
+        />
+        {beforeImageUrl ? (
+          <div className="flex flex-col items-center gap-3">
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img
+              src={beforeImageUrl}
+              alt="Before"
+              className="max-h-[280px] rounded-md border bg-muted/30"
+            />
+            <div className="text-xs text-muted-foreground tracking-tight">
+              Before · {beforeAspect} — click to replace
+            </div>
+          </div>
+        ) : (
+          <div className="flex flex-col items-center gap-1.5 py-6">
+            <div className="text-sm tracking-tight">
+              {uploading ? "Uploading…" : "Drop a photo or click to choose"}
+            </div>
+            <div className="text-[11px] text-muted-foreground">
+              JPEG, PNG, or WebP · max 8MB
+            </div>
+          </div>
+        )}
+      </div>
+
+      <label className="flex flex-col gap-1.5">
+        <span className="text-[10px] uppercase tracking-[0.22em] text-muted-foreground">
+          Transformation
+        </span>
+        <textarea
+          value={transformationPrompt}
+          onChange={(e) => onTransformationChange(e.target.value)}
+          rows={3}
+          placeholder="Modernize this kitchen — walnut cabinets, terrazzo floor, soft north-skylight, stripped of all clutter."
+          className="w-full rounded-md border bg-transparent px-3 py-2 text-sm focus:border-foreground outline-none resize-none tracking-tight"
+        />
+        <span className="text-[11px] text-muted-foreground tracking-tight">
+          What should change about the before? Be specific — materials, light, mood.
+        </span>
+      </label>
+    </div>
+  );
+}
+
 // ── World chooser (write or AI-suggest) ─────────────────────────────────────
 
 type Mode = "write" | "ai";
@@ -654,12 +953,19 @@ function WorldChooser({
   niche,
   onNiche,
   format,
+  worldType,
   presets,
+  placeholderExample,
 }: {
   niche: string;
   onNiche: (s: string) => void;
   format: Format;
+  worldType: WorldType;
   presets: string[];
+  /** One sampled example from NICHE_POOL[worldType], stable per session.
+   *  Replaces the old static "e.g. ..." string so the operator sees a
+   *  different lineage on every visit. */
+  placeholderExample: string;
 }) {
   const [mode, setMode] = useState<Mode>("write");
   const [suggesting, setSuggesting] = useState(false);
@@ -728,6 +1034,7 @@ function WorldChooser({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           format,
+          worldType,
           // Hard cap at 20 so the prompt doesn't bloat. Most-recent first.
           recentlyShown: rejectedNichesRef.current.slice(0, 20),
         }),
@@ -762,7 +1069,7 @@ function WorldChooser({
         inflightController.current = null;
       }
     }
-  }, [format, onNiche]);
+  }, [format, worldType, onNiche]);
 
   // Switch handler: preserve text on each side. Never auto-fires Claude —
   // suggestion only happens when the operator clicks the button.
@@ -815,8 +1122,8 @@ function WorldChooser({
               suggesting
                 ? "Thinking…"
                 : mode === "ai"
-                  ? "Edit if you'd like, or try another."
-                  : "e.g. 1960s Brazilian modernist living rooms"
+                  ? "Edit if you'd like, or suggest another."
+                  : `e.g. ${placeholderExample}`
             }
             disabled={suggesting}
             autoFocus={mode === "write"}
@@ -880,8 +1187,8 @@ function WorldChooser({
             className="flex items-center justify-between gap-4 rounded-xl border border-dashed p-4"
           >
             <span className="text-xs text-muted-foreground tracking-tight max-w-md leading-relaxed">
-              Claude looks at past worlds in the studio and ones you&apos;ve rejected,
-              then proposes something fresh.
+              Claude looks at past worlds and the ones you&apos;ve skipped, then
+              proposes a fresh save-worthy one.
             </span>
             <motion.button
               type="button"

@@ -63,16 +63,11 @@ export async function generateJSON<T>(opts: {
   schema: Record<string, unknown>;
   toolName?: string;
   maxTokens?: number;
-  /** 0-1. Default omitted (Claude's default ≈ deterministic on tool use).
-   *  Bump to ~1 for tasks where you actually want variety between calls
-   *  (suggestions, exploratory generation). */
-  temperature?: number;
 }): Promise<T> {
   const toolName = opts.toolName ?? "submit";
   const res = await getClient().messages.create({
     model: CLAUDE_MODEL,
     max_tokens: opts.maxTokens ?? 4096,
-    ...(opts.temperature !== undefined ? { temperature: opts.temperature } : {}),
     system: [
       {
         type: "text",

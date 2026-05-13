@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import Link from "next/link";
 import { motion, AnimatePresence } from "motion/react";
 import { toast } from "sonner";
@@ -17,15 +17,42 @@ const ASPECTS: { value: Aspect; label: string; hint: string; aspectClass: string
   { value: "1:1", label: "1:1", hint: "Square", aspectClass: "aspect-square" },
 ];
 
-const PRESETS = [
-  "Sun-drenched modernist living room with floor-to-ceiling glass, travertine floors, low-slung linen sofa, warm afternoon light raking across the space, cinematic.",
-  "Mediterranean villa exterior at golden hour, terracotta roof, climbing bougainvillea, stone steps, soft hazy light, architectural photography.",
-  "Minimalist Japanese tea room interior, tatami mats, shoji screens, single ikebana arrangement, diffuse morning light.",
-  "Brutalist concrete house in a tropical jungle clearing, monstera leaves, late afternoon haze, photographic.",
+/** Object-led residential scene prompts spanning regions/lineages. Sampled
+ *  fresh per session so the operator doesn't see the same four presets every
+ *  visit. Style-agnostic (mixes interior + exterior) since scratch is one-off. */
+const SCRATCH_POOL: readonly string[] = [
+  "A Kyoto townhouse interior with paper screens, tatami, ikebana on a low cypress table, gray morning light spilling in.",
+  "A Mallorcan farmhouse kitchen with whitewashed walls, indigo linen, esparto baskets, terracotta floor, late afternoon sun.",
+  "A Marrakech riad courtyard with zellige tile, brass lanterns, jasmine climbing tadelakt walls, soft dappled light.",
+  "A Belgian farmhouse living room with reclaimed oak beams, linen-slipcovered sofa, ironstone pottery, hydrangeas in stone urns.",
+  "A Cycladic stone home exterior with limewashed walls, blue painted shutters, bougainvillea cascade, sea horizon at golden hour.",
+  "A Joshua Tree desert house with corten steel canopy, ocotillo, agave in concrete planters, big sky at blue hour.",
+  "A Norwegian hytte interior with timber walls, sheepskins on a bench, birch logs by a wood stove, low winter light.",
+  "A São Paulo penthouse with Sergio Rodrigues poltronas, philodendron, terrazzo floor, framed Burle Marx prints, palm shadows.",
+  "A Provençal mas with stone fireplace, lavender bunches drying from beams, copper pots on a hook, faded toile linen, afternoon light.",
+  "A Tulum jungle palapa exterior with bamboo gates, hammock between palms, frangipani petals on stone, cenote glimpse beyond.",
+  "An Atlas Mountain rammed-earth home interior with palm-leaf baskets, low cedar table, mint tea service, kilim cushions.",
+  "A Cotswold cottage exterior with thatched roof, hollyhocks against stone, picket gate, climbing roses, soft overcast light.",
+  "A Hudson Valley barn conversion with whitewashed pine beams, antique milking stools, farm implements, late summer light.",
+  "An Apulian trullo interior with whitewashed cone ceilings, olive wood furniture, ceramic pitchers, pomegranate bowl.",
+  "A Mauritian Creole bungalow with louvered shutters, planter chairs, frangipani in vases, vanilla pods drying on the verandah.",
 ];
 
+/** Fisher-Yates non-mutating sample. */
+function sampleN<T>(arr: readonly T[], n: number): T[] {
+  const copy = arr.slice();
+  for (let i = copy.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [copy[i], copy[j]] = [copy[j], copy[i]];
+  }
+  return copy.slice(0, Math.min(n, copy.length));
+}
+
 export default function ScratchPage() {
-  const [prompt, setPrompt] = useState(PRESETS[0]);
+  // Stable per-session sample of 4 presets. useMemo with [] deps so the
+  // sample doesn't reshuffle on every re-render but a fresh visit gets new ones.
+  const presets = useMemo(() => sampleN(SCRATCH_POOL, 4), []);
+  const [prompt, setPrompt] = useState(() => presets[0]);
   const [aspect, setAspect] = useState<Aspect>("16:9");
   const [loading, setLoading] = useState(false);
   const [imageUrl, setImageUrl] = useState<string | null>(null);
@@ -147,7 +174,7 @@ export default function ScratchPage() {
               Try one
             </span>
             <div className="flex flex-col">
-              {PRESETS.map((p, i) => (
+              {presets.map((p, i) => (
                 <button
                   key={i}
                   type="button"

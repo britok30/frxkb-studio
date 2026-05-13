@@ -16,7 +16,8 @@ const britok: Operator = {
   email: "britok30@gmail.com",
   falKey: "fal-key",
   anthropicKey: "ak",
-  apps: [{ name: "ArchitectGPT", url: "https://x" }],
+  apps: [{ name: "ArchitectGPT", url: "https://x", handle: "architectgpt" }],
+  worldTypes: ["interior", "exterior"],
 };
 
 beforeEach(() => {
@@ -31,7 +32,7 @@ const okResponse = {
 };
 
 describe("upscaleVideo", () => {
-  it("calls fal-ai/topaz/upscale/video with Proteus + 2× by default", async () => {
+  it("calls fal-ai/topaz/upscale/video with Proteus + 2× + 60fps interpolation by default", async () => {
     subscribeMock.mockResolvedValue(okResponse);
 
     await withOperator(britok, () =>
@@ -44,7 +45,30 @@ describe("upscaleVideo", () => {
     expect(args.input.model).toBe("Proteus");
     expect(args.input.upscale_factor).toBe(2);
     expect(args.input.H264_output).toBe(true);
+    // Apollo frame interp: bumps seedance's 24fps output to 60fps so motion
+    // doesn't read as janky on smooth pans.
+    expect(args.input.target_fps).toBe(60);
     expect(args.logs).toBe(false);
+  });
+
+  it("omits target_fps when targetFps=0 (interpolation disabled)", async () => {
+    subscribeMock.mockResolvedValue(okResponse);
+
+    await withOperator(britok, () =>
+      upscaleVideo({ videoUrl: "https://x", targetFps: 0 })
+    );
+
+    expect(subscribeMock.mock.calls[0][1].input.target_fps).toBeUndefined();
+  });
+
+  it("forwards a custom targetFps", async () => {
+    subscribeMock.mockResolvedValue(okResponse);
+
+    await withOperator(britok, () =>
+      upscaleVideo({ videoUrl: "https://x", targetFps: 48 })
+    );
+
+    expect(subscribeMock.mock.calls[0][1].input.target_fps).toBe(48);
   });
 
   it("forwards model + upscaleFactor overrides", async () => {

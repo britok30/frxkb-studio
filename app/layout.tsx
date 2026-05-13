@@ -18,7 +18,7 @@ const cereal = localFont({
 
 export const metadata: Metadata = {
   title: "frxkb studio",
-  description: "Internal content studio for ArchitectGPT and CasaGPT",
+  description: "Internal content studio for ArchitectGPT",
 };
 
 export default function RootLayout({

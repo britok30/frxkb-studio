@@ -14,6 +14,16 @@ const concept: PromptableConcept = {
   hook: "Calm afternoons through travertine and palm shadow.",
   vibe: "1960s Brazilian modernist houses, palm-filtered light.",
   notes: "Eye-level. Never overcast.",
+  objectSet: [
+    "low Sergio Rodrigues poltrona",
+    "honed travertine coffee table",
+    "tall philodendron in a glazed clay pot",
+    "stack of art books on the floor",
+    "linen-slipcovered sofa",
+    "framed Burle Marx landscape print",
+    "handmade ceramic vessel set",
+    "woven sisal rug worn at the edges",
+  ],
 };
 
 beforeEach(() => {
@@ -29,15 +39,45 @@ function fakeScenes(n: number, durationSec = 5) {
 }
 
 describe("buildScenesSystem", () => {
-  it("encodes coherence rules: no people, no text, no identical compositions in a row", () => {
+  it("anchors every scene in a residential HOME (not a museum, gallery, or showroom)", () => {
     const sys = buildScenesSystem();
-    expect(sys).toMatch(/no people/i);
-    expect(sys).toMatch(/no on-screen text/i);
-    expect(sys).toMatch(/no identical compositions/i);
+    expect(sys).toMatch(/residential|home|house/i);
+    // Category families are named in the prompt — but as categories, not as
+    // specific brand-name objects (specifics live in the per-piece objectSet).
+    expect(sys).toMatch(/plants/i);
+    expect(sys).toMatch(/art|ceramic/i);
+    expect(sys).toMatch(/textile/i);
+  });
+
+  it("requires the cultural-lineage rule and references the per-piece object set", () => {
+    const sys = buildScenesSystem();
+    expect(sys).toMatch(/cultural lineage|lineage drive/i);
+    expect(sys).toMatch(/object set|objectSet/i);
+  });
+
+  it("encodes composition + cinematographic guidance in affirmative language", () => {
+    const sys = buildScenesSystem();
+    expect(sys).toMatch(/vary composition|alternate between/i);
     expect(sys).toMatch(/wide establishing.*mid.*detail/i);
-    // Pro-specific guidance — cinematographic vocabulary + material specificity.
     expect(sys).toMatch(/cinematographic|focal length|film stock/i);
     expect(sys).toMatch(/material specificity|named precisely/i);
+  });
+
+  it("does NOT include the dead 'uninhabited / empty rooms / blank walls' commands that were stripping all life from outputs", () => {
+    const sys = buildScenesSystem();
+    expect(sys).not.toMatch(/uninhabited|empty rooms|vacant spaces|untouched architectural surfaces/i);
+    expect(sys).not.toMatch(/blank walls|unmarked surfaces/i);
+  });
+
+  it("does NOT cite specific brand-name objects in the system prompt (those become global defaults Claude reaches for every time)", () => {
+    const sys = buildScenesSystem();
+    expect(sys).not.toMatch(/Hans Wegner|fiddle-leaf fig|Braun record player|design monographs/);
+  });
+
+  it("does NOT include negation patterns ('no people', 'no on-screen text') — those positively prime the bad tokens", () => {
+    const sys = buildScenesSystem();
+    expect(sys).not.toMatch(/no people\.|no faces|no body parts|no silhouettes/i);
+    expect(sys).not.toMatch(/no on-screen text|no signage|no brands|no watermark/i);
   });
 });
 
@@ -48,6 +88,7 @@ describe("buildScenesUser", () => {
       aspectRatio: "16:9",
       sceneCount: 30,
       sceneDurationSec: 5,
+      worldType: "interior",
     });
     expect(out).toContain("Sunlit Brazilian Modernism");
     expect(out).toContain("Aspect ratio for downstream rendering: 16:9");
@@ -62,8 +103,37 @@ describe("buildScenesUser", () => {
       aspectRatio: "9:16",
       sceneCount: 8,
       sceneDurationSec: 4,
+      worldType: "interior",
     });
     expect(out).not.toMatch(/Visual rules to lock down/i);
+  });
+
+  it("injects the brief's objectSet so scene prompts draw from THIS lineage's objects, not from defaults", () => {
+    const out = buildScenesUser({
+      concept,
+      aspectRatio: "9:16",
+      sceneCount: 5,
+      sceneDurationSec: 5,
+      worldType: "interior",
+    });
+    expect(out).toMatch(/Object set committed in the brief/i);
+    // Every objectSet item should appear in the user prompt.
+    for (const item of concept.objectSet) {
+      expect(out).toContain(item);
+    }
+    // Distribution rule keeps Claude from naming every object in every scene.
+    expect(out).toMatch(/Distribute these across scenes/i);
+  });
+
+  it("omits the objectSet block when concept has none (legacy concepts persisted before objectSet existed)", () => {
+    const out = buildScenesUser({
+      concept: { ...concept, objectSet: [] },
+      aspectRatio: "9:16",
+      sceneCount: 5,
+      sceneDurationSec: 5,
+      worldType: "interior",
+    });
+    expect(out).not.toMatch(/Object set committed in the brief/i);
   });
 });
 
@@ -76,6 +146,7 @@ describe("generateScenePrompts", () => {
       aspectRatio: "9:16",
       sceneCount: 8,
       sceneDurationSec: 4,
+      worldType: "interior",
     });
 
     expect(out.scenes).toHaveLength(8);
@@ -93,6 +164,7 @@ describe("generateScenePrompts", () => {
       aspectRatio: "16:9",
       sceneCount: 8,
       sceneDurationSec: 5,
+      worldType: "interior",
     });
 
     expect(out.scenes).toHaveLength(8);
@@ -108,6 +180,7 @@ describe("generateScenePrompts", () => {
         aspectRatio: "16:9",
         sceneCount: 8,
         sceneDurationSec: 5,
+        worldType: "interior",
       })
     ).rejects.toThrow(/3 scenes, expected 8/);
   });
@@ -123,6 +196,7 @@ describe("generateScenePrompts", () => {
         aspectRatio: "16:9",
         sceneCount: 1,
         sceneDurationSec: 5,
+        worldType: "interior",
       })
     ).rejects.toThrow();
   });
@@ -135,6 +209,7 @@ describe("generateScenePrompts", () => {
       aspectRatio: "16:9",
       sceneCount: 1,
       sceneDurationSec: 5,
+      worldType: "interior",
     });
 
     expect(generateJSONMock.mock.calls[0][0].toolName).toBe("submit_scenes");

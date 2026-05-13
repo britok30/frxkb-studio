@@ -21,19 +21,19 @@ const dbMocks = vi.hoisted(() => ({
 
 const claudeMocks = vi.hoisted(() => ({
   generateConcept: vi.fn(),
+  generateBeforeAfterConcept: vi.fn(),
   generateScenePrompts: vi.fn(),
   generateMetadata: vi.fn(),
 }));
 
 const falMocks = vi.hoisted(() => ({
   generateImage: vi.fn(),
+  editImage: vi.fn(),
 }));
 
 const storageMocks = vi.hoisted(() => ({
   storeFromUrl: vi.fn(),
 }));
-
-const thumbnailMocks = vi.hoisted(() => ({ generateThumbnail: vi.fn() }));
 
 // Default operator for all tests in this file. Individual tests can override
 // the operator by re-mocking pickAppLink (used by substituteAppLink).
@@ -43,9 +43,10 @@ const operatorMocks = vi.hoisted(() => {
     falKey: "fk",
     anthropicKey: "ak",
     apps: [
-      { name: "ArchitectGPT", url: "" },
-      { name: "CasaGPT", url: "", pattern: /(interior|living)/ },
+      { name: "ArchitectGPT", url: "", handle: "architectgpt" },
+      { name: "CasaGPT", url: "", handle: "casagpt", pattern: /(interior|living)/ },
     ],
+    worldTypes: ["interior", "exterior"] as ("interior" | "exterior")[],
   };
   return {
     currentOperator: vi.fn(() => britok),
@@ -55,12 +56,17 @@ const operatorMocks = vi.hoisted(() => {
 });
 
 vi.mock("@/lib/projects-db", () => dbMocks);
-vi.mock("@/lib/prompts/concept", () => ({ generateConcept: claudeMocks.generateConcept }));
+vi.mock("@/lib/prompts/concept", () => ({
+  generateConcept: claudeMocks.generateConcept,
+  generateBeforeAfterConcept: claudeMocks.generateBeforeAfterConcept,
+}));
 vi.mock("@/lib/prompts/scenes", () => ({ generateScenePrompts: claudeMocks.generateScenePrompts }));
 vi.mock("@/lib/prompts/metadata", () => ({ generateMetadata: claudeMocks.generateMetadata }));
-vi.mock("@/lib/fal", () => ({ generateImage: falMocks.generateImage }));
+vi.mock("@/lib/fal", () => ({
+  generateImage: falMocks.generateImage,
+  editImage: falMocks.editImage,
+}));
 vi.mock("@/lib/storage", () => ({ storeFromUrl: storageMocks.storeFromUrl }));
-vi.mock("@/lib/thumbnail", () => ({ generateThumbnail: thumbnailMocks.generateThumbnail }));
 vi.mock("@/lib/operators", () => ({
   currentOperator: operatorMocks.currentOperator,
   pickAppLink: operatorMocks.pickAppLink,
@@ -73,6 +79,7 @@ vi.mock("@/lib/world-dedupe", () => dedupeMocks);
 
 import {
   applySceneAction,
+  createBeforeAfterProject,
   createProject,
   finalizeProject,
   generateAllImages,
@@ -86,6 +93,16 @@ const concept = {
   hook: "Calm afternoons through travertine and palm shadow.",
   vibe: "1960s Brazilian modernism, palm-filtered late afternoon light, travertine and terracotta.",
   notes: "Eye-level, never overcast.",
+  objectSet: [
+    "low Sergio Rodrigues poltrona",
+    "honed travertine coffee table",
+    "tall philodendron in a glazed clay pot",
+    "stack of art books on the floor",
+    "linen-slipcovered sofa",
+    "framed Burle Marx landscape print",
+    "handmade ceramic vessel set",
+    "woven sisal rug worn at the edges",
+  ],
   worldSignature: "1960s-brazilian-modernism-travertine-palms",
   worldKeywords: ["1960s", "brazilian", "modernism", "travertine", "palms", "late-afternoon"],
 };
@@ -112,7 +129,6 @@ beforeEach(() => {
   Object.values(claudeMocks).forEach((m) => m.mockReset());
   Object.values(falMocks).forEach((m) => m.mockReset());
   Object.values(storageMocks).forEach((m) => m.mockReset());
-  Object.values(thumbnailMocks).forEach((m) => m.mockReset());
   // Dedupe defaults to "no matches" — individual tests can override.
   dedupeMocks.findSimilarProjects.mockReset().mockResolvedValue({
     hasMatches: false,
@@ -162,7 +178,7 @@ describe("createProject", () => {
 
     const out = await createProject({
       niche: "modernist living rooms",
-      format: "yt-long",
+      format: "reel", worldType: "interior",
       sceneCount: 2,
       sceneDurationSec: 5,
     });
@@ -172,20 +188,21 @@ describe("createProject", () => {
 
     expect(claudeMocks.generateConcept).toHaveBeenCalledWith({
       niche: "modernist living rooms",
-      format: "yt-long",
+      format: "reel", worldType: "interior",
       targetDurationSec: 10,
       operatorNotes: undefined,
     });
     expect(claudeMocks.generateScenePrompts).toHaveBeenCalledWith({
       concept,
-      aspectRatio: "16:9",
+      aspectRatio: "9:16",
       sceneCount: 2,
       sceneDurationSec: 5,
+      worldType: "interior",
     });
     expect(dbMocks.insertProject).toHaveBeenCalledOnce();
     const projInsert = dbMocks.insertProject.mock.calls[0][0];
     expect(projInsert.title).toBe("Sunlit Brazilian Modernism");
-    expect(projInsert.format).toBe("yt-long");
+    expect(projInsert.format).toBe("reel");
     expect(projInsert.status).toBe("scripting");
     // Concept jsonb stores the core fields. worldSignature/worldKeywords
     // get persisted on dedicated columns, not on the concept blob.
@@ -219,7 +236,7 @@ describe("createProject", () => {
       ],
     });
     const fakeMatch = {
-      project: { id: "p_old", title: "Earlier Brazilian Modernism", niche: "x", format: "yt-long" as const, createdAt: new Date() },
+      project: { id: "p_old", title: "Earlier Brazilian Modernism", niche: "x", format: "reel" as const, createdAt: new Date() },
       reason: "exact-signature" as const,
       confidence: 1,
     };
@@ -228,7 +245,7 @@ describe("createProject", () => {
       matches: [fakeMatch],
     });
 
-    const out = await createProject({ niche: "x", format: "yt-long", sceneCount: 1 });
+    const out = await createProject({ niche: "x", format: "reel", worldType: "interior", sceneCount: 1 });
 
     expect(dedupeMocks.findSimilarProjects).toHaveBeenCalledExactlyOnceWith({
       signature: concept.worldSignature,
@@ -247,7 +264,7 @@ describe("createProject", () => {
     dedupeMocks.findSimilarProjects.mockRejectedValue(new Error("DB unreachable"));
     vi.spyOn(console, "warn").mockImplementation(() => {});
 
-    const out = await createProject({ niche: "x", format: "yt-long", sceneCount: 1 });
+    const out = await createProject({ niche: "x", format: "reel", worldType: "interior", sceneCount: 1 });
 
     expect(out.project.title).toBe("Sunlit Brazilian Modernism");
     expect(out.similarProjects).toEqual([]);
@@ -264,14 +281,14 @@ describe("createProject", () => {
       })),
     });
 
-    await createProject({ niche: "x", format: "reel" });
+    await createProject({ niche: "x", format: "reel", worldType: "interior" });
 
-    // Reel default: 5 × 3s = 15s.
+    // Reel default: 3 × 5s = 15s.
     expect(claudeMocks.generateScenePrompts).toHaveBeenCalledWith(
       expect.objectContaining({
         aspectRatio: "9:16",
-        sceneCount: 5,
-        sceneDurationSec: 3,
+        sceneCount: 3,
+        sceneDurationSec: 5,
       })
     );
   });
@@ -286,7 +303,7 @@ describe("createProject", () => {
       })),
     });
 
-    await createProject({ niche: "x", format: "yt-long", sceneCount: 999 });
+    await createProject({ niche: "x", format: "reel", worldType: "interior", sceneCount: 999 });
 
     expect(claudeMocks.generateScenePrompts).toHaveBeenCalledWith(
       expect.objectContaining({ sceneCount: 120 })
@@ -298,7 +315,7 @@ describe("createProject", () => {
     claudeMocks.generateScenePrompts.mockRejectedValue(new Error("Claude rate limited"));
 
     await expect(
-      createProject({ niche: "x", format: "yt-long", sceneCount: 2 })
+      createProject({ niche: "x", format: "reel", worldType: "interior", sceneCount: 2 })
     ).rejects.toThrow(/rate limited/);
 
     expect(dbMocks.insertProject).not.toHaveBeenCalled();
@@ -309,7 +326,7 @@ describe("createProject", () => {
     claudeMocks.generateConcept.mockRejectedValue(new Error("Claude is down"));
 
     await expect(
-      createProject({ niche: "x", format: "yt-long", sceneCount: 2 })
+      createProject({ niche: "x", format: "reel", worldType: "interior", sceneCount: 2 })
     ).rejects.toThrow(/down/);
 
     expect(claudeMocks.generateScenePrompts).not.toHaveBeenCalled();
@@ -325,7 +342,7 @@ describe("createProject", () => {
       ],
     });
 
-    await createProject({ niche: "x", format: "carousel", sceneCount: 1, sceneDurationSec: 0 });
+    await createProject({ niche: "x", format: "carousel", worldType: "interior", sceneCount: 1, sceneDurationSec: 0 });
 
     expect(claudeMocks.generateScenePrompts).toHaveBeenCalledWith(
       expect.objectContaining({ sceneDurationSec: 4 })
@@ -363,9 +380,115 @@ describe("getProjectWithScenes", () => {
   });
 });
 
+describe("createBeforeAfterProject", () => {
+  beforeEach(() => {
+    // Slim concept (no worldSignature/worldKeywords — those don't exist on
+    // PromptableConcept and aren't asked from Claude for before-after).
+    claudeMocks.generateBeforeAfterConcept.mockResolvedValue({
+      workingTitle: concept.workingTitle,
+      hook: concept.hook,
+      vibe: concept.vibe,
+      notes: concept.notes,
+    });
+    dbMocks.insertProject.mockImplementation(async (values) => ({ ...values }));
+    dbMocks.insertScenes.mockImplementation(async (rows) => rows);
+  });
+
+  it("persists the upload as the before scene + creates a pending after scene", async () => {
+    const out = await createBeforeAfterProject({
+      beforeImageUrl: "https://blob.example/upload-abc.jpg",
+      transformationPrompt:
+        "Modernize this kitchen — walnut cabinets, terrazzo floor, soft north-skylight, no clutter.",
+      aspectRatio: "4:3",
+      worldType: "interior",
+    });
+
+    // Slim concept call seeded by the transformation prompt — no worldSignature.
+    expect(claudeMocks.generateBeforeAfterConcept).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({
+        transformationPrompt: expect.stringContaining("Modernize"),
+        worldType: "interior",
+      })
+    );
+    // The full generateConcept (with dedupe fields) is NOT called for before-after.
+    expect(claudeMocks.generateConcept).not.toHaveBeenCalled();
+
+    // Project row carries the format + aspect + concept, no dedupe fields.
+    const projectInsert = dbMocks.insertProject.mock.calls[0][0];
+    expect(projectInsert.format).toBe("before-after");
+    expect(projectInsert.aspectRatio).toBe("4:3");
+    expect(projectInsert.worldType).toBe("interior");
+    expect(projectInsert.worldSignature).toBeNull();
+    expect(projectInsert.worldKeywords).toBeNull();
+
+    // Two scenes: before (pre-generated) + after (pending, references the before).
+    const sceneRows = dbMocks.insertScenes.mock.calls[0][0];
+    expect(sceneRows).toHaveLength(2);
+
+    const before = sceneRows.find((s: { order: number }) => s.order === 1);
+    expect(before).toMatchObject({
+      status: "generated",
+      imageUrl: "https://blob.example/upload-abc.jpg",
+      referenceImageUrl: null,
+      // Both scenes share the same animation duration so they pair as
+      // matched cuts in CapCut.
+      durationSec: 7,
+    });
+
+    const after = sceneRows.find((s: { order: number }) => s.order === 2);
+    expect(after).toMatchObject({
+      status: "pending",
+      // Frozen reference = the upload, so per-scene regen always re-uses it.
+      referenceImageUrl: "https://blob.example/upload-abc.jpg",
+      durationSec: 7, // matches defaultsForFormat("before-after").sceneDurationSec
+    });
+
+    expect(out.project.format).toBe("before-after");
+    expect(out.scenes).toHaveLength(2);
+  });
+
+  it("does NOT call generateScenePrompts (only 2 hardcoded scenes)", async () => {
+    await createBeforeAfterProject({
+      beforeImageUrl: "https://blob.example/x.jpg",
+      transformationPrompt: "Add walnut cabinets and terrazzo floors throughout.",
+      aspectRatio: "1:1",
+      worldType: "interior",
+    });
+    expect(claudeMocks.generateScenePrompts).not.toHaveBeenCalled();
+  });
+
+  it("does NOT run dedupe (each before-after is unique to its uploaded image)", async () => {
+    await createBeforeAfterProject({
+      beforeImageUrl: "https://blob.example/x.jpg",
+      transformationPrompt: "Make it brighter and warmer with more natural light.",
+      aspectRatio: "1:1",
+      worldType: "interior",
+    });
+    expect(dedupeMocks.findSimilarProjects).not.toHaveBeenCalled();
+  });
+
+  it("rejects worldType outside the operator's allowed lanes", async () => {
+    operatorMocks.currentOperator.mockReturnValueOnce({
+      ...operatorMocks.fixture,
+      worldTypes: ["interior"],
+    });
+    await expect(
+      createBeforeAfterProject({
+        beforeImageUrl: "https://blob.example/x.jpg",
+        transformationPrompt: "Refresh this exterior facade with new cladding.",
+        aspectRatio: "1:1",
+        worldType: "exterior",
+      })
+    ).rejects.toThrow(/doesn't cover exterior/i);
+    // No DB writes happen on rejection.
+    expect(dbMocks.insertProject).not.toHaveBeenCalled();
+    expect(dbMocks.insertScenes).not.toHaveBeenCalled();
+  });
+});
+
 describe("generateAllImages", () => {
   beforeEach(() => {
-    dbMocks.selectProjectById.mockResolvedValue({ id: "p_1", format: "yt-long", status: "scripting" });
+    dbMocks.selectProjectById.mockResolvedValue({ id: "p_1", format: "reel", worldType: "interior", status: "scripting" });
     dbMocks.selectScenesByProject.mockResolvedValue([
       fakeScene({ id: "s_1", order: 1 }),
       fakeScene({ id: "s_2", order: 2 }),
@@ -373,6 +496,10 @@ describe("generateAllImages", () => {
     falMocks.generateImage.mockResolvedValue({
       images: [{ url: "https://fal.media/x.jpg" }],
       requestId: "req_1",
+    });
+    falMocks.editImage.mockResolvedValue({
+      images: [{ url: "https://fal.media/edit.jpg" }],
+      requestId: "req_edit",
     });
     storageMocks.storeFromUrl.mockResolvedValue({
       url: "https://blob.vercel-storage.com/images/p_1/x.jpg",
@@ -385,41 +512,98 @@ describe("generateAllImages", () => {
     await expect(generateAllImages("nope")).rejects.toThrow(/not found/);
   });
 
-  it("generates images for pending scenes, marks them generated, sets project ready", async () => {
+  it("reel/carousel: every scene runs through text-to-image with a fresh seed (no /edit, no anchor)", async () => {
     const result = await generateAllImages("p_1");
 
     expect(result).toEqual({ generated: 2, failed: 0, skipped: 0, reclaimed: 0 });
     expect(falMocks.generateImage).toHaveBeenCalledTimes(2);
+    expect(falMocks.editImage).not.toHaveBeenCalled();
     expect(dbMocks.markSceneGenerating).toHaveBeenCalledTimes(2);
     expect(dbMocks.markSceneGenerated).toHaveBeenCalledTimes(2);
     expect(dbMocks.markSceneFailed).not.toHaveBeenCalled();
-    // Lock acquire flips status to 'generating' atomically (tested separately);
-    // the orchestration only updates status once at the end → 'ready'.
     expect(dbMocks.updateProjectStatus.mock.calls.map((c) => c[1])).toEqual(["ready"]);
   });
 
-  it("skips scenes that are already generated or approved unless force=true", async () => {
+  it("leaves referenceImageUrl untouched on text-to-image scenes (no pixel pinning)", async () => {
+    await generateAllImages("p_1");
+
+    // Neither call should write referenceImageUrl — text-to-image scenes
+    // stay null so per-scene regen also runs text-to-image.
+    for (const call of dbMocks.markSceneGenerated.mock.calls) {
+      expect(call[1]).not.toHaveProperty("referenceImageUrl");
+    }
+  });
+
+  it("before-after: scenes with referenceImageUrl route through /edit conditioned on the upload", async () => {
+    dbMocks.selectProjectById.mockResolvedValue({
+      id: "p_1",
+      format: "before-after",
+      worldType: "interior",
+      status: "scripting",
+      aspectRatio: "4:3",
+    });
     dbMocks.selectScenesByProject.mockResolvedValue([
-      fakeScene({ id: "s_1", order: 1, status: "approved" }),
-      fakeScene({ id: "s_2", order: 2, status: "generated" }),
+      {
+        ...fakeScene({ id: "s_1", order: 1, status: "generated" }),
+        imageUrl: "https://blob.example/upload-before.jpg",
+      },
+      {
+        ...fakeScene({ id: "s_2", order: 2, status: "pending" }),
+        referenceImageUrl: "https://blob.example/upload-before.jpg",
+      },
+    ]);
+
+    const result = await generateAllImages("p_1");
+
+    expect(result).toEqual({ generated: 1, failed: 0, skipped: 1, reclaimed: 0 });
+    // Only the after fires fal — and it goes through /edit against the upload.
+    expect(falMocks.generateImage).not.toHaveBeenCalled();
+    expect(falMocks.editImage).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({
+        imageUrls: ["https://blob.example/upload-before.jpg"],
+        aspectRatio: "4:3",
+      })
+    );
+  });
+
+  it("partial regen: only generates missing/rejected scenes, leaves approved/generated alone", async () => {
+    dbMocks.selectScenesByProject.mockResolvedValue([
+      {
+        ...fakeScene({ id: "s_1", order: 1, status: "approved" }),
+        imageUrl: "https://blob.example/existing-1.jpg",
+      },
+      {
+        ...fakeScene({ id: "s_2", order: 2, status: "generated" }),
+        imageUrl: "https://blob.example/existing-2.jpg",
+      },
       fakeScene({ id: "s_3", order: 3, status: "pending" }),
     ]);
 
     const result = await generateAllImages("p_1");
 
     expect(result).toEqual({ generated: 1, failed: 0, skipped: 2, reclaimed: 0 });
+    // Only the pending scene fires fal — and it's text-to-image (reel/carousel).
     expect(falMocks.generateImage).toHaveBeenCalledTimes(1);
+    expect(falMocks.editImage).not.toHaveBeenCalled();
   });
 
-  it("force=true re-generates everything", async () => {
+  it("force=true re-generates every scene via text-to-image", async () => {
     dbMocks.selectScenesByProject.mockResolvedValue([
-      fakeScene({ id: "s_1", order: 1, status: "approved" }),
-      fakeScene({ id: "s_2", order: 2, status: "generated" }),
+      {
+        ...fakeScene({ id: "s_1", order: 1, status: "approved" }),
+        imageUrl: "https://blob.example/old-1.jpg",
+      },
+      {
+        ...fakeScene({ id: "s_2", order: 2, status: "generated" }),
+        imageUrl: "https://blob.example/old-2.jpg",
+      },
     ]);
 
     const result = await generateAllImages("p_1", { force: true });
 
     expect(result).toEqual({ generated: 2, failed: 0, skipped: 0, reclaimed: 0 });
+    expect(falMocks.generateImage).toHaveBeenCalledTimes(2);
+    expect(falMocks.editImage).not.toHaveBeenCalled();
   });
 
   it("re-generates rejected scenes by default", async () => {
@@ -433,8 +617,10 @@ describe("generateAllImages", () => {
   });
 
   it("marks individual scenes failed without poisoning the rest, ends at ready (lock released)", async () => {
+    // s_1 succeeds; s_2 fails on the fal call. Scenes are independent now,
+    // so one failure doesn't cascade.
     falMocks.generateImage
-      .mockResolvedValueOnce({ images: [{ url: "https://fal.media/a.jpg" }], requestId: "r1" })
+      .mockResolvedValueOnce({ images: [{ url: "https://fal.media/ok.jpg" }], requestId: "req_ok" })
       .mockRejectedValueOnce(new Error("rate limited"));
 
     const result = await generateAllImages("p_1", { concurrency: 1 });
@@ -443,8 +629,26 @@ describe("generateAllImages", () => {
     expect(dbMocks.markSceneGenerated).toHaveBeenCalledTimes(1);
     expect(dbMocks.markSceneFailed).toHaveBeenCalledTimes(1);
     expect(dbMocks.markSceneFailed).toHaveBeenCalledWith("s_2", "rate limited");
-    // Project status decoupled from per-scene failures — UI uses scene counts.
-    // Always 'ready' on completion so the finalize lock can rely on it.
+    expect(dbMocks.updateProjectStatus.mock.calls.map((c) => c[1])).toEqual(["ready"]);
+  });
+
+  it("one scene failing doesn't abort the rest — every scene is independent now", async () => {
+    // Reverse: s_1 fails, s_2 succeeds. With no anchor dependency, s_2 still runs.
+    falMocks.generateImage
+      .mockRejectedValueOnce(new Error("first one exploded"))
+      .mockResolvedValueOnce({ images: [{ url: "https://fal.media/ok.jpg" }], requestId: "req_ok" });
+
+    const result = await generateAllImages("p_1", { concurrency: 1 });
+
+    expect(result).toEqual({ generated: 1, failed: 1, skipped: 0, reclaimed: 0 });
+    expect(dbMocks.markSceneGenerated).toHaveBeenCalledExactlyOnceWith(
+      "s_2",
+      expect.any(Object)
+    );
+    expect(dbMocks.markSceneFailed).toHaveBeenCalledExactlyOnceWith(
+      "s_1",
+      "first one exploded"
+    );
     expect(dbMocks.updateProjectStatus.mock.calls.map((c) => c[1])).toEqual(["ready"]);
   });
 
@@ -484,8 +688,10 @@ describe("generateAllImages", () => {
 
     const result = await generateAllImages("p_1");
 
+    // Both scenes hit the same no-url response → both fail individually.
     expect(result.failed).toBe(2);
     expect(dbMocks.markSceneFailed).toHaveBeenCalledWith("s_1", expect.stringMatching(/no image url/));
+    expect(dbMocks.markSceneFailed).toHaveBeenCalledWith("s_2", expect.stringMatching(/no image url/));
   });
 
   it("uses opts.aspectRatio override when provided", async () => {
@@ -497,7 +703,7 @@ describe("generateAllImages", () => {
   });
 
   it("derives aspect ratio from project format when not overridden", async () => {
-    dbMocks.selectProjectById.mockResolvedValue({ id: "p_1", format: "reel", status: "scripting" });
+    dbMocks.selectProjectById.mockResolvedValue({ id: "p_1", format: "reel", worldType: "interior", status: "scripting" });
 
     await generateAllImages("p_1");
 
@@ -560,7 +766,7 @@ describe("generateAllImages", () => {
 describe("applySceneAction", () => {
   beforeEach(() => {
     dbMocks.selectSceneById.mockResolvedValue(fakeScene({ id: "s_1" }));
-    dbMocks.selectProjectById.mockResolvedValue({ id: "p_1", format: "yt-long", status: "ready" });
+    dbMocks.selectProjectById.mockResolvedValue({ id: "p_1", format: "reel", worldType: "interior", status: "ready" });
     falMocks.generateImage.mockResolvedValue({
       images: [{ url: "https://fal.media/regen.jpg" }],
       requestId: "req_regen",
@@ -589,7 +795,7 @@ describe("applySceneAction", () => {
 
     expect(dbMocks.markSceneGenerating).toHaveBeenCalledWith("s_1");
     expect(falMocks.generateImage).toHaveBeenCalledWith(
-      expect.objectContaining({ aspectRatio: "16:9" })
+      expect.objectContaining({ aspectRatio: "9:16" })
     );
     expect(storageMocks.storeFromUrl).toHaveBeenCalledWith(
       expect.objectContaining({ kind: "images", projectId: "p_1" })
@@ -607,12 +813,43 @@ describe("applySceneAction", () => {
   });
 
   it("regenerate: derives aspect ratio from project format", async () => {
-    dbMocks.selectProjectById.mockResolvedValue({ id: "p_1", format: "reel", status: "ready" });
+    dbMocks.selectProjectById.mockResolvedValue({ id: "p_1", format: "reel", worldType: "interior", status: "ready" });
 
     await applySceneAction("p_1", "s_1", "regenerate");
 
     expect(falMocks.generateImage).toHaveBeenCalledWith(
       expect.objectContaining({ aspectRatio: "9:16" })
+    );
+  });
+
+  it("regenerate: reel/carousel scene (no referenceImageUrl) uses text-to-image", async () => {
+    // Default fakeScene has no referenceImageUrl → reel/carousel path.
+    await applySceneAction("p_1", "s_1", "regenerate");
+
+    expect(falMocks.generateImage).toHaveBeenCalled();
+    expect(falMocks.editImage).not.toHaveBeenCalled();
+  });
+
+  it("regenerate: before-after 'after' scene re-uses its frozen upload via /edit", async () => {
+    // Before-after's after-scene has referenceImageUrl pinned to the
+    // operator's upload. Per-scene regen must re-pass that same URL.
+    dbMocks.selectSceneById.mockResolvedValue({
+      ...fakeScene({ id: "s_2", order: 2 }),
+      referenceImageUrl: "https://blob.example/upload-before.jpg",
+    });
+    falMocks.editImage.mockResolvedValue({
+      images: [{ url: "https://fal.media/edit-regen.jpg" }],
+      requestId: "req_edit_regen",
+    });
+
+    await applySceneAction("p_1", "s_2", "regenerate");
+
+    expect(falMocks.generateImage).not.toHaveBeenCalled();
+    expect(falMocks.editImage).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({
+        imageUrls: ["https://blob.example/upload-before.jpg"],
+        aspectRatio: "9:16",
+      })
     );
   });
 
@@ -658,15 +895,30 @@ describe("finalizeProject", () => {
     hook: "Calm afternoons through travertine and palm shadow.",
     vibe: "1960s Brazilian modernist houses.",
     notes: "Eye-level.",
+    objectSet: [
+      "low Sergio Rodrigues poltrona",
+      "honed travertine coffee table",
+      "tall philodendron in a glazed clay pot",
+      "stack of art books on the floor",
+      "linen-slipcovered sofa",
+      "framed Burle Marx landscape print",
+      "handmade ceramic vessel set",
+      "woven sisal rug worn at the edges",
+    ],
   };
 
+  // Reel variant — every project is reel-or-carousel now. {APP_LINK} lives
+  // in shortsDescription + pinnedComment per substituteAppLink's reel branch.
   const metadata = {
-    youtubeTitle: "Sunlit Brazilian Modernism",
-    youtubeTitleAlternates: ["Travertine and Palm Shadow"],
-    youtubeDescription: "A long-enough description for schema purposes — afternoon light through palm shadow.",
-    youtubeTags: ["architecture", "modernism", "ambient"],
-    instagramCaption: "Travertine and palm shadow at the slow end of an afternoon.",
-    hashtags: ["architecture", "modernism", "design", "ambient"],
+    kind: "reel" as const,
+    tiktokCaption: "Travertine and palm shadow at the slow end of an afternoon.",
+    tiktokHashtags: ["architecture", "brazilianmodernism", "calm"],
+    instagramCaption:
+      "Travertine and palm shadow at the slow end of an afternoon.\nThe quiet half-hour.",
+    instagramHashtags: ["architecture", "brazilianmodernism", "interiordesign", "aesthetic"],
+    shortsTitle: "Brazilian Modernist Afternoon — Travertine and Palm Shadow",
+    shortsDescription: "Late-afternoon light through travertine and palm shadow.",
+    shortsHashtags: ["architecture", "brazilianmodernism"],
     pinnedComment: "Sketched in ArchitectGPT — link's here {APP_LINK}.",
   };
 
@@ -680,7 +932,7 @@ describe("finalizeProject", () => {
       id: "p_1",
       title: "T",
       niche: "modernist living rooms",
-      format: "yt-long",
+      format: "reel", worldType: "interior",
       status: "ready",
       targetDurationSec: 150,
       concept,
@@ -690,34 +942,26 @@ describe("finalizeProject", () => {
       { ...generatedScene({ id: "s_2", order: 2 }), imageUrl: "https://blob.vercel-storage.com/images/p_1/s2.jpg" },
     ]);
     claudeMocks.generateMetadata.mockResolvedValue(metadata);
-    thumbnailMocks.generateThumbnail.mockResolvedValue({
-      imageUrl: "https://blob.vercel-storage.com/thumbnails/p_1/thumb.jpg",
-      requestId: "req_thumb",
-    });
   });
 
-  it("happy path (yt-long): metadata → thumbnail → markProjectFinalized", async () => {
+  it("happy path: metadata → markProjectFinalized (no fal thumbnail call — deprecated)", async () => {
     const out = await finalizeProject("p_1");
 
     expect(claudeMocks.generateMetadata).toHaveBeenCalledExactlyOnceWith(
       expect.objectContaining({
         sceneCount: 2,
         totalDurationSec: 10,
-        format: "yt-long",
+        format: "reel",
         niche: "modernist living rooms",
       })
     );
-    expect(thumbnailMocks.generateThumbnail).toHaveBeenCalledOnce();
-    expect(dbMocks.markProjectFinalized).toHaveBeenCalledExactlyOnceWith(
-      "p_1",
-      expect.objectContaining({
-        thumbnailUrl: "https://blob.vercel-storage.com/thumbnails/p_1/thumb.jpg",
-        metadata,
-      })
-    );
-
-    expect(out.thumbnailUrl).toBe("https://blob.vercel-storage.com/thumbnails/p_1/thumb.jpg");
-    expect(out.metadata).toEqual(metadata);
+    expect(dbMocks.markProjectFinalized).toHaveBeenCalledOnce();
+    const persistedCall = dbMocks.markProjectFinalized.mock.calls[0];
+    expect(persistedCall[0]).toBe("p_1");
+    expect(persistedCall[1].metadata.kind).toBe("reel");
+    // No thumbnailUrl on the persisted call — covers derive live from scenes.
+    expect(persistedCall[1]).not.toHaveProperty("thumbnailUrl");
+    expect(out.metadata.kind).toBe("reel");
   });
 
   it("acquires the finalization lock and refuses concurrent finalize calls", async () => {
@@ -726,30 +970,14 @@ describe("finalizeProject", () => {
     await expect(finalizeProject("p_1")).rejects.toBeInstanceOf(ProjectBusyError);
 
     expect(claudeMocks.generateMetadata).not.toHaveBeenCalled();
-    expect(thumbnailMocks.generateThumbnail).not.toHaveBeenCalled();
     expect(dbMocks.markProjectFinalized).not.toHaveBeenCalled();
   });
 
-  it("releases the lock (status → ready) when thumbnail generation fails after metadata succeeded", async () => {
-    thumbnailMocks.generateThumbnail.mockRejectedValue(new Error("fal exploded"));
-
-    await expect(finalizeProject("p_1")).rejects.toThrow(/fal exploded/);
-    expect(dbMocks.updateProjectStatus).toHaveBeenCalledWith("p_1", "ready");
-    expect(dbMocks.markProjectFinalized).not.toHaveBeenCalled();
-  });
-
-  it("calls metadata BEFORE thumbnail BEFORE markProjectFinalized", async () => {
+  it("calls metadata BEFORE markProjectFinalized", async () => {
     const order: string[] = [];
     claudeMocks.generateMetadata.mockImplementation(async () => {
       order.push("metadata");
       return metadata;
-    });
-    thumbnailMocks.generateThumbnail.mockImplementation(async () => {
-      order.push("thumbnail");
-      return {
-        imageUrl: "https://blob.vercel-storage.com/thumbnails/p_1/thumb.jpg",
-        requestId: "r",
-      };
     });
     dbMocks.markProjectFinalized.mockImplementation(async () => {
       order.push("finalize");
@@ -757,7 +985,7 @@ describe("finalizeProject", () => {
 
     await finalizeProject("p_1");
 
-    expect(order).toEqual(["metadata", "thumbnail", "finalize"]);
+    expect(order).toEqual(["metadata", "finalize"]);
   });
 
   it("substitutes {APP_LINK} with the operator's resolved app URL", async () => {
@@ -765,14 +993,14 @@ describe("finalizeProject", () => {
 
     claudeMocks.generateMetadata.mockResolvedValue({
       ...metadata,
-      youtubeDescription: `Hook line.\n\nTry it: {APP_LINK} — pinned link below.`,
+      shortsDescription: `Hook line.\n\nTry it: {APP_LINK} — pinned link below.`,
       pinnedComment: `Sketched in ArchitectGPT — {APP_LINK}`,
     });
     dbMocks.selectProjectById.mockResolvedValue({
       id: "p_1",
       title: "T",
       niche: "modernist exteriors",
-      format: "yt-long",
+      format: "reel", worldType: "interior",
       status: "ready",
       targetDurationSec: 150,
       concept,
@@ -781,8 +1009,8 @@ describe("finalizeProject", () => {
     await finalizeProject("p_1");
 
     const persisted = dbMocks.markProjectFinalized.mock.calls[0][1];
-    expect(persisted.metadata.youtubeDescription).toContain("https://architectgpt.example/r/foo");
-    expect(persisted.metadata.youtubeDescription).not.toContain("{APP_LINK}");
+    expect(persisted.metadata.shortsDescription).toContain("https://architectgpt.example/r/foo");
+    expect(persisted.metadata.shortsDescription).not.toContain("{APP_LINK}");
     expect(persisted.metadata.pinnedComment).toContain("https://architectgpt.example/r/foo");
     // Routing is delegated entirely to operators.pickAppLink — confirmed it was called with the niche.
     expect(operatorMocks.pickAppLink).toHaveBeenCalledWith(
@@ -791,19 +1019,136 @@ describe("finalizeProject", () => {
     );
   });
 
+  it("substitutes {APP_LINK} in the carousel/before-after caption (defensive — leaving the literal placeholder in published copy is the worst outcome)", async () => {
+    operatorMocks.pickAppLink.mockReturnValue("https://architectgpt.example/r/baz");
+
+    // Carousel/before-after metadata shape: just instagramCaption + instagramHashtags.
+    claudeMocks.generateMetadata.mockResolvedValue({
+      kind: "carousel" as const,
+      instagramCaption:
+        "The same house, just finished — trim resolved, siding settled. Reimagine your own exterior at {APP_LINK}.",
+      instagramHashtags: ["architecture", "architect", "architectura", "exterior", "renovation"],
+    });
+    dbMocks.selectProjectById.mockResolvedValue({
+      id: "p_1",
+      title: "T",
+      niche: "exterior facade refresh",
+      format: "before-after",
+      worldType: "exterior",
+      status: "ready",
+      targetDurationSec: 14,
+      concept,
+    });
+
+    await finalizeProject("p_1");
+
+    const persisted = dbMocks.markProjectFinalized.mock.calls[0][1];
+    expect(persisted.metadata.instagramCaption).toContain("https://architectgpt.example/r/baz");
+    expect(persisted.metadata.instagramCaption).not.toContain("{APP_LINK}");
+  });
+
+  it("appends @handle to every caption (TikTok, IG, Shorts)", async () => {
+    // Operator's first app determines the handle.
+    operatorMocks.currentOperator.mockReturnValueOnce({
+      ...operatorMocks.fixture,
+      apps: [
+        { name: "ArchitectGPT", url: "", handle: "architectgpt" },
+      ],
+    });
+
+    await finalizeProject("p_1");
+
+    const persisted = dbMocks.markProjectFinalized.mock.calls[0][1];
+    expect(persisted.metadata.tiktokCaption).toMatch(/@architectgpt$/);
+    expect(persisted.metadata.instagramCaption).toMatch(/@architectgpt$/);
+    expect(persisted.metadata.shortsDescription).toMatch(/@architectgpt$/);
+    // Pinned comment uses the {APP_LINK} flow, not @handle suffix.
+    expect(persisted.metadata.pinnedComment).not.toMatch(/@architectgpt/);
+  });
+
+  it("enforces locked hashtags per worldType (interior gets interiordesign + interiors)", async () => {
+    // Override Claude's response: imagine it forgot the locks entirely.
+    claudeMocks.generateMetadata.mockResolvedValue({
+      ...metadata,
+      tiktokHashtags: ["brazilianmodernism", "travertine", "calm"],
+      instagramHashtags: ["brazilianmodernism", "travertine", "calm", "aesthetic"],
+    });
+
+    await finalizeProject("p_1");
+
+    const persisted = dbMocks.markProjectFinalized.mock.calls[0][1];
+    // Locks prepended, total still 5 (or fewer if Claude under-returned).
+    expect(persisted.metadata.tiktokHashtags.slice(0, 2)).toEqual([
+      "interiordesign",
+      "interiors",
+    ]);
+    expect(persisted.metadata.tiktokHashtags).toHaveLength(5);
+    expect(persisted.metadata.tiktokHashtags).toContain("brazilianmodernism");
+
+    expect(persisted.metadata.instagramHashtags.slice(0, 2)).toEqual([
+      "interiordesign",
+      "interiors",
+    ]);
+    expect(persisted.metadata.instagramHashtags).toHaveLength(5);
+  });
+
+  it("dedups locks if Claude already returned them — total stays at 5", async () => {
+    claudeMocks.generateMetadata.mockResolvedValue({
+      ...metadata,
+      // Claude obeyed the rule and included the locks; we shouldn't duplicate.
+      tiktokHashtags: ["interiordesign", "interiors", "brazilian", "travertine", "calm"],
+      instagramHashtags: ["interiors", "interiordesign", "brazilian", "travertine", "calm"],
+    });
+
+    await finalizeProject("p_1");
+
+    const persisted = dbMocks.markProjectFinalized.mock.calls[0][1];
+    expect(persisted.metadata.tiktokHashtags).toHaveLength(5);
+    // Locks come first; Claude's variable picks fill the rest.
+    expect(persisted.metadata.tiktokHashtags.filter((t: string) => t === "interiordesign")).toHaveLength(1);
+    expect(persisted.metadata.tiktokHashtags.filter((t: string) => t === "interiors")).toHaveLength(1);
+  });
+
+  it("exterior locks → architecture + architect + architectura, only 2 design slots", async () => {
+    dbMocks.selectProjectById.mockResolvedValue({
+      id: "p_1",
+      title: "T",
+      niche: "modernist exteriors",
+      format: "reel",
+      worldType: "exterior",
+      status: "ready",
+      targetDurationSec: 150,
+      concept,
+    });
+    claudeMocks.generateMetadata.mockResolvedValue({
+      ...metadata,
+      tiktokHashtags: ["brazilian", "travertine", "facade", "calm", "modernism"],
+    });
+
+    await finalizeProject("p_1");
+
+    const persisted = dbMocks.markProjectFinalized.mock.calls[0][1];
+    expect(persisted.metadata.tiktokHashtags.slice(0, 3)).toEqual([
+      "architecture",
+      "architect",
+      "architectura",
+    ]);
+    expect(persisted.metadata.tiktokHashtags).toHaveLength(5);
+  });
+
   it("leaves {APP_LINK} placeholder intact when pickAppLink returns empty", async () => {
     operatorMocks.pickAppLink.mockReturnValue("");
 
     claudeMocks.generateMetadata.mockResolvedValue({
       ...metadata,
-      youtubeDescription: "Try {APP_LINK} please.",
+      shortsDescription: "Try {APP_LINK} please.",
       pinnedComment: "x {APP_LINK} y",
     });
 
     await finalizeProject("p_1");
 
     const persisted = dbMocks.markProjectFinalized.mock.calls[0][1];
-    expect(persisted.metadata.youtubeDescription).toContain("{APP_LINK}");
+    expect(persisted.metadata.shortsDescription).toContain("{APP_LINK}");
     expect(persisted.metadata.pinnedComment).toContain("{APP_LINK}");
   });
 
@@ -813,6 +1158,7 @@ describe("finalizeProject", () => {
       title: "T",
       niche: "x",
       format: "carousel",
+      worldType: "interior",
       status: "ready",
       targetDurationSec: 0,
       concept,
@@ -820,7 +1166,7 @@ describe("finalizeProject", () => {
 
     const out = await finalizeProject("p_1");
 
-    expect(out.thumbnailUrl).toBe("https://blob.vercel-storage.com/thumbnails/p_1/thumb.jpg");
+    expect(out.metadata.kind).toBe("reel"); // metadata comes from the fixture
     expect(dbMocks.markProjectFinalized).toHaveBeenCalledOnce();
   });
 
@@ -834,7 +1180,7 @@ describe("finalizeProject", () => {
   it("throws when the project has no concept", async () => {
     dbMocks.selectProjectById.mockResolvedValue({
       id: "p_1",
-      format: "yt-long",
+      format: "reel", worldType: "interior",
       status: "ready",
       concept: null,
       niche: "x",

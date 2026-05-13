@@ -42,7 +42,7 @@ describe("POST /api/concepts/suggest", () => {
       rationale: "Your library skews Mediterranean — adding cold northern light fills a gap.",
     });
 
-    const res = await POST(postJSON({ format: "yt-long" }));
+    const res = await POST(postJSON({ format: "reel", worldType: "interior" }));
 
     expect(res.status).toBe(200);
     const body = await res.json();
@@ -51,7 +51,8 @@ describe("POST /api/concepts/suggest", () => {
 
     expect(dbMocks.selectRecentWorlds).toHaveBeenCalledWith(50);
     expect(suggestMock).toHaveBeenCalledExactlyOnceWith({
-      format: "yt-long",
+      format: "reel",
+      worldType: "interior",
       history: [
         {
           niche: "Tuscan farmhouse interiors",
@@ -59,6 +60,7 @@ describe("POST /api/concepts/suggest", () => {
           worldKeywords: ["tuscan", "farmhouse", "terracotta"],
         },
       ],
+      recentlyShown: undefined,
     });
   });
 
@@ -82,7 +84,7 @@ describe("POST /api/concepts/suggest", () => {
     suggestMock.mockRejectedValue(new Error("Claude rate limited"));
     vi.spyOn(console, "error").mockImplementation(() => {});
 
-    const res = await POST(postJSON({ format: "yt-long" }));
+    const res = await POST(postJSON({ format: "reel", worldType: "interior" }));
     expect(res.status).toBe(500);
   });
 
@@ -94,7 +96,8 @@ describe("POST /api/concepts/suggest", () => {
 
     await POST(
       postJSON({
-        format: "yt-long",
+        format: "reel",
+        worldType: "interior",
         recentlyShown: [
           "1970s Japanese ryokan interiors at dusk",
           "Kyoto tea house in autumn",
@@ -119,7 +122,7 @@ describe("POST /api/concepts/suggest", () => {
       rationale: "Strong identity, instantly visualizable.",
     });
 
-    const res = await POST(postJSON({ format: "yt-long" }));
+    const res = await POST(postJSON({ format: "reel", worldType: "interior" }));
     expect(res.status).toBe(200);
     expect(suggestMock).toHaveBeenCalledWith(
       expect.objectContaining({ history: [] })

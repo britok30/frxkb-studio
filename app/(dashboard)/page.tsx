@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { listProjects } from "@/lib/projects";
+import { listProjectsForDashboard } from "@/lib/projects";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import type { Project } from "@/lib/db";
 import { ProjectCard } from "./project-card";
@@ -8,10 +8,10 @@ import { FeatureCard } from "./feature-card";
 export const dynamic = "force-dynamic";
 
 export default async function ProjectsPage() {
-  let projects: Project[] = [];
+  let projects: Array<Project & { coverUrl: string | null }> = [];
   let loadError: string | null = null;
   try {
-    projects = await listProjects();
+    projects = await listProjectsForDashboard();
   } catch (err) {
     loadError = err instanceof Error ? err.message : "Failed to load projects";
   }
@@ -42,19 +42,19 @@ export default async function ProjectsPage() {
         </div>
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
           <FeatureCard
-            href="/new?format=yt-long"
-            kicker="YouTube"
-            title="Long-form ambient"
-            hint="60 scenes × 10s = 8 min ambient slideshow."
-            cost="~$13.95"
-            aspectClass="aspect-video"
-          />
-          <FeatureCard
             href="/new?format=reel"
             kicker="Instagram · TikTok · YouTube Shorts"
             title="Reel"
-            hint="5 × 3s, animated via Seedance + Topaz Proteus 2K."
-            cost="~$6.30"
+            hint="3 × 5s, each a fresh text-to-image, animated via Seedance + Topaz Proteus 2K + Apollo 60fps."
+            cost="~$6.80"
+            aspectClass="aspect-[9/16]"
+          />
+          <FeatureCard
+            href="/new?format=before-after"
+            kicker="Instagram · TikTok"
+            title="Before / after"
+            hint="Drop a real photo, AI transforms it. After is animated (7s); the upload stays static for a clean cut. Live ArchitectGPT demo."
+            cost="~$3.05"
             aspectClass="aspect-[9/16]"
           />
           <FeatureCard
@@ -62,7 +62,7 @@ export default async function ProjectsPage() {
             kicker="Instagram"
             title="Carousel"
             hint="10 still slides, no video."
-            cost="~$2.55"
+            cost="~$2.35"
             aspectClass="aspect-square"
           />
           <FeatureCard

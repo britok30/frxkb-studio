@@ -19,12 +19,22 @@ type FlowState = {
 
 type Step = "concept" | "images" | "animate" | "review" | "export";
 
+/** How many scenes actually need to be animated for this format. Reels =
+ *  every scene; before-after = only the after; carousel = none. */
+function animatableCountFor(format: string, totalScenes: number): number {
+  if (format === "reel") return totalScenes;
+  if (format === "before-after") return 1;
+  return 0;
+}
+
 function stepsFor(format: string): { key: Step; label: string }[] {
   const base: { key: Step; label: string }[] = [
     { key: "concept", label: "Concept" },
     { key: "images", label: "Images" },
   ];
-  if (format === "reel") base.push({ key: "animate", label: "Animate" });
+  if (format === "reel" || format === "before-after") {
+    base.push({ key: "animate", label: "Animate" });
+  }
   base.push({ key: "review", label: "Review" }, { key: "export", label: "Export" });
   return base;
 }
@@ -34,8 +44,8 @@ function activeStep(s: FlowState): Step {
   if (s.totalScenes === 0) return "concept";
   if (s.hasExport) return "export";
   if (s.pending > 0 || s.generating > 0 || s.rejected > 0) return "images";
-  // For reels, animation gates the review step.
-  if (s.format === "reel" && s.animated < s.totalScenes) return "animate";
+  const animatable = animatableCountFor(s.format, s.totalScenes);
+  if (animatable > 0 && s.animated < animatable) return "animate";
   return "review";
 }
 
@@ -50,11 +60,12 @@ function nextActionHint(s: FlowState): string {
   if (s.hasExport) {
     return "Bundle is ready — scroll down to download.";
   }
-  if (s.format === "reel" && s.animated < s.totalScenes) {
-    const left = s.totalScenes - s.animated;
+  const animatable = animatableCountFor(s.format, s.totalScenes);
+  if (animatable > 0 && s.animated < animatable) {
+    const left = animatable - s.animated;
     return `Stills are in. Animate ${left} ${left === 1 ? "scene" : "scenes"} via Seedance + Topaz.`;
   }
-  return "All scenes are in. Finalize to generate the thumbnail and metadata.";
+  return "All scenes are in. Finalize to generate the captions and metadata.";
 }
 
 export function FlowBanner({ state }: { state: FlowState }) {

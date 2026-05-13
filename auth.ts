@@ -52,6 +52,11 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
       const path = nextUrl.pathname;
       // Public surfaces — sign-in flow + auth handler endpoints.
       if (path.startsWith("/signin") || path.startsWith("/api/auth")) return true;
+      // Inngest webhook endpoint: must be public so Inngest cloud (or the local
+      // dev CLI) can register functions and invoke them. Auth happens via
+      // INNGEST_SIGNING_KEY signature verification inside `serve()`, not via
+      // a user session.
+      if (path === "/api/inngest") return true;
       return !!a?.user && isAllowedEmail(a.user.email);
     },
   },

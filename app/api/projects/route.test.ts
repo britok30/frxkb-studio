@@ -52,7 +52,7 @@ describe("POST /api/projects", () => {
   });
 
   it("returns 400 when niche is missing", async () => {
-    const res = await POST(postJSON({ format: "yt-long" }));
+    const res = await POST(postJSON({ format: "reel" }));
     expect(res.status).toBe(400);
   });
 
@@ -62,7 +62,12 @@ describe("POST /api/projects", () => {
   });
 
   it("returns 400 when sceneCount is out of range", async () => {
-    const res = await POST(postJSON({ niche: "x", format: "yt-long", sceneCount: 999 }));
+    const res = await POST(postJSON({ niche: "x", format: "reel", sceneCount: 999 }));
+    expect(res.status).toBe(400);
+  });
+
+  it("returns 400 when worldType is missing", async () => {
+    const res = await POST(postJSON({ niche: "x", format: "reel" }));
     expect(res.status).toBe(400);
   });
 
@@ -73,7 +78,12 @@ describe("POST /api/projects", () => {
     });
 
     const res = await POST(
-      postJSON({ niche: "modernist living rooms", format: "yt-long", sceneCount: 2 })
+      postJSON({
+        niche: "modernist living rooms",
+        format: "reel",
+        worldType: "interior",
+        sceneCount: 2,
+      })
     );
 
     expect(res.status).toBe(201);
@@ -82,7 +92,8 @@ describe("POST /api/projects", () => {
     expect(body.scenes).toHaveLength(2);
     expect(projectsMocks.createProject).toHaveBeenCalledWith({
       niche: "modernist living rooms",
-      format: "yt-long",
+      format: "reel",
+      worldType: "interior",
       sceneCount: 2,
     });
   });
@@ -91,7 +102,9 @@ describe("POST /api/projects", () => {
     projectsMocks.createProject.mockRejectedValue(new Error("Claude rate limited"));
     vi.spyOn(console, "error").mockImplementation(() => {});
 
-    const res = await POST(postJSON({ niche: "modernist living rooms", format: "yt-long" }));
+    const res = await POST(
+      postJSON({ niche: "modernist living rooms", format: "reel", worldType: "interior" })
+    );
     expect(res.status).toBe(500);
     const body = await res.json();
     expect(body.error).toBe("Claude rate limited");

@@ -28,6 +28,12 @@ export type TopazInput = {
   compression?: number;
   /** Optional detail recovery (0-1). null = model decides. */
   recoverDetail?: number;
+  /** Target output frame rate. When set, fal auto-engages Apollo (Topaz's
+   *  frame-interpolation model) alongside Proteus to interpolate from the
+   *  source FPS up to this. We default to 60 — seedance ships at 24fps,
+   *  which reads as janky on smooth pans. Doubles the per-second tier price
+   *  but worth it for the quality jump. Set to 0 to disable. */
+  targetFps?: number;
 };
 
 export type TopazOutput = {
@@ -53,13 +59,15 @@ export function __resetTopazForTests(): void {
 }
 
 /**
- * Upscale a video via Topaz Video AI on fal.ai. Defaults to Proteus at 2×.
+ * Upscale a video via Topaz Video AI on fal.ai. Defaults to Proteus at 2×
+ * with target_fps=60 frame interpolation (Apollo) on top.
  * H264_output is forced true so the result is directly playable in browsers
  * and CapCut without re-encoding.
  *
  * Pricing on fal: $0.01/sec up to 720p output, $0.02/sec for ≤1080p,
- * $0.08/sec for >1080p output. With 2× from a 720p input → 1440p, we land
- * in the $0.08/sec tier.
+ * $0.08/sec for >1080p output. Per-second tier DOUBLES when target_fps is
+ * set (Apollo interpolation surcharge), so our default 720p→1440p+60fps
+ * lands in the $0.16/sec tier.
  */
 export async function upscaleVideo(input: TopazInput): Promise<TopazOutput> {
   const client = clientForOperator();
@@ -69,6 +77,7 @@ export async function upscaleVideo(input: TopazInput): Promise<TopazOutput> {
     upscaleFactor = 2,
     compression,
     recoverDetail,
+    targetFps = 60,
   } = input;
 
   const result = await client.subscribe("fal-ai/topaz/upscale/video", {
@@ -77,6 +86,7 @@ export async function upscaleVideo(input: TopazInput): Promise<TopazOutput> {
       model,
       upscale_factor: upscaleFactor,
       H264_output: true,
+      ...(targetFps > 0 ? { target_fps: targetFps } : {}),
       ...(compression !== undefined ? { compression } : {}),
       ...(recoverDetail !== undefined ? { recover_detail: recoverDetail } : {}),
     },

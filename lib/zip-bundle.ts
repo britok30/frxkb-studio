@@ -3,6 +3,7 @@
 import JSZip from "jszip";
 import { saveAs } from "file-saver";
 import { MANIFEST_VERSION_CLIENT } from "./manifest-version";
+import type { Metadata } from "@/lib/prompts/metadata";
 
 export type SceneAsset = {
   order: number;
@@ -21,15 +22,7 @@ export type BundleData = {
   format: string;
   thumbnailUrl: string;
   scenes: SceneAsset[];
-  metadata: {
-    youtubeTitle: string;
-    youtubeTitleAlternates: string[];
-    youtubeDescription: string;
-    youtubeTags: string[];
-    instagramCaption: string;
-    hashtags: string[];
-    pinnedComment: string;
-  };
+  metadata: Metadata;
 };
 
 /**
@@ -142,32 +135,41 @@ function slugify(s: string): string {
 }
 
 function buildPlainTextMetadata(data: BundleData): string {
+  const header = [`# ${data.title}`, `Niche: ${data.niche}`, `Format: ${data.format}`, ""];
   const m = data.metadata;
-  return [
-    `# ${data.title}`,
-    `Niche: ${data.niche}`,
-    `Format: ${data.format}`,
-    "",
-    "## YouTube title",
-    m.youtubeTitle,
-    "",
-    "## YouTube title alternates",
-    ...m.youtubeTitleAlternates.map((t) => `- ${t}`),
-    "",
-    "## YouTube description",
-    m.youtubeDescription,
-    "",
-    "## YouTube tags",
-    m.youtubeTags.join(", "),
-    "",
-    "## Instagram caption",
-    m.instagramCaption,
-    "",
-    "## Hashtags",
-    m.hashtags.map((h) => `#${h}`).join(" "),
-    "",
-    "## Pinned comment",
-    m.pinnedComment,
-    "",
-  ].join("\n");
+  switch (m.kind) {
+    case "reel":
+      return [
+        ...header,
+        "## TikTok",
+        m.tiktokCaption,
+        "",
+        m.tiktokHashtags.map((h) => `#${h}`).join(" "),
+        "",
+        "## Instagram Reels",
+        m.instagramCaption,
+        "",
+        m.instagramHashtags.map((h) => `#${h}`).join(" "),
+        "",
+        "## YouTube Shorts",
+        `Title: ${m.shortsTitle}`,
+        "",
+        m.shortsDescription,
+        "",
+        m.shortsHashtags.map((h) => `#${h}`).join(" "),
+        "",
+        "## Pinned comment (reusable across all)",
+        m.pinnedComment,
+        "",
+      ].join("\n");
+    case "carousel":
+      return [
+        ...header,
+        "## Instagram carousel",
+        m.instagramCaption,
+        "",
+        m.instagramHashtags.map((h) => `#${h}`).join(" "),
+        "",
+      ].join("\n");
+  }
 }

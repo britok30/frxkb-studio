@@ -27,14 +27,15 @@ export type SceneCardProps = {
     prompt: string;
     status: SceneStatus;
     imageUrl: string | null;
-    /** Set after Animate runs (reels). When present, render a looping video
-     *  preview instead of the still image. */
-    videoUrl: string | null;
     error: string | null;
   };
+  /** True once Animate has been kicked off on the project — clicking Animate
+   *  is an implicit approval of all stills, so the per-scene action overlay
+   *  (Approve/Regenerate/Reject) is hidden from that point on. */
+  hideActions?: boolean;
 };
 
-export function SceneCard({ projectId, scene }: SceneCardProps) {
+export function SceneCard({ projectId, scene, hideActions = false }: SceneCardProps) {
   const router = useRouter();
   const [busy, setBusy] = useState<null | "regenerate" | "approve" | "reject">(null);
   const [, startTransition] = useTransition();
@@ -69,7 +70,6 @@ export function SceneCard({ projectId, scene }: SceneCardProps) {
   const isRejected = scene.status === "rejected";
   const isGenerating = scene.status === "generating" || busy === "regenerate";
   const hasImage = !!scene.imageUrl;
-  const hasVideo = !!scene.videoUrl;
 
   return (
     <motion.div
@@ -77,29 +77,10 @@ export function SceneCard({ projectId, scene }: SceneCardProps) {
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.4, ease, delay: staggerDelay(scene.order - 1) }}
     >
-      <Card className="overflow-hidden group">
+      <Card className="overflow-hidden group pt-0">
         <div className="relative aspect-video bg-muted/40 flex items-center justify-center text-xs text-muted-foreground">
           <AnimatePresence mode="wait">
-            {hasVideo ? (
-              <motion.div
-                key={scene.videoUrl}
-                className="w-full h-full"
-                initial={{ opacity: 0 }}
-                animate={{ opacity: 1 }}
-                exit={{ opacity: 0 }}
-                transition={{ duration: 0.5, ease }}
-              >
-                <video
-                  src={scene.videoUrl!}
-                  className="w-full h-full object-cover"
-                  autoPlay
-                  loop
-                  muted
-                  playsInline
-                  poster={scene.imageUrl ?? undefined}
-                />
-              </motion.div>
-            ) : hasImage ? (
+            {hasImage ? (
               <motion.div
                 key={scene.imageUrl}
                 className="w-full h-full"
@@ -146,30 +127,35 @@ export function SceneCard({ projectId, scene }: SceneCardProps) {
             )}
           </AnimatePresence>
 
-          {/* Hover-revealed action overlay */}
-          <div className="absolute inset-x-0 bottom-0 flex items-center justify-end gap-1 p-2 bg-gradient-to-t from-black/55 to-transparent opacity-0 group-hover:opacity-100 transition-opacity">
-            <ActionButton
-              label="Approve"
-              icon={<Check className="size-3.5" />}
-              active={isApproved}
-              disabled={!hasImage || !!busy || isGenerating}
-              onClick={() => run("approve")}
-            />
-            <ActionButton
-              label="Regenerate"
-              icon={<RotateCw className={`size-3.5 ${busy === "regenerate" ? "animate-spin" : ""}`} />}
-              disabled={!!busy || isGenerating}
-              onClick={() => run("regenerate")}
-            />
-            <ActionButton
-              label="Reject"
-              icon={<X className="size-3.5" />}
-              active={isRejected}
-              destructive
-              disabled={!!busy || isGenerating}
-              onClick={() => run("reject")}
-            />
-          </div>
+          {/* Hover-revealed action overlay. Hidden once Animate has been
+              kicked off — that's an implicit approval, no need to keep
+              showing review controls on stills the operator already moved on
+              from. */}
+          {!hideActions && (
+            <div className="absolute inset-x-0 bottom-0 flex items-center justify-end gap-1 p-2 bg-gradient-to-t from-black/55 to-transparent opacity-0 group-hover:opacity-100 transition-opacity">
+              <ActionButton
+                label="Approve"
+                icon={<Check className="size-3.5" />}
+                active={isApproved}
+                disabled={!hasImage || !!busy || isGenerating}
+                onClick={() => run("approve")}
+              />
+              <ActionButton
+                label="Regenerate"
+                icon={<RotateCw className={`size-3.5 ${busy === "regenerate" ? "animate-spin" : ""}`} />}
+                disabled={!!busy || isGenerating}
+                onClick={() => run("regenerate")}
+              />
+              <ActionButton
+                label="Reject"
+                icon={<X className="size-3.5" />}
+                active={isRejected}
+                destructive
+                disabled={!!busy || isGenerating}
+                onClick={() => run("reject")}
+              />
+            </div>
+          )}
         </div>
         <CardHeader className="py-3">
           <div className="flex items-center justify-between gap-2">

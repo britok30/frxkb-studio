@@ -15,6 +15,10 @@ import type { AspectRatio } from "@/lib/prompts/types";
 export const inngest = new Inngest({
   id: "frxkb-studio",
   schemas: undefined, // schemas are inferred from event types below
+  // In dev, send to the local Inngest CLI without an event key. In prod the
+  // Vercel × Inngest integration injects INNGEST_EVENT_KEY + INNGEST_SIGNING_KEY
+  // and isDev becomes false. Without this flag the SDK refuses to send.
+  isDev: process.env.NODE_ENV !== "production",
 });
 
 /** Event types — anything we send through inngest.send() should be here. */

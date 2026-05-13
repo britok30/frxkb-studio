@@ -16,6 +16,16 @@ const concept: PromptableConcept = {
   hook: "Calm afternoons through travertine and palm shadow.",
   vibe: "1960s Brazilian modernism, palm-filtered late afternoon light.",
   notes: "Eye-level, never overcast.",
+  objectSet: [
+    "low Sergio Rodrigues poltrona",
+    "honed travertine coffee table",
+    "tall philodendron in a glazed clay pot",
+    "stack of art books on the floor",
+    "linen-slipcovered sofa",
+    "framed Burle Marx landscape print",
+    "handmade ceramic vessel set",
+    "woven sisal rug worn at the edges",
+  ],
 };
 
 const scenes = [
@@ -29,16 +39,26 @@ beforeEach(() => {
 });
 
 describe("buildMotionSystem", () => {
-  it("encodes the calm/slow constraint and forbids fast moves", () => {
+  it("encodes the calm/slow tone via an affirmative camera-move allowlist (no negation — seedance has no negative_prompt)", () => {
     const sys = buildMotionSystem();
-    expect(sys).toMatch(/calm|slow|restrained/i);
-    expect(sys).toMatch(/no fast pans|no zoom-bursts|never fast/i);
-    expect(sys).toMatch(/no people/i);
+    expect(sys).toMatch(/calm|slow|restrained|meditative/i);
+    // Affirmative allowlist — explicit list of allowed moves.
+    expect(sys).toMatch(/slow dolly in/i);
+    expect(sys).toMatch(/locked-off static|gentle pan|slow tilt/i);
+    // No-humans rule preserved (nano-banana renders people poorly), but
+    // motion may animate plants, candles, steam, fabric — anything in the home.
+    expect(sys).toMatch(/no humans appear|empty of people|no humans/i);
+  });
+
+  it("does NOT include the old negation patterns (whip-pans, no people, etc.)", () => {
+    const sys = buildMotionSystem();
+    expect(sys).not.toMatch(/never fast pans|no zoom-bursts|no whip-pans/i);
+    expect(sys).not.toMatch(/no people, no faces appearing or moving/i);
   });
 
   it("anchors in cinematography vocabulary", () => {
     const sys = buildMotionSystem();
-    expect(sys).toMatch(/dolly-in|parallax|tilt down/i);
+    expect(sys).toMatch(/dolly|pan|tilt/i);
   });
 });
 
@@ -74,15 +94,7 @@ describe("generateMotionPrompts", () => {
     expect(out.motions[2].order).toBe(3);
   });
 
-  it("uses temperature for variety (different image shouldn't always get same move)", async () => {
-    generateJSONMock.mockResolvedValue(fakeMotions(3));
-    await generateMotionPrompts({ concept, scenes });
-    const args = generateJSONMock.mock.calls[0][0];
-    expect(args.temperature).toBeGreaterThan(0);
-    expect(args.toolName).toBe("submit_motions");
-  });
-
-  it("trims excess motions and renumbers from 1 if Claude over-returned", async () => {
+it("trims excess motions and aligns each to its input scene's order", async () => {
     generateJSONMock.mockResolvedValue({
       motions: Array.from({ length: 8 }, (_, i) => ({
         order: i + 50,
@@ -94,6 +106,29 @@ describe("generateMotionPrompts", () => {
 
     expect(out.motions).toHaveLength(3);
     expect(out.motions.map((m) => m.order)).toEqual([1, 2, 3]);
+  });
+
+  it("preserves non-contiguous scene orders — animate retries pass partial targets like [2, 4, 5]", async () => {
+    // Three target scenes with gappy orders, simulating 'retry the failed ones'.
+    const partialScenes = [
+      { order: 2, prompt: scenes[1].prompt },
+      { order: 4, prompt: scenes[2].prompt },
+      { order: 5, prompt: scenes[0].prompt },
+    ];
+    generateJSONMock.mockResolvedValue({
+      motions: [
+        { order: 1, motion: "Slow dolly-in toward the back of the room with gentle dust motes drifting." },
+        { order: 2, motion: "Static camera with subtle wind rustling palm shadows on travertine." },
+        { order: 3, motion: "Gentle parallax left to right across the textured floor in golden light." },
+      ],
+    });
+
+    const out = await generateMotionPrompts({ concept, scenes: partialScenes });
+
+    // Each returned motion's order must match the corresponding INPUT scene's
+    // order, not Claude's 1..N output, otherwise the downstream Map lookup in
+    // animateAllScenes (`motionByOrder.get(scene.order)`) misses on retries.
+    expect(out.motions.map((m) => m.order)).toEqual([2, 4, 5]);
   });
 
   it("throws when Claude returns fewer motions than scenes", async () => {

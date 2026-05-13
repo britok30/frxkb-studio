@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { suggestWorld } from "@/lib/prompts/suggest-world";
-import { FormatSchema } from "@/lib/prompts/types";
+import { FormatSchema, WorldTypeSchema } from "@/lib/prompts/types";
 import { selectRecentWorlds } from "@/lib/projects-db";
 import { withSessionOperator } from "@/lib/route-helpers";
 
@@ -12,6 +12,7 @@ export const maxDuration = 60;
 
 const Body = z.object({
   format: FormatSchema,
+  worldType: WorldTypeSchema,
   /** Niches the operator just rejected via "Try another." Persisted only
    *  client-side; passed back so Claude knows not to re-propose them. */
   recentlyShown: z.array(z.string().min(1).max(300)).max(20).optional(),
@@ -38,6 +39,7 @@ export async function POST(req: Request) {
       const history = await selectRecentWorlds(50);
       const result = await suggestWorld({
         format: parsed.data.format,
+        worldType: parsed.data.worldType,
         history,
         recentlyShown: parsed.data.recentlyShown,
       });

@@ -12,21 +12,23 @@ vi.mock("@fal-ai/client", () => ({
   createFalClient: createFalClientMock,
 }));
 
-import { generateImage, __resetFalForTests } from "./fal";
+import { editImage, generateImage, __resetFalForTests } from "./fal";
 import { withOperator, type Operator } from "./operators";
 
 const britok: Operator = {
   email: "britok30@gmail.com",
   falKey: "fal-britok-key",
   anthropicKey: "ak",
-  apps: [{ name: "ArchitectGPT", url: "https://x" }],
+  apps: [{ name: "ArchitectGPT", url: "https://x", handle: "architectgpt" }],
+  worldTypes: ["interior", "exterior"],
 };
 
 const fremy: Operator = {
   email: "fremyrosso1@gmail.com",
   falKey: "fal-fremy-key",
   anthropicKey: "ak",
-  apps: [{ name: "InteriorGPT", url: "https://x" }],
+  apps: [{ name: "InteriorGPT", url: "https://x", handle: "interiorgpt" }],
+  worldTypes: ["interior"],
 };
 
 beforeEach(() => {
@@ -168,5 +170,54 @@ describe("generateImage (operator-scoped)", () => {
     expect(createFalClientMock).toHaveBeenCalledTimes(2);
     expect(createFalClientMock).toHaveBeenNthCalledWith(1, { credentials: "fal-britok-key" });
     expect(createFalClientMock).toHaveBeenNthCalledWith(2, { credentials: "fal-fremy-key" });
+  });
+});
+
+describe("editImage", () => {
+  it("calls fal-ai/nano-banana-pro/edit with image_urls + prompt", async () => {
+    subscribeMock.mockResolvedValue(fakeResponse());
+
+    await withOperator(britok, () =>
+      editImage({
+        prompt: "wide shot of an adjacent room",
+        imageUrls: ["https://blob.example/anchor.jpg"],
+        aspectRatio: "9:16",
+      })
+    );
+
+    expect(subscribeMock).toHaveBeenCalledTimes(1);
+    const [endpoint, args] = subscribeMock.mock.calls[0];
+    expect(endpoint).toBe("fal-ai/nano-banana-pro/edit");
+    expect(args.input.prompt).toBe("wide shot of an adjacent room");
+    expect(args.input.image_urls).toEqual(["https://blob.example/anchor.jpg"]);
+    expect(args.input.aspect_ratio).toBe("9:16");
+    expect(args.input.resolution).toBe("2K");
+    expect(args.logs).toBe(false);
+  });
+
+  it("accepts up to 14 reference images and forwards them all", async () => {
+    subscribeMock.mockResolvedValue(fakeResponse());
+    const urls = Array.from({ length: 14 }, (_, i) => `https://blob.example/${i}.jpg`);
+
+    await withOperator(britok, () =>
+      editImage({ prompt: "x", imageUrls: urls, aspectRatio: "1:1" })
+    );
+
+    expect(subscribeMock.mock.calls[0][1].input.image_urls).toEqual(urls);
+  });
+
+  it("rejects 0 reference images at the call site (not the API's job to validate)", async () => {
+    await expect(
+      withOperator(britok, () => editImage({ prompt: "x", imageUrls: [] }))
+    ).rejects.toThrow(/at least one reference/i);
+    expect(subscribeMock).not.toHaveBeenCalled();
+  });
+
+  it("rejects more than 14 reference images at the call site", async () => {
+    const urls = Array.from({ length: 15 }, (_, i) => `https://blob.example/${i}.jpg`);
+    await expect(
+      withOperator(britok, () => editImage({ prompt: "x", imageUrls: urls }))
+    ).rejects.toThrow(/up to 14/i);
+    expect(subscribeMock).not.toHaveBeenCalled();
   });
 });

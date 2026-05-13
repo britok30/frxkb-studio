@@ -33,9 +33,10 @@ describe("vendor price constants", () => {
 });
 
 describe("estimateImageBatch", () => {
-  it("multiplies image count by per-image price", () => {
-    expect(estimateImageBatch(60)).toBeCloseTo(60 * 0.225, 6);
-    expect(estimateImageBatch(1)).toBeCloseTo(0.225, 6);
+  it("every scene is text-to-image (no anchor, no /edit savings — reel/carousel only)", () => {
+    expect(estimateImageBatch(1)).toBeCloseTo(FAL_NANO_BANANA_PER_IMAGE, 6);
+    expect(estimateImageBatch(3)).toBeCloseTo(3 * FAL_NANO_BANANA_PER_IMAGE, 6);
+    expect(estimateImageBatch(10)).toBeCloseTo(10 * FAL_NANO_BANANA_PER_IMAGE, 6);
   });
 
   it("returns 0 for zero or negative count", () => {
@@ -45,8 +46,8 @@ describe("estimateImageBatch", () => {
 });
 
 describe("estimateThumbnail", () => {
-  it("equals one nano-banana image", () => {
-    expect(estimateThumbnail()).toBe(FAL_NANO_BANANA_PER_IMAGE);
+  it("is 0 — thumbnail generation deprecated; covers derive from scenes", () => {
+    expect(estimateThumbnail()).toBe(0);
   });
 });
 
@@ -66,35 +67,29 @@ describe("estimateSceneGen", () => {
 });
 
 describe("estimateProjectTotal (Pro pricing — $0.225/img at 2K)", () => {
-  it("yt-long with 60 scenes is roughly $13.80-$14.20", () => {
-    const total = estimateProjectTotal("yt-long", 60);
-    expect(total).toBeGreaterThan(13.8);
-    expect(total).toBeLessThan(14.2);
+  it("reel with 3 scenes is roughly $0.70-$0.90 (3 × text-to-image, no thumbnail)", () => {
+    const total = estimateProjectTotal("reel", 3);
+    expect(total).toBeGreaterThan(0.7);
+    expect(total).toBeLessThan(0.9);
   });
 
-  it("reel with 5 scenes is roughly $1.30-$1.55", () => {
-    const total = estimateProjectTotal("reel", 5);
-    expect(total).toBeGreaterThan(1.3);
-    expect(total).toBeLessThan(1.55);
-  });
-
-  it("carousel with 10 slides is roughly $2.45-$2.75 (new default)", () => {
+  it("carousel with 10 slides is roughly $2.30-$2.55 (10 × text-to-image, no thumbnail)", () => {
     const total = estimateProjectTotal("carousel", 10);
-    expect(total).toBeGreaterThan(2.45);
-    expect(total).toBeLessThan(2.75);
+    expect(total).toBeGreaterThan(2.3);
+    expect(total).toBeLessThan(2.55);
   });
 
-  it("scales with scene count — 120 scenes costs more than 60", () => {
-    const sixty = estimateProjectTotal("yt-long", 60);
-    const oneTwenty = estimateProjectTotal("yt-long", 120);
-    expect(oneTwenty).toBeGreaterThan(sixty);
-    // Roughly: 60 more scenes × $0.225 = $13.50 + extra Claude tokens.
-    expect(oneTwenty - sixty).toBeGreaterThan(13.4);
+  it("scales with scene count — 20 carousel slides costs more than 10", () => {
+    const ten = estimateProjectTotal("carousel", 10);
+    const twenty = estimateProjectTotal("carousel", 20);
+    expect(twenty).toBeGreaterThan(ten);
+    // 10 extra slides × $0.225 (text-to-image) = $2.25 + small Claude bump.
+    expect(twenty - ten).toBeGreaterThan(2.2);
   });
 
   it("decomposes cleanly: total = scripting + images + finalize", () => {
-    const sceneCount = 60;
-    const total = estimateProjectTotal("yt-long", sceneCount);
+    const sceneCount = 10;
+    const total = estimateProjectTotal("carousel", sceneCount);
     const sum =
       estimateProjectScripting(sceneCount) +
       estimateBatchImages(sceneCount) +
@@ -127,29 +122,35 @@ describe("video pipeline pricing", () => {
     expect(estimateSeedance(0)).toBe(0);
   });
 
-  it("topaz above-1080p output is $0.08/sec (default for our 720p→1440p path)", () => {
+  it("topaz above-1080p output is $0.08/sec base (doubles with 60fps interpolation)", () => {
     expect(FAL_TOPAZ_PER_SECOND_GT_1080P).toBe(0.08);
-    expect(estimateTopazUpscale(15)).toBeCloseTo(15 * 0.08, 6);
+    // Default path runs interpolation (target_fps=60), so the rate doubles.
+    expect(estimateTopazUpscale(15)).toBeCloseTo(15 * 0.16, 6);
   });
 
-  it("topaz tier picker", () => {
-    expect(estimateTopazUpscale(10, "le-720p")).toBeCloseTo(0.1, 6);
-    expect(estimateTopazUpscale(10, "le-1080p")).toBeCloseTo(0.2, 6);
-    expect(estimateTopazUpscale(10, "gt-1080p")).toBeCloseTo(0.8, 6);
+  it("topaz tier picker (interpolated default)", () => {
+    expect(estimateTopazUpscale(10, "le-720p")).toBeCloseTo(0.2, 6);
+    expect(estimateTopazUpscale(10, "le-1080p")).toBeCloseTo(0.4, 6);
+    expect(estimateTopazUpscale(10, "gt-1080p")).toBeCloseTo(1.6, 6);
   });
 
-  it("animate batch for a 5×3s reel is in the $4.50-$5.20 range", () => {
-    const total = estimateAnimateBatch(5, 3);
-    expect(total).toBeGreaterThan(4.5);
-    expect(total).toBeLessThan(5.2);
+  it("topaz interpolated=false uses base rate (24fps passthrough)", () => {
+    expect(estimateTopazUpscale(10, "gt-1080p", false)).toBeCloseTo(0.8, 6);
+  });
+
+  it("animate batch for a 3×5s reel is in the $5.80-$6.30 range (Apollo 60fps interp included)", () => {
+    const total = estimateAnimateBatch(3, 5);
+    expect(total).toBeGreaterThan(5.8);
+    expect(total).toBeLessThan(6.3);
   });
 
   it("animate batch scales linearly with total seconds", () => {
-    const five = estimateAnimateBatch(5, 3); // 15s
-    const ten = estimateAnimateBatch(10, 3); // 30s
-    // Roughly 2× the per-sec (seedance + topaz) costs, plus a smaller Claude bump.
-    const perSecCost = FAL_SEEDANCE_FAST_PER_SECOND_720P + FAL_TOPAZ_PER_SECOND_GT_1080P;
-    expect(ten - five).toBeGreaterThan(15 * perSecCost * 0.95);
+    const baseline = estimateAnimateBatch(3, 5); // 15s
+    const doubled = estimateAnimateBatch(6, 5); // 30s
+    // Roughly 2× the per-sec (seedance + topaz w/ interp) costs, plus a smaller Claude bump.
+    const perSecCost =
+      FAL_SEEDANCE_FAST_PER_SECOND_720P + FAL_TOPAZ_PER_SECOND_GT_1080P * 2;
+    expect(doubled - baseline).toBeGreaterThan(15 * perSecCost * 0.95);
   });
 });
 

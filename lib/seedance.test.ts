@@ -16,7 +16,8 @@ const britok: Operator = {
   email: "britok30@gmail.com",
   falKey: "fal-key",
   anthropicKey: "ak",
-  apps: [{ name: "ArchitectGPT", url: "https://x" }],
+  apps: [{ name: "ArchitectGPT", url: "https://x", handle: "architectgpt" }],
+  worldTypes: ["interior", "exterior"],
 };
 
 beforeEach(() => {
@@ -59,6 +60,30 @@ describe("generateVideo", () => {
     expect(args.input.duration).toBe("4");
     expect(args.input.resolution).toBe("720p");
     expect(args.input.aspect_ratio).toBe("9:16");
+  });
+
+  it("disables generated audio (operator adds music in CapCut)", async () => {
+    subscribeMock.mockResolvedValue(okResponse);
+
+    await withOperator(britok, () =>
+      generateVideo({ imageUrl: "https://x", motionPrompt: "p" })
+    );
+    expect(subscribeMock.mock.calls[0][1].input.generate_audio).toBe(false);
+  });
+
+  it("clamps duration to seedance's 4-15s range — reels default to 3s but the API rejects anything below 4", async () => {
+    subscribeMock.mockResolvedValue(okResponse);
+
+    await withOperator(britok, () =>
+      generateVideo({ imageUrl: "https://x", motionPrompt: "p", durationSec: 3 })
+    );
+    expect(subscribeMock.mock.calls[0][1].input.duration).toBe("4");
+
+    subscribeMock.mockClear();
+    await withOperator(britok, () =>
+      generateVideo({ imageUrl: "https://x", motionPrompt: "p", durationSec: 30 })
+    );
+    expect(subscribeMock.mock.calls[0][1].input.duration).toBe("15");
   });
 
   it("forwards overrides for duration, resolution, aspect, seed", async () => {

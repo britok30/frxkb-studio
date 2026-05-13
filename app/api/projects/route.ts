@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { createProject, listProjects } from "@/lib/projects";
-import { FormatSchema } from "@/lib/prompts/types";
+import { FormatSchema, WorldTypeSchema } from "@/lib/prompts/types";
 import { withSessionOperator } from "@/lib/route-helpers";
 
 export const runtime = "nodejs";
@@ -11,6 +11,7 @@ export const dynamic = "force-dynamic";
 const CreateBody = z.object({
   niche: z.string().min(2).max(200),
   format: FormatSchema,
+  worldType: WorldTypeSchema,
   sceneCount: z.number().int().min(1).max(120).optional(),
   sceneDurationSec: z.number().int().min(0).max(15).optional(),
   operatorNotes: z.string().max(2000).optional(),

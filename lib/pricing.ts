@@ -7,7 +7,7 @@
  * with `formatCost` for display.
  */
 
-import type { Format } from "@/lib/prompts/types";
+import { defaultsForFormat, type Format } from "@/lib/prompts/types";
 
 // ── Vendor prices ────────────────────────────────────────────────────────────
 
@@ -16,14 +16,23 @@ import type { Format } from "@/lib/prompts/types";
  *  $0.30 (overkill for our use). */
 export const FAL_NANO_BANANA_PER_IMAGE = 0.225;
 
+/** fal.ai nano-banana-pro/edit — flat $0.15/image at 1K/2K (4K is $0.30).
+ *  Used for non-anchor scenes to lock visual continuity against an anchor
+ *  image. Cheaper per call than text-to-image at 2K. */
+export const FAL_NANO_BANANA_EDIT_PER_IMAGE = 0.15;
+
 /** Seedance 2.0 Fast image-to-video at 720p — $0.2419 per second of video. */
 export const FAL_SEEDANCE_FAST_PER_SECOND_720P = 0.2419;
 
 /** Topaz video upscale tiered pricing per second of OUTPUT.
- *  ≤720p: $0.01/s, ≤1080p: $0.02/s, >1080p: $0.08/s. */
+ *  ≤720p: $0.01/s, ≤1080p: $0.02/s, >1080p: $0.08/s.
+ *  Doubles when target_fps is set (Apollo frame-interpolation surcharge). */
 export const FAL_TOPAZ_PER_SECOND_LE_720P = 0.01;
 export const FAL_TOPAZ_PER_SECOND_LE_1080P = 0.02;
 export const FAL_TOPAZ_PER_SECOND_GT_1080P = 0.08;
+/** Multiplier applied to the tier rate when target_fps is set. Default
+ *  pipeline upscales 24fps → 60fps, so the multiplier always applies. */
+export const FAL_TOPAZ_FPS_INTERPOLATION_MULTIPLIER = 2;
 
 /** Anthropic Claude Opus 4.7 — $5/MTok input, $25/MTok output. */
 export const CLAUDE_OPUS_4_7_INPUT_PER_MTOK = 5;
@@ -87,12 +96,24 @@ export function estimateSuggestWorld(): number {
   return claudeCost(CLAUDE_INPUT_TOKENS.suggestWorld, CLAUDE_OUTPUT_TOKENS.suggestWorld);
 }
 
+/**
+ * Cost of generating N scene images for reel/carousel. Every scene runs
+ * through nano-banana-pro text-to-image with its own self-contained prompt
+ * + a fresh seed — no anchor, no /edit chain. Visual cohesion comes from
+ * shared Claude vocabulary across scene prompts, not pixel anchoring.
+ *
+ * Before-after pricing is separate (see estimateProjectTotal): the "after"
+ * is a legitimate edit of the operator's upload and uses /edit at $0.15.
+ */
 export function estimateImageBatch(imageCount: number): number {
   return Math.max(0, imageCount) * FAL_NANO_BANANA_PER_IMAGE;
 }
 
+/** Thumbnail uses nano-banana-pro/edit conditioned on the project's anchor
+ *  Deprecated 2026-05-10 — covers now derive live from scenes (no fal call).
+ *  Returns 0 so any straggler caller doesn't double-count. */
 export function estimateThumbnail(): number {
-  return FAL_NANO_BANANA_PER_IMAGE;
+  return 0;
 }
 
 // ── Phase totals ─────────────────────────────────────────────────────────────
@@ -108,9 +129,10 @@ export function estimateBatchImages(sceneCount: number): number {
   return estimateImageBatch(sceneCount);
 }
 
-/** Cost of finalize — Claude metadata + nano-banana thumbnail. */
+/** Cost of finalize — Claude metadata only. Thumbnail generation was
+ *  deprecated; covers derive live from scenes. */
 export function estimateFinalize(): number {
-  return estimateMetadataGen() + estimateThumbnail();
+  return estimateMetadataGen();
 }
 
 // ── Video pipeline (reels) ──────────────────────────────────────────────────
@@ -120,17 +142,22 @@ export function estimateSeedance(durationSec: number): number {
   return Math.max(0, durationSec) * FAL_SEEDANCE_FAST_PER_SECOND_720P;
 }
 
-/** Topaz upscale cost. Default path: 720p → 1440p (2× upscale → above 1080p). */
+/** Topaz upscale cost. Default path: 720p → 1440p (2× upscale → above 1080p)
+ *  with frame interpolation to 60fps (target_fps in lib/topaz.ts), so the
+ *  per-second rate doubles via the Apollo surcharge. Pass interpolated=false
+ *  to estimate without it. */
 export function estimateTopazUpscale(
   durationSec: number,
-  outputTier: "le-720p" | "le-1080p" | "gt-1080p" = "gt-1080p"
+  outputTier: "le-720p" | "le-1080p" | "gt-1080p" = "gt-1080p",
+  interpolated: boolean = true
 ): number {
-  const rate =
+  const baseRate =
     outputTier === "le-720p"
       ? FAL_TOPAZ_PER_SECOND_LE_720P
       : outputTier === "le-1080p"
         ? FAL_TOPAZ_PER_SECOND_LE_1080P
         : FAL_TOPAZ_PER_SECOND_GT_1080P;
+  const rate = interpolated ? baseRate * FAL_TOPAZ_FPS_INTERPOLATION_MULTIPLIER : baseRate;
   return Math.max(0, durationSec) * rate;
 }
 
@@ -156,8 +183,21 @@ export function estimateAnimateBatch(sceneCount: number, perSceneDurationSec: nu
 }
 
 /** All-in cost of producing one project end-to-end (scripting → images →
- *  finalize), assuming no scene rejects/regens. */
-export function estimateProjectTotal(_format: Format, sceneCount: number): number {
+ *  finalize), assuming no scene rejects/regens. Before-after is special:
+ *  the "before" image is operator-uploaded (free), only the "after" runs
+ *  through fal (1 edit at $0.15), animate runs on the after only (the
+ *  upload stays static — animating real photos invites uncanny artifacts),
+ *  and the cover is just the after image (no fal call). */
+export function estimateProjectTotal(format: Format, sceneCount: number): number {
+  if (format === "before-after") {
+    const dur = defaultsForFormat("before-after").sceneDurationSec;
+    return (
+      estimateConceptGen() +
+      FAL_NANO_BANANA_EDIT_PER_IMAGE + // 1 edit (the "after")
+      estimateAnimateBatch(1, dur) + // only the after animates
+      estimateMetadataGen() // metadata only — no thumbnail fal call
+    );
+  }
   return (
     estimateProjectScripting(sceneCount) +
     estimateBatchImages(sceneCount) +

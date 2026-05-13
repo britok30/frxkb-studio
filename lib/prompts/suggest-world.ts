@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { generateJSON } from "@/lib/claude";
-import type { Format } from "./types";
+import type { Format, WorldType } from "./types";
+import { NICHE_POOL, sampleN } from "./niche-pool";
 
 export const SuggestedWorldSchema = z.object({
   /** A specific niche string the operator can paste straight into the wizard. */
@@ -20,6 +21,9 @@ export type WorldHistoryEntry = {
 
 export type SuggestWorldInput = {
   format: Format;
+  /** Visual lane the operator picked — Claude scopes the suggestion to one
+   *  side so an interior request never returns a facade niche. */
+  worldType: WorldType;
   /** Recent past worlds the operator (or studio) has already produced.
    *  Claude is instructed to avoid anything close to these. */
   history: WorldHistoryEntry[];
@@ -28,64 +32,120 @@ export type SuggestWorldInput = {
    *  this, Claude has no signal that we rejected a previous suggestion (since
    *  rejected suggestions never hit the DB). */
   recentlyShown?: string[];
+  /** Altitude-calibration examples drawn from NICHE_POOL[worldType]. Injected
+   *  into the user prompt so Claude calibrates to object-led, lineage-anchored
+   *  niches instead of falling back to its own academic defaults (which is
+   *  what produced the historic "Costa Brava drift" failure mode). Auto-
+   *  populated by suggestWorld() if omitted; tests pass [] to skip injection. */
+  altitudeExamples?: string[];
 };
 
+/** How many NICHE_POOL samples to inject as altitude calibration. Three is
+ *  enough to span emotional registers without bloating the prompt. */
+const ALTITUDE_EXAMPLE_COUNT = 3;
+
+/** Sample N altitude-calibration niches from NICHE_POOL[worldType], filtering
+ *  out any that already appear (case-insensitive substring match) in the
+ *  operator's history or current-session rejected list. Otherwise we'd suggest
+ *  Claude a niche the operator just skipped. */
+export function pickAltitudeExamples(
+  worldType: WorldType,
+  history: WorldHistoryEntry[],
+  recentlyShown: string[] = [],
+  count: number = ALTITUDE_EXAMPLE_COUNT,
+): string[] {
+  const seen = new Set<string>(
+    [...history.map((h) => h.niche), ...recentlyShown].map((n) => n.toLowerCase().trim()),
+  );
+  const eligible = NICHE_POOL[worldType].filter((n) => !seen.has(n.toLowerCase().trim()));
+  return sampleN(eligible, count);
+}
+
 export function buildSuggestSystem(): string {
-  return `You are a creative director for a faceless ambient YouTube/Reels channel about architecture and interior design. The audience watches in the background while working — calm, slow, restrained content.
+  return `You are a creative director for a design-inspiration feed (Instagram/Reels/TikTok) that markets ArchitectGPT to architects, interior designers, and design-obsessed scrollers. Every piece is moodboard fuel — imagery a designer screenshots for their inspiration folder or a homeowner saves with "I want my home to feel like this."
 
-Your single job here is to PROPOSE a fresh, specific niche the operator hasn't already produced. Variety across the channel matters. Repeating a world wastes the audience's attention and the operator's budget.
+The subject is ALWAYS a residential home — a real place a real person lives. Houses, villas, cottages, lofts, fincas, riads, cabins, townhouses, apartments. Never museums, galleries, hotels, offices, restaurants, or showrooms.
 
-What makes a strong niche:
-- A tight intersection of THREE axes: era + region + material/atmosphere. Vague is fatal. "Modernist homes" is too broad. "1965 Nordic country houses with pine boards and snow-light" is the right altitude.
-- A specific time of day or season baked in (golden hour, overcast morning, summer dusk, etc.). Light is the most underrated axis.
-- Something that feels like a coherent visual world, not a category. The operator should be able to picture three rooms in it without thinking.
-- AVOID generic luxury / "modern home" tropes. Pick a specific lineage (regional, period, or material-driven).
+Your job: propose ONE specific world (the niche) for the next piece. The niche should describe a HOME, not just an aesthetic.
 
-You will receive a list of past worlds the operator has already produced. AVOID:
-- Exact matches on era + region + material combo.
-- Subtle re-skins of the same world (e.g. don't suggest "1962 Brazilian modernism" if "1960s Brazilian modernism" exists).
-- Same region + adjacent decade (e.g. avoid "1965 Italian Riviera" if "1968 Italian Riviera" exists).
+What "save-worthy" looks like:
+- A residential world rooted in a real place — homes people fantasize about visiting, living in, or designing toward.
+- A clear material palette someone could name in one breath (lime-washed plaster, oak, linen; or concrete, steel, glass; or travertine, terracotta, raw wood).
+- A specific quality of light that makes the materials photograph beautifully — low golden rake, soft north skylight, overcast diffusion, summer haze, late blue hour, dappled tree shadow.
+- A specific emotional register a designer feels INSIDE the imagery — hush, longing, stillness, awe, intimacy, anticipation, reverence, slowness, soft melancholy, suspension.
+- Strong cultural identity over abstract style. Beloved regional vernaculars, recognizable architectural lineages, and material traditions with depth all pass. Pure category words ("modern home," "luxury") do not — name the lineage that gives a category meaning.
+- An implied way of LIVING in this home — the kinds of plants, art, books, ceramics, textiles, daily-life objects that would naturally belong there. The niche should make a designer instantly picture not just the architecture but the contents.
+- Name 2-4 anchor objects of the lineage in the niche string itself — "A Kyoto townhouse with paper screens, tatami, ikebana, gray cypress beams" beats "Japanese minimalism." Object-led niches transitively prime the downstream concept brief.
 
-Lean toward UNDEREXPLORED axes if the operator's history clusters somewhere. If they've done a lot of mid-century, suggest something pre-war or post-2000. If lots of European, try Asian, South American, or North African.
+Variety method (internal, do NOT include in output):
+Brainstorm FIVE candidate worlds that all fit the operator's lane. Vary primarily on:
+- Emotional register — pick a different feeling for each candidate.
+- Visual signature — what's the one screenshot moment in each world that would make a designer hit save?
+- Light + atmosphere — different times of day, weather, season.
+
+Region, era, and named lineage follow from those — they're texture, not driver. Commit to the candidate with the strongest, most inhabitable identity. Output only the final niche, never the brainstorm.
+
+History handling:
+You'll receive past worlds the operator has produced. Skip exact restatements. But same region with a different season, light, or scale is a different world — riding a vein the operator clearly loves is fine. Variety here comes from emotional register and visual signature, not from forcing geographic spread.
 
 Output two fields:
-- niche: a single sentence (no period at end), 8-200 chars, suitable to paste into the wizard's niche field. Concrete and committed.
-- rationale: one sentence explaining what makes this fresh given the history. Helps the operator decide.`;
+- niche: ONE sentence (no period, 8-200 chars). Place-led, emotionally specific, materially concrete. Suitable to paste into the wizard.
+- rationale: ONE sentence on why this is the screenshot moment given the operator's history. Helps them decide.`;
 }
 
 export function buildSuggestUser(input: SuggestWorldInput): string {
+  const worldLine =
+    input.worldType === "interior"
+      ? "Visual lane: INTERIOR — inside someone's HOME. Living rooms, kitchens, bedrooms, reading nooks, hallways, studies. Spaces full of plants, art, books, ceramics, and the textures of a life. Skip facade-led or landscape-led framings — those are a separate lane."
+      : "Visual lane: EXTERIOR — a residential HOME from the outside (a house, villa, cottage, finca, riad, loft, cabin). Show the home AND the residential life around it: planters by the door, a porch with cane chairs, climbing plants on stone, a swimming pool, garden tools, an outdoor table set. Skip pavilions, museums, corporate buildings, and pure-landscape framings — those are a separate lane.";
   const lines = [
-    `Format: ${input.format} (yt-long = 8-min ambient slideshow, reel = 15s vertical, carousel = 6 still slides)`,
+    `Format: ${input.format} (reel = 15s vertical animated, carousel = 6 still slides)`,
+    worldLine,
     "",
   ];
 
   if (input.history.length === 0) {
     lines.push(
-      "Past worlds: NONE. This is the operator's first piece — pick something with strong identity and visual presence to set the channel's voice."
+      "Past worlds: NONE. This is the operator's first piece — pick a world with a strong, save-worthy identity to set the feed's voice."
     );
   } else {
-    lines.push("Past worlds (most recent first) — DO NOT repeat or near-repeat any of these:");
+    lines.push("Past worlds (most recent first) — skip exact restatements, but riding a similar vein with a different season/light/scale is welcome:");
     for (const h of input.history) {
       lines.push(`- "${h.niche}" [${h.worldSignature}] ${h.worldKeywords.join(", ")}`);
     }
     lines.push(
       "",
-      "Find an axis the history is thin on. Surprise the operator with something they wouldn't immediately suggest themselves."
+      "Lean into whichever emotional register and visual signature feels freshest — region and era are texture, not the variety lever."
     );
   }
 
   if (input.recentlyShown && input.recentlyShown.length > 0) {
     lines.push(
       "",
-      "Already proposed in THIS session and rejected by the operator — DO NOT propose anything in the same world or near it. They want something different:",
+      "Already proposed in THIS session and skipped by the operator — try a different emotional register and screenshot moment:",
     );
     for (const r of input.recentlyShown) {
       lines.push(`- "${r}"`);
     }
     lines.push(
       "",
-      "Pivot hard. If you've been suggesting interiors, suggest exteriors. If you've been suggesting Asian regions, suggest South American or Nordic. If you've been suggesting late afternoon, suggest dawn or overcast."
+      "Shift the feeling first: if the last suggestions felt hushed and still, try anticipatory or reverent. If they were warm and golden, try overcast intimacy or blue-hour suspension. Region is allowed to stay; the feeling has to move."
     );
+  }
+
+  // Altitude calibration. The strongest known anti-genericness lever — without
+  // this, Claude's suggest defaults collapse to a handful of academic niches
+  // ("1960s Brazilian modernism," "Mediterranean villas at golden hour"). With
+  // these examples in front of it, Claude either picks one verbatim or invents
+  // something at the same altitude.
+  if (input.altitudeExamples && input.altitudeExamples.length > 0) {
+    lines.push(
+      "",
+      "Altitude calibration — examples of the altitude we want (object-led, lineage-anchored, residential). You may propose ONE of these verbatim if it genuinely fits and isn't already in the operator's history, OR invent something fresh that hits the same altitude. Whichever you pick, name 2-4 anchor objects of the lineage in the niche string itself:",
+    );
+    for (const ex of input.altitudeExamples) {
+      lines.push(`- "${ex}"`);
+    }
   }
 
   return lines.join("\n");
@@ -102,16 +162,18 @@ const SUGGEST_TOOL_SCHEMA = {
 } as const;
 
 export async function suggestWorld(input: SuggestWorldInput): Promise<SuggestedWorld> {
+  // Auto-populate altitude examples from NICHE_POOL when caller didn't pass
+  // them explicitly (production path). Tests pass altitudeExamples: [] to
+  // exercise the legacy non-calibrated prompt shape.
+  const altitudeExamples =
+    input.altitudeExamples ??
+    pickAltitudeExamples(input.worldType, input.history, input.recentlyShown);
   const raw = await generateJSON<unknown>({
     system: buildSuggestSystem(),
-    user: buildSuggestUser(input),
+    user: buildSuggestUser({ ...input, altitudeExamples }),
     schema: SUGGEST_TOOL_SCHEMA as unknown as Record<string, unknown>,
     toolName: "submit_world",
     maxTokens: 800,
-    // Bumped from default — we WANT variety here. Default tool-use temperature
-    // makes Claude converge on its single "best" answer for the same input,
-    // which means clicking "Try another" returns the same world.
-    temperature: 1,
   });
   return SuggestedWorldSchema.parse(raw);
 }

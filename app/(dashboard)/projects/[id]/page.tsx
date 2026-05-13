@@ -5,6 +5,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { ProjectActions } from "./project-actions";
 import { SceneCard } from "./scene-card";
+import { AnimatedSceneCard } from "./animated-scene-card";
 import { ExportPanel, type ExportPanelData } from "./export-panel";
 import { FlowBanner } from "./flow-banner";
 import { RegenerateAllLink } from "./regenerate-all-link";
@@ -43,6 +44,11 @@ export default async function ProjectPage({ params }: { params: Promise<{ id: st
   // Per-scene duration is uniform across the project — pull from the first
   // scene with a value, fall back to 3 (reel default).
   const perSceneDurationSec = scenes[0]?.durationSec ?? 3;
+  // Once Animate has been kicked off, hide per-scene action buttons. Signal:
+  // any scene has a videoUrl OR a motionPrompt (set by markSceneAnimating
+  // before seedance runs). Approving/regenerating/rejecting stills past this
+  // point is meaningless — the operator already moved on.
+  const animateStarted = scenes.some((s) => !!s.videoUrl || !!s.motionPrompt);
   // Background job in flight: project-level lock or per-scene generating.
   // Drives the AutoRefresh island so the page polls without manual reload.
   const isBusy =
@@ -66,6 +72,8 @@ export default async function ProjectPage({ params }: { params: Promise<{ id: st
             <span>{project.niche}</span>
             <span aria-hidden>·</span>
             <span>{formatLabel(project.format)}</span>
+            <span aria-hidden>·</span>
+            <span className="capitalize">{project.worldType}</span>
             <span aria-hidden>·</span>
             <Badge variant="secondary" className="text-[10px]">{project.status}</Badge>
           </div>
@@ -120,47 +128,106 @@ export default async function ProjectPage({ params }: { params: Promise<{ id: st
                 <div className="whitespace-pre-line text-muted-foreground">{concept.notes}</div>
               </div>
             )}
+            {concept.objectSet && concept.objectSet.length > 0 && (
+              <div>
+                <div className="text-xs text-muted-foreground mb-1.5">Object set</div>
+                <div className="flex flex-wrap gap-1.5">
+                  {concept.objectSet.map((obj: string, i: number) => (
+                    <span
+                      key={i}
+                      className="text-xs rounded-full border px-2 py-0.5 bg-muted/30 tracking-tight"
+                    >
+                      {obj}
+                    </span>
+                  ))}
+                </div>
+              </div>
+            )}
           </CardContent>
         </Card>
       )}
 
       {exportData && <ExportPanel data={exportData} />}
 
-      <div className="flex items-baseline justify-between gap-4 border-b pb-3">
-        <span className="text-xs uppercase tracking-[0.18em] text-muted-foreground">Scenes</span>
-        <div className="flex items-baseline gap-4">
-          <div className="text-xs text-muted-foreground tabular-nums">
-            {counts.generated + counts.approved}/{scenes.length} ready ·{" "}
-            {counts.pending} pending · {counts.rejected} failed
+      <section className="flex flex-col gap-4">
+        <div className="flex items-baseline justify-between gap-4 border-b pb-3">
+          <span className="text-xs uppercase tracking-[0.18em] text-muted-foreground">
+            Stills
+          </span>
+          <div className="flex items-baseline gap-4">
+            <div className="text-xs text-muted-foreground tabular-nums">
+              {counts.generated + counts.approved}/{scenes.length} ready ·{" "}
+              {counts.pending} pending · {counts.rejected} failed
+            </div>
+            {scenes.length > 0 && (
+              <RegenerateAllLink
+                projectId={project.id}
+                totalScenes={scenes.length}
+                costLabel={formatCost(estimateBatchImages(scenes.length))}
+                hasAnyAnimated={animatedCount > 0}
+                jobInFlight={
+                  project.status === "generating" || project.status === "finalizing"
+                }
+              />
+            )}
           </div>
-          {scenes.length > 0 && (
-            <RegenerateAllLink
-              projectId={project.id}
-              totalScenes={scenes.length}
-              costLabel={formatCost(estimateBatchImages(scenes.length))}
-              hasAnyAnimated={animatedCount > 0}
-            />
-          )}
         </div>
-      </div>
 
-      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-        {scenes.map((s) => (
-          <SceneCard
-            key={s.id}
-            projectId={project.id}
-            scene={{
-              id: s.id,
-              order: s.order,
-              prompt: s.prompt,
-              status: s.status,
-              imageUrl: s.imageUrl,
-              videoUrl: s.videoUrl,
-              error: s.error,
-            }}
-          />
-        ))}
-      </div>
+        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+          {scenes.map((s) => (
+            <SceneCard
+              key={s.id}
+              projectId={project.id}
+              scene={{
+                id: s.id,
+                order: s.order,
+                prompt: s.prompt,
+                status: s.status,
+                imageUrl: s.imageUrl,
+                error: s.error,
+              }}
+              hideActions={animateStarted}
+            />
+          ))}
+        </div>
+      </section>
+
+      {(project.format === "reel" || project.format === "before-after") &&
+        animatedCount > 0 && (
+          <section className="flex flex-col gap-4">
+            <div className="flex items-baseline justify-between gap-4 border-b pb-3">
+              <span className="text-xs uppercase tracking-[0.18em] text-muted-foreground">
+                Animated
+              </span>
+              <div className="text-xs text-muted-foreground tabular-nums">
+                {animatedCount}/{scenes.length} animated
+              </div>
+            </div>
+            {/* Reels: 9:16 cards (the deliverable aspect). Before-after: use
+                the project's stored aspect since the upload defines it. */}
+            <div className="grid gap-3 grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5">
+              {scenes
+                .filter((s) => !!s.videoUrl)
+                .map((s) => (
+                  <AnimatedSceneCard
+                    key={s.id}
+                    scene={{
+                      id: s.id,
+                      order: s.order,
+                      videoUrl: s.videoUrl as string,
+                      posterUrl: s.imageUrl,
+                      durationSec: s.durationSec,
+                    }}
+                    aspect={
+                      project.format === "before-after"
+                        ? (project.aspectRatio ?? "1:1")
+                        : "9:16"
+                    }
+                  />
+                ))}
+            </div>
+          </section>
+        )}
     </div>
   );
 }
@@ -170,7 +237,6 @@ type ProjectRow = {
   title: string;
   niche: string;
   format: string;
-  thumbnailUrl: string | null;
   metadata: ExportPanelData["metadata"] | null;
 };
 
@@ -183,31 +249,45 @@ type SceneRow = {
   status: string;
 };
 
-/** Build the props for ExportPanel out of the DB row. Returns null if the
- *  project hasn't been finalized yet (no metadata or thumbnail). */
+/** Build the props for ExportPanel out of the DB row. Returns null until
+ *  finalize has set the metadata. The cover image always derives live from
+ *  scenes (anchor for reel/carousel, after for before-after) — thumbnail
+ *  generation was deprecated. */
 function buildExportData(project: ProjectRow, scenes: SceneRow[]): ExportPanelData | null {
-  if (!project.thumbnailUrl || !project.metadata) return null;
+  if (!project.metadata) return null;
+  const renderableScenes = scenes
+    .filter((s) => !!s.imageUrl && (s.status === "generated" || s.status === "approved"))
+    .map((s) => ({
+      order: s.order,
+      prompt: s.prompt,
+      durationSec: s.durationSec,
+      imageUrl: s.imageUrl as string,
+      videoUrl: s.videoUrl,
+    }));
+
+  if (renderableScenes.length === 0) return null;
+
+  // Cover = anchor scene by default (lowest order). Before-after uses the
+  // highest-order scene (the "after") as its visual payoff.
+  const sortedAsc = [...renderableScenes].sort((a, b) => a.order - b.order);
+  const cover =
+    project.format === "before-after"
+      ? sortedAsc[sortedAsc.length - 1]
+      : sortedAsc[0];
+
   return {
     projectId: project.id,
     title: project.title,
     niche: project.niche,
     format: project.format,
-    thumbnailUrl: project.thumbnailUrl,
+    thumbnailUrl: cover.imageUrl,
     metadata: project.metadata,
-    scenes: scenes
-      .filter((s) => !!s.imageUrl && (s.status === "generated" || s.status === "approved"))
-      .map((s) => ({
-        order: s.order,
-        prompt: s.prompt,
-        durationSec: s.durationSec,
-        imageUrl: s.imageUrl as string,
-        videoUrl: s.videoUrl,
-      })),
+    scenes: renderableScenes,
   };
 }
 
 function formatLabel(f: string) {
-  return f === "yt-long" ? "YouTube long-form" : f === "reel" ? "Reel" : f === "carousel" ? "Carousel" : f;
+  return f === "reel" ? "Reel" : f === "carousel" ? "Carousel" : f;
 }
 
 type StatusCounts = {

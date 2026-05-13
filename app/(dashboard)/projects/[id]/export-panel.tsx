@@ -9,6 +9,7 @@ import { Separator } from "@/components/ui/separator";
 import { Badge } from "@/components/ui/badge";
 import { ease } from "@/lib/motion";
 import { downloadBundle, type BundleData } from "@/lib/zip-bundle";
+import type { Metadata } from "@/lib/prompts/metadata";
 
 export type ExportPanelData = {
   projectId: string;
@@ -24,15 +25,7 @@ export type ExportPanelData = {
     /** Set when scene has been animated (reels). */
     videoUrl?: string | null;
   }[];
-  metadata: {
-    youtubeTitle: string;
-    youtubeTitleAlternates: string[];
-    youtubeDescription: string;
-    youtubeTags: string[];
-    instagramCaption: string;
-    hashtags: string[];
-    pinnedComment: string;
-  };
+  metadata: Metadata;
 };
 
 export function ExportPanel({ data }: { data: ExportPanelData }) {
@@ -80,7 +73,7 @@ export function ExportPanel({ data }: { data: ExportPanelData }) {
             <div>
               <CardTitle className="text-base">Export bundle</CardTitle>
               <CardDescription>
-                {scenes.length} scenes + thumbnail + metadata, packed as a single zip.
+                {scenes.length} scenes + cover + metadata, packed as a single zip.
               </CardDescription>
             </div>
             <Badge>Ready</Badge>
@@ -91,7 +84,7 @@ export function ExportPanel({ data }: { data: ExportPanelData }) {
             {/* eslint-disable-next-line @next/next/no-img-element */}
             <img
               src={thumbnailUrl}
-              alt="Thumbnail"
+              alt="Cover"
               className="w-full rounded-md border bg-muted/40 object-cover"
             />
             <motion.button
@@ -110,42 +103,74 @@ export function ExportPanel({ data }: { data: ExportPanelData }) {
                 : "Download bundle"}
             </motion.button>
             <a
-              className="text-xs text-muted-foreground hover:text-foreground"
+              className="text-xs text-muted-foreground hover:text-foreground tracking-tight"
               href={thumbnailUrl}
               target="_blank"
               rel="noreferrer"
             >
-              ↗ Open thumbnail
+              ↗ Open cover image
             </a>
           </div>
 
-          <div className="flex flex-col gap-4">
-            <CopyField label="YouTube title" value={metadata.youtubeTitle} />
-            {metadata.youtubeTitleAlternates.length > 0 && (
-              <div className="flex flex-col gap-1.5">
-                <div className="text-xs text-muted-foreground">Title alternates</div>
-                <div className="flex flex-col gap-1.5">
-                  {metadata.youtubeTitleAlternates.map((t, i) => (
-                    <CopyField key={i} value={t} small />
-                  ))}
-                </div>
-              </div>
-            )}
-            <CopyField label="Description" value={metadata.youtubeDescription} multiline />
-            <CopyField label="Pinned comment" value={metadata.pinnedComment} multiline />
-
-            <Separator />
-
-            <CopyField label="Instagram caption" value={metadata.instagramCaption} multiline />
-
-            <div className="grid gap-3 sm:grid-cols-2">
-              <ChipList label="YouTube tags" items={metadata.youtubeTags} />
-              <ChipList label="Hashtags" items={metadata.hashtags.map((h) => `#${h}`)} />
-            </div>
-          </div>
+          <MetadataView metadata={metadata} />
         </CardContent>
       </Card>
     </motion.div>
+  );
+}
+
+function MetadataView({ metadata }: { metadata: Metadata }) {
+  switch (metadata.kind) {
+    case "reel":
+      return <ReelMetadataView metadata={metadata} />;
+    case "carousel":
+      return <CarouselMetadataView metadata={metadata} />;
+  }
+}
+
+function ReelMetadataView({ metadata }: { metadata: Extract<Metadata, { kind: "reel" }> }) {
+  return (
+    <div className="flex flex-col gap-6">
+      <PlatformSection title="TikTok">
+        <CopyField label="Caption" value={metadata.tiktokCaption} multiline />
+        <ChipList label="Hashtags" items={metadata.tiktokHashtags.map((h) => `#${h}`)} />
+      </PlatformSection>
+      <Separator />
+      <PlatformSection title="Instagram Reels">
+        <CopyField label="Caption" value={metadata.instagramCaption} multiline />
+        <ChipList label="Hashtags" items={metadata.instagramHashtags.map((h) => `#${h}`)} />
+      </PlatformSection>
+      <Separator />
+      <PlatformSection title="YouTube Shorts">
+        <CopyField label="Title" value={metadata.shortsTitle} />
+        <CopyField label="Description" value={metadata.shortsDescription} multiline />
+        <ChipList label="Hashtags" items={metadata.shortsHashtags.map((h) => `#${h}`)} />
+      </PlatformSection>
+      <Separator />
+      <CopyField label="Pinned comment (reusable across all)" value={metadata.pinnedComment} multiline />
+    </div>
+  );
+}
+
+function CarouselMetadataView({ metadata }: { metadata: Extract<Metadata, { kind: "carousel" }> }) {
+  return (
+    <div className="flex flex-col gap-4">
+      <PlatformSection title="Instagram carousel">
+        <CopyField label="Caption" value={metadata.instagramCaption} multiline />
+        <ChipList label="Hashtags" items={metadata.instagramHashtags.map((h) => `#${h}`)} />
+      </PlatformSection>
+    </div>
+  );
+}
+
+function PlatformSection({ title, children }: { title: string; children: React.ReactNode }) {
+  return (
+    <div className="flex flex-col gap-3">
+      <div className="text-[11px] uppercase tracking-[0.18em] text-muted-foreground">
+        {title}
+      </div>
+      {children}
+    </div>
   );
 }
 

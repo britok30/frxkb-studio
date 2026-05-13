@@ -2,7 +2,7 @@
 // no conditionals, no parsing, no external calls. Tested implicitly through
 // `lib/projects.ts` orchestration tests + manual smoke against Neon.
 
-import { and, asc, desc, eq, lt, ne, or, sql } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, lt, ne, or, sql } from "drizzle-orm";
 import { getDb, projects, scenes, type NewProject, type NewScene, type Project, type Scene } from "@/lib/db";
 
 /** A run that hasn't heartbeat-ed in this long is considered crashed and reclaimable. */
@@ -20,6 +20,64 @@ export async function insertScenes(rows: NewScene[]): Promise<Scene[]> {
 
 export async function listProjectsRows(): Promise<Project[]> {
   return await getDb().select().from(projects).orderBy(desc(projects.createdAt));
+}
+
+/**
+ * Project rows joined with each project's resolved cover image URL. The
+ * cover prefers (in order):
+ *   1. project.thumbnailUrl (set after finalize — for before-after this is
+ *      already the after image's URL).
+ *   2. For non-finalized before-after projects: the highest-order scene's
+ *      imageUrl (the "after" — more interesting than the uploaded before).
+ *   3. For non-finalized other projects: the lowest-order scene with an
+ *      imageUrl (the anchor / first generated still).
+ *   4. null when no scene has been generated yet.
+ *
+ * Single batched scenes query — no N+1.
+ */
+export async function listProjectsWithCovers(): Promise<
+  Array<Project & { coverUrl: string | null }>
+> {
+  const projectRows = await listProjectsRows();
+  if (projectRows.length === 0) return [];
+
+  // Pull every scene for the listed projects in one round-trip. Order by
+  // (projectId, order) so we can group + index without a sort pass.
+  const sceneRows = await getDb()
+    .select({
+      projectId: scenes.projectId,
+      order: scenes.order,
+      imageUrl: scenes.imageUrl,
+    })
+    .from(scenes)
+    .where(inArray(scenes.projectId, projectRows.map((p) => p.id)))
+    .orderBy(asc(scenes.projectId), asc(scenes.order));
+
+  const byProjectId = new Map<string, typeof sceneRows>();
+  for (const s of sceneRows) {
+    const arr = byProjectId.get(s.projectId);
+    if (arr) arr.push(s);
+    else byProjectId.set(s.projectId, [s]);
+  }
+
+  return projectRows.map((p) => {
+    const projScenes = byProjectId.get(p.id) ?? [];
+    if (projScenes.length === 0) return { ...p, coverUrl: null };
+
+    // Cover is ALWAYS derived live from scenes (thumbnail generation was
+    // deprecated — see lib/projects.ts finalizeProject). Single source of
+    // truth: the scenes themselves.
+    if (p.format === "before-after") {
+      // The after (highest-order scene with an image) is the visual payoff.
+      for (let i = projScenes.length - 1; i >= 0; i--) {
+        if (projScenes[i].imageUrl) return { ...p, coverUrl: projScenes[i].imageUrl };
+      }
+      return { ...p, coverUrl: null };
+    }
+    // Reel/carousel: anchor scene (lowest-order with an imageUrl).
+    const firstWithImage = projScenes.find((s) => !!s.imageUrl);
+    return { ...p, coverUrl: firstWithImage?.imageUrl ?? null };
+  });
 }
 
 /** Recent past worlds across the studio — fed to the AI suggester so it can
@@ -54,7 +112,11 @@ export async function selectDedupeCandidates(
 ): Promise<Project[]> {
   if (!signature && keywords.length === 0) return [];
   // Postgres jsonb ?| operator: "any of these keys is in the array".
-  // We use raw SQL because Drizzle's jsonb helpers don't expose ?| cleanly.
+  // The right-hand side MUST be text[] — passing a JS array via `${keywords}`
+  // makes Drizzle splat into $2,$3,... which Postgres reads as a record and
+  // rejects with "operator does not exist: jsonb ?| record". Wrapping in
+  // ARRAY[...]::text[] keeps each keyword as its own bound param (safe from
+  // injection) while giving the operator the array type it expects.
   const rows = await getDb()
     .select()
     .from(projects)
@@ -64,7 +126,10 @@ export async function selectDedupeCandidates(
         // Keyword overlap — fall back to false if keywords is empty so we
         // never accidentally select every project.
         keywords.length > 0
-          ? sql`${projects.worldKeywords} ?| ${keywords}`
+          ? sql`${projects.worldKeywords} ?| ARRAY[${sql.join(
+              keywords.map((k) => sql`${k}`),
+              sql`, `
+            )}]::text[]`
           : sql`false`
       )
     )
@@ -131,6 +196,11 @@ export async function markSceneGenerated(
      *  flows so a refreshed still doesn't keep its now-stale video preview.
      *  Operator will need to re-run Animate to get a video that matches. */
     invalidateAnimation?: boolean;
+    /** URL of the anchor image this scene was conditioned on (null for the
+     *  anchor itself, which is text-to-image). Stored so per-scene regen can
+     *  re-pass the same reference and stay visually consistent with the rest
+     *  of the sequence. Pass `null` explicitly to clear; omit to preserve. */
+    referenceImageUrl?: string | null;
   }
 ): Promise<void> {
   const set: Partial<Scene> = {
@@ -144,21 +214,25 @@ export async function markSceneGenerated(
     set.videoUrl = null;
     set.motionPrompt = null;
   }
+  if (values.referenceImageUrl !== undefined) {
+    set.referenceImageUrl = values.referenceImageUrl;
+  }
   await getDb().update(scenes).set(set).where(eq(scenes.id, id));
 }
 
 export async function markProjectFinalized(
   id: string,
   values: {
-    thumbnailUrl: string;
     metadata: NonNullable<Project["metadata"]>;
   }
 ): Promise<void> {
+  // thumbnailUrl is no longer written — the cover derives live from scenes
+  // (anchor for reel/carousel, after for before-after). Column kept nullable
+  // for legacy rows.
   await getDb()
     .update(projects)
     .set({
       status: "exported",
-      thumbnailUrl: values.thumbnailUrl,
       metadata: values.metadata,
       updatedAt: new Date(),
     })
@@ -170,6 +244,47 @@ export async function markSceneFailed(id: string, error: string): Promise<void> 
     .update(scenes)
     .set({ status: "rejected", error, updatedAt: new Date() })
     .where(eq(scenes.id, id));
+}
+
+/**
+ * Record an animate-pipeline failure for a scene WITHOUT flipping its status.
+ * The still itself is still good — only the video pipeline (motion prompt,
+ * seedance, or topaz) failed. Status stays "generated"/"approved" so the
+ * scene remains a valid animate candidate on the next click. motionPrompt is
+ * cleared so a retry asks Claude for a fresh direction.
+ */
+export async function markSceneAnimateFailed(id: string, error: string): Promise<void> {
+  await getDb()
+    .update(scenes)
+    .set({ error, motionPrompt: null, updatedAt: new Date() })
+    .where(eq(scenes.id, id));
+}
+
+/**
+ * Recovery sweep for scenes stuck in "rejected" status because of a prior
+ * animate failure (before markSceneAnimateFailed existed, animate failures
+ * called markSceneFailed which clobbered status). The signature of an
+ * animate-failure scene is: status=rejected + imageUrl set + videoUrl null +
+ * motionPrompt set + error not null. Operator-rejected scenes don't have
+ * motionPrompt set, so the signal is unambiguous.
+ *
+ * Returns the count of scenes reset.
+ */
+export async function recoverAnimateFailedScenes(projectId: string): Promise<number> {
+  const rows = await getDb()
+    .update(scenes)
+    .set({ status: "generated", error: null, motionPrompt: null, updatedAt: new Date() })
+    .where(
+      and(
+        eq(scenes.projectId, projectId),
+        eq(scenes.status, "rejected"),
+        sql`${scenes.imageUrl} IS NOT NULL`,
+        sql`${scenes.videoUrl} IS NULL`,
+        sql`${scenes.motionPrompt} IS NOT NULL`
+      )
+    )
+    .returning();
+  return rows.length;
 }
 
 /** Mark a scene's video pipeline as in flight. Status stays "approved"/"generated"

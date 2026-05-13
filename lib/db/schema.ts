@@ -1,5 +1,6 @@
 import { pgTable, text, integer, timestamp, jsonb, index } from "drizzle-orm/pg-core";
 import { relations } from "drizzle-orm";
+import type { Metadata } from "@/lib/prompts/metadata";
 
 export const projects = pgTable(
   "projects",
@@ -7,7 +8,17 @@ export const projects = pgTable(
     id: text("id").primaryKey(),
     title: text("title").notNull(),
     niche: text("niche").notNull(),
-    format: text("format", { enum: ["yt-long", "reel", "carousel"] }).notNull(),
+    format: text("format", { enum: ["reel", "carousel", "before-after"] }).notNull(),
+    /** Visual lane: interior spaces vs exterior shots. Threaded through every
+     *  prompt generator so the world stays on one side for the whole project. */
+    worldType: text("world_type", { enum: ["interior", "exterior"] }).notNull(),
+    /** Aspect ratio for downstream image generation. Reel/carousel default
+     *  by format (9:16 / 1:1); before-after derives from the uploaded "before"
+     *  image's actual dimensions and stores it here. Nullable — readers should
+     *  fall back to defaultsForFormat(format).aspectRatio. */
+    aspectRatio: text("aspect_ratio", {
+      enum: ["16:9", "9:16", "1:1", "4:3", "3:4"],
+    }),
     status: text("status", {
       enum: ["draft", "scripting", "generating", "ready", "finalizing", "exported"],
     })
@@ -19,6 +30,10 @@ export const projects = pgTable(
       hook: string;
       vibe: string;
       notes: string;
+      /** Per-piece commitment to 8-15 lineage-specific objects that drive
+       *  scene generation. Optional in the type because pre-2026-05 rows
+       *  don't have it; downstream consumers default to []. */
+      objectSet?: string[];
     }>(),
     /** Kebab-case AI-generated identifier for the project's "world" — used
      *  to detect duplicate concepts. Nullable: legacy rows have null, new
@@ -26,17 +41,10 @@ export const projects = pgTable(
     worldSignature: text("world_signature"),
     /** Canonical lowercase keyword set for fuzzy duplicate detection. */
     worldKeywords: jsonb("world_keywords").$type<string[]>(),
-    /** Set during finalize. Populated with the full Metadata blob (title,
-     *  description, tags, IG caption, hashtags, pinnedComment). */
-    metadata: jsonb("metadata").$type<{
-      youtubeTitle: string;
-      youtubeTitleAlternates: string[];
-      youtubeDescription: string;
-      youtubeTags: string[];
-      instagramCaption: string;
-      hashtags: string[];
-      pinnedComment: string;
-    }>(),
+    /** Set during finalize. Discriminated union — see `kind` field for the
+     *  variant (reel | carousel). Each variant carries the platform-tailored
+     *  copy for that format. */
+    metadata: jsonb("metadata").$type<Metadata>(),
     /** Public Vercel Blob URL of the rendered thumbnail. */
     thumbnailUrl: text("thumbnail_url"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
@@ -64,6 +72,11 @@ export const scenes = pgTable(
     /** Public Vercel Blob URL of the generated image. Stored in DB; the file
      *  itself lives in Blob, not on the function filesystem. */
     imageUrl: text("image_url"),
+    /** URL of the anchor image this scene was conditioned on via
+     *  nano-banana-pro/edit. Null for the anchor scene itself (text-to-image).
+     *  Frozen at first generation so per-scene regen stays consistent with
+     *  the rest of the sequence even if the anchor is later regenerated. */
+    referenceImageUrl: text("reference_image_url"),
     /** Public Vercel Blob URL of the upscaled mp4 (for reels — the seedance
      *  output passed through Topaz Proteus). Null for stills/non-reel formats. */
     videoUrl: text("video_url"),

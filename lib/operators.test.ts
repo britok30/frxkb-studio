@@ -38,11 +38,10 @@ describe("getOperator", () => {
     expect(getOperator("britok30@gmail.com")).toBeNull(); // still missing fal
   });
 
-  it("returns britok30 with both apps when fully configured", () => {
+  it("returns britok30 with ArchitectGPT only + interior+exterior lanes", () => {
     process.env.FAL_KEY_BRITOK30 = "fk-britok";
     process.env.ANTHROPIC_KEY_BRITOK30 = "ak-britok";
     process.env.APP_LINK_ARCHITECTGPT = "https://architectgpt.example/";
-    process.env.APP_LINK_CASAGPT = "https://casagpt.example/";
 
     const op = getOperator("britok30@gmail.com");
 
@@ -51,11 +50,12 @@ describe("getOperator", () => {
       falKey: "fk-britok",
       anthropicKey: "ak-britok",
     });
-    expect(op?.apps.map((a) => a.name)).toEqual(["ArchitectGPT", "CasaGPT"]);
-    expect(op?.apps.find((a) => a.name === "CasaGPT")?.url).toBe("https://casagpt.example/");
+    expect(op?.apps.map((a) => a.name)).toEqual(["ArchitectGPT"]);
+    expect(op?.apps[0].url).toBe("https://architectgpt.example/");
+    expect(op?.worldTypes).toEqual(["interior", "exterior"]);
   });
 
-  it("returns fremyrosso1 with only InteriorGPT", () => {
+  it("returns fremyrosso1 with InteriorGPT + interior-only lane", () => {
     process.env.FAL_KEY_FREMYROSSO1 = "fk-fremy";
     process.env.ANTHROPIC_KEY_FREMYROSSO1 = "ak-fremy";
     process.env.APP_LINK_INTERIORGPT = "https://interiorgpt.example/";
@@ -68,6 +68,9 @@ describe("getOperator", () => {
       anthropicKey: "ak-fremy",
     });
     expect(op?.apps.map((a) => a.name)).toEqual(["InteriorGPT"]);
+    // InteriorGPT is interior-only by design — exterior content would be
+    // off-brand for the app.
+    expect(op?.worldTypes).toEqual(["interior"]);
   });
 
   it("is case-insensitive on the email", () => {
@@ -87,15 +90,22 @@ describe("getOperator", () => {
 
 describe("pickAppLink", () => {
   function operatorWith(apps: Operator["apps"]): Operator {
-    return { email: "x", falKey: "x", anthropicKey: "x", apps };
+    return {
+      email: "x",
+      falKey: "x",
+      anthropicKey: "x",
+      apps,
+      worldTypes: ["interior", "exterior"],
+    };
   }
 
   it("matches britok30's interior pattern → CasaGPT", () => {
     const op = operatorWith([
-      { name: "ArchitectGPT", url: "https://architect.example/" },
+      { name: "ArchitectGPT", url: "https://architect.example/", handle: "architectgpt" },
       {
         name: "CasaGPT",
         url: "https://casa.example/",
+        handle: "casagpt",
         pattern: /(interior|living)/,
       },
     ]);
@@ -105,8 +115,8 @@ describe("pickAppLink", () => {
 
   it("falls back to the first app when no pattern matches", () => {
     const op = operatorWith([
-      { name: "ArchitectGPT", url: "https://architect.example/" },
-      { name: "CasaGPT", url: "https://casa.example/", pattern: /(interior)/ },
+      { name: "ArchitectGPT", url: "https://architect.example/", handle: "architectgpt" },
+      { name: "CasaGPT", url: "https://casa.example/", handle: "casagpt", pattern: /(interior)/ },
     ]);
     expect(pickAppLink(op, "modernist exteriors")).toBe("https://architect.example/");
     expect(pickAppLink(op, "facades")).toBe("https://architect.example/");
@@ -114,14 +124,14 @@ describe("pickAppLink", () => {
 
   it("works for a single-app operator", () => {
     const op = operatorWith([
-      { name: "InteriorGPT", url: "https://interior.example/" },
+      { name: "InteriorGPT", url: "https://interior.example/", handle: "interiorgpt" },
     ]);
     expect(pickAppLink(op, "anything goes")).toBe("https://interior.example/");
     expect(pickAppLink(op, "modernist interiors")).toBe("https://interior.example/");
   });
 
   it("returns empty string when the matched app's url is unset", () => {
-    const op = operatorWith([{ name: "ArchitectGPT", url: "" }]);
+    const op = operatorWith([{ name: "ArchitectGPT", url: "", handle: "architectgpt" }]);
     expect(pickAppLink(op, "x")).toBe("");
   });
 });
@@ -131,7 +141,8 @@ describe("withOperator / currentOperator", () => {
     email: "britok30@gmail.com",
     falKey: "fk",
     anthropicKey: "ak",
-    apps: [{ name: "ArchitectGPT", url: "https://x" }],
+    apps: [{ name: "ArchitectGPT", url: "https://x", handle: "architectgpt" }],
+    worldTypes: ["interior", "exterior"],
   };
 
   it("currentOperator throws when called outside a withOperator scope", () => {

@@ -20,14 +20,16 @@ const britok: Operator = {
   email: "britok30@gmail.com",
   falKey: "fal",
   anthropicKey: "ak-britok",
-  apps: [{ name: "ArchitectGPT", url: "https://x" }],
+  apps: [{ name: "ArchitectGPT", url: "https://x", handle: "architectgpt" }],
+  worldTypes: ["interior", "exterior"],
 };
 
 const fremy: Operator = {
   email: "fremyrosso1@gmail.com",
   falKey: "fal",
   anthropicKey: "ak-fremy",
-  apps: [{ name: "InteriorGPT", url: "https://x" }],
+  apps: [{ name: "InteriorGPT", url: "https://x", handle: "interiorgpt" }],
+  worldTypes: ["interior"],
 };
 
 beforeEach(() => {

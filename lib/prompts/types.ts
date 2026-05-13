@@ -1,9 +1,20 @@
 import { z } from "zod";
 
-export const FormatSchema = z.enum(["yt-long", "reel", "carousel"]);
+export const FormatSchema = z.enum(["reel", "carousel", "before-after"]);
 export type Format = z.infer<typeof FormatSchema>;
 
-export const AspectRatioSchema = z.enum(["16:9", "9:16", "1:1"]);
+/**
+ * Architecture content splits cleanly into two visual lanes — interior spaces
+ * (rooms, materials, indoor light) vs exterior shots (facades, landscapes,
+ * outdoor light). Concept + scene + thumbnail prompts get this as context so
+ * the visual world stays on one side of the line for the whole project.
+ */
+export const WorldTypeSchema = z.enum(["interior", "exterior"]);
+export type WorldType = z.infer<typeof WorldTypeSchema>;
+
+// Before-after projects derive their aspect from the uploaded image, so the
+// schema accepts a few more options than the AI-generated formats use natively.
+export const AspectRatioSchema = z.enum(["16:9", "9:16", "1:1", "4:3", "3:4"]);
 export type AspectRatio = z.infer<typeof AspectRatioSchema>;
 
 /** Kebab-case slug used for duplicate detection. e.g.
@@ -13,8 +24,18 @@ const WORLD_SIGNATURE_RE = /^[a-z0-9]+(?:-[a-z0-9]+){2,}$/;
 export const ConceptBriefSchema = z.object({
   workingTitle: z.string().min(3).max(120),
   hook: z.string().min(8).max(240),
-  vibe: z.string().min(8).max(800),
-  notes: z.string().max(1200).default(""),
+  vibe: z.string().min(8).max(1500),
+  // 2000 char ceiling — Anthropic's tool_use doesn't enforce JSON-schema
+  // maxLength, and Claude regularly overshoots prose fields. Generous bound
+  // here + safeTruncate at the parse boundary in concept.ts catches the rest.
+  notes: z.string().max(2000).default(""),
+  /** Per-piece commitment to 8-15 specific objects (furniture, plants, art,
+   *  ceramics, textiles, daily-life items — and for exteriors, landscape
+   *  elements / pool / lighting / site features) that belong to THIS home's
+   *  cultural lineage. Drives downstream scene prompts so every scene draws
+   *  from the same lineage-specific vocabulary. Default [] for backwards
+   *  compat with concept rows persisted before this field existed. */
+  objectSet: z.array(z.string().min(2).max(80)).min(8).max(15).default([]),
   /** Stable kebab-case identifier for the world. Used to detect duplicate
    *  projects. Required so dedupe can rely on its presence. */
   worldSignature: z.string().min(8).max(80).regex(WORLD_SIGNATURE_RE),
@@ -30,7 +51,7 @@ export type ConceptBrief = z.infer<typeof ConceptBriefSchema>;
  *  on `projects.concept`. */
 export type PromptableConcept = Pick<
   ConceptBrief,
-  "workingTitle" | "hook" | "vibe" | "notes"
+  "workingTitle" | "hook" | "vibe" | "notes" | "objectSet"
 >;
 
 export const ScenePromptSchema = z.object({
@@ -53,16 +74,19 @@ export function defaultsForFormat(format: Format): {
   sceneDurationSec: number;
 } {
   switch (format) {
-    case "yt-long":
-      // 60 × 10s = 10 min — ambient slideshow that lives comfortably in the
-      // YT background-watch sweet spot. Variety per minute matters; long
-      // hold-times let each scene breathe.
-      return { aspectRatio: "16:9", sceneCount: 60, sceneDurationSec: 10 };
     case "reel":
-      // 5 × 3s = 15s. Slow cuts (vs the 1-2s maximalist Reels norm) are the
-      // whole differentiator for ambient design content.
-      return { aspectRatio: "9:16", sceneCount: 5, sceneDurationSec: 3 };
+      // 3 × 5s = 15s. Matches Seedance's native 4-15s range (no clamp) and
+      // gives each scene more time to breathe — slow cuts are the whole
+      // differentiator vs the 1-2s maximalist Reels norm.
+      return { aspectRatio: "9:16", sceneCount: 3, sceneDurationSec: 5 };
     case "carousel":
       return { aspectRatio: "1:1", sceneCount: 10, sceneDurationSec: 0 };
+    case "before-after":
+      // Two scenes: the uploaded "before" + the AI-generated "after." Aspect
+      // is overridden per-project from the uploaded image's actual dimensions
+      // (defaultsForFormat returns 1:1 as a placeholder; the real value lives
+      // on projects.aspectRatio). Both scenes animate at 7s — paired length
+      // for CapCut edits, comfortably inside seedance's 4-15s native range.
+      return { aspectRatio: "1:1", sceneCount: 2, sceneDurationSec: 7 };
   }
 }

@@ -1,4 +1,5 @@
 import { AsyncLocalStorage } from "node:async_hooks";
+import type { WorldType } from "@/lib/prompts/types";
 
 // ── Operator config ──────────────────────────────────────────────────────────
 //
@@ -11,6 +12,10 @@ export type AppLink = {
   name: "ArchitectGPT" | "CasaGPT" | "InteriorGPT";
   /** The full URL we substitute into {APP_LINK} placeholders. May be empty. */
   url: string;
+  /** Social handle (no @ prefix) appended to captions on IG / TikTok / Shorts
+   *  as a promo line. Same handle assumed across platforms — split per
+   *  platform if that ever stops being true. */
+  handle: string;
   /** Niche keywords that prefer this app. First match wins; if no app
    *  matches, the operator's first-listed app is the fallback. */
   pattern?: RegExp;
@@ -21,10 +26,11 @@ export type Operator = {
   falKey: string;
   anthropicKey: string;
   apps: AppLink[];
+  /** Visual lanes this operator's apps cover. ArchitectGPT = both interior +
+   *  exterior; InteriorGPT = interior only. The /new wizard hides disallowed
+   *  options and createProject rejects out-of-lane requests server-side. */
+  worldTypes: WorldType[];
 };
-
-const INTERIOR_RE =
-  /(interior|room|kitchen|living|bedroom|bath|home|casa|apartment|loft)/;
 
 /** Resolve an operator config from an allowlisted email. Returns null if the
  *  email isn't allowlisted OR if its required env vars aren't all set. */
@@ -40,12 +46,19 @@ export function getOperator(email: string | null | undefined): Operator | null {
       email: lower,
       falKey,
       anthropicKey,
+      // ArchitectGPT only — strategic focus on the bigger account. CasaGPT
+      // can be added back later (with a `pattern` regex on this entry) if
+      // the second app warrants its own content stream.
       apps: [
-        // Order matters: first matching pattern wins; if nothing matches, [0] is the fallback.
-        // Architecture-first puts ArchitectGPT in slot 0 as the default.
-        { name: "ArchitectGPT", url: process.env.APP_LINK_ARCHITECTGPT ?? "" },
-        { name: "CasaGPT", url: process.env.APP_LINK_CASAGPT ?? "", pattern: INTERIOR_RE },
+        {
+          name: "ArchitectGPT",
+          url: process.env.APP_LINK_ARCHITECTGPT ?? "",
+          handle: "architectgpt",
+        },
       ],
+      // ArchitectGPT covers both interior and exterior architecture. Add
+      // "landscape" here when that vertical ships.
+      worldTypes: ["interior", "exterior"],
     };
   }
 
@@ -60,8 +73,14 @@ export function getOperator(email: string | null | undefined): Operator | null {
       apps: [
         // Single app, but interior pattern still set so {APP_LINK} substitution
         // works the same way for both operators.
-        { name: "InteriorGPT", url: process.env.APP_LINK_INTERIORGPT ?? "" },
+        {
+          name: "InteriorGPT",
+          url: process.env.APP_LINK_INTERIORGPT ?? "",
+          handle: "interiorgpt",
+        },
       ],
+      // InteriorGPT is interior-only by design.
+      worldTypes: ["interior"],
     };
   }
 
