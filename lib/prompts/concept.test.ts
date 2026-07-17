@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 
 const generateJSONMock = vi.hoisted(() => vi.fn());
 
-vi.mock("@/lib/claude", () => ({
+vi.mock("@/lib/llm", () => ({
   generateJSON: generateJSONMock,
 }));
 
@@ -67,7 +67,7 @@ describe("buildConceptSystem", () => {
     expect(sys).not.toMatch(/feel lived-in even when empty|empty rooms|uninhabited/i);
   });
 
-  it("does NOT cite specific brand-name objects in the system prompt (those become global defaults Claude reaches for every time)", () => {
+  it("does NOT cite specific brand-name objects in the system prompt (those become global defaults GPT-5.5 reaches for every time)", () => {
     const sys = buildConceptSystem();
     expect(sys).not.toMatch(/Hans Wegner|fiddle-leaf fig|Braun record player|design monographs/);
   });
@@ -120,7 +120,7 @@ describe("generateConcept", () => {
     expect(args.maxTokens).toBe(1800);
   });
 
-  it("throws if Claude returns a brief that fails schema validation", async () => {
+  it("throws if GPT-5.5 returns a brief that fails schema validation", async () => {
     generateJSONMock.mockResolvedValue({ ...valid, hook: "x" }); // hook too short
     await expect(
       generateConcept({ niche: "x", format: "reel", worldType: "interior" })
@@ -147,7 +147,7 @@ describe("generateConcept", () => {
   });
 
   it("safety net: truncates an over-length notes field instead of throwing", async () => {
-    // Anthropic's tool_use ignores JSON-schema maxLength. Claude regularly
+    // non-strict function calling ignores JSON-schema maxLength. GPT-5.5 regularly
     // overshoots prose fields. We trim to the Zod cap before parse so the
     // pipeline doesn't fail on a single long bullet list.
     vi.spyOn(console, "warn").mockImplementation(() => {});
@@ -165,7 +165,7 @@ describe("generateConcept", () => {
   });
 
   it("safety net: coerces worldKeywords from a comma-separated string into an array", async () => {
-    // Anthropic tool_use occasionally returns the wrong type. Rather than
+    // Non-strict function calling occasionally returns the wrong type. Rather than
     // throw, we split on commas, trim, lowercase, drop oversized tokens.
     vi.spyOn(console, "warn").mockImplementation(() => {});
     generateJSONMock.mockResolvedValue({

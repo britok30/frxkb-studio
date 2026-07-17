@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { applySceneAction } from "@/lib/projects";
+import { LookIdSchema } from "@/lib/prompts/looks";
 import { withSessionOperator } from "@/lib/route-helpers";
 
 export const runtime = "nodejs";
@@ -9,6 +10,13 @@ export const maxDuration = 120;
 
 const PatchBody = z.object({
   action: z.enum(["approve", "reject", "regenerate"]),
+  /** Optional design direction layered onto the stored scene prompt for one
+   *  regen. Capped at 500 chars — enough for "tighter on the kitchen counter,
+   *  shift to morning light, add more plants" without bloating the fal call. */
+  designDirection: z.string().max(500).optional(),
+  /** Optional look override for one regen — swaps the project's committed
+   *  look (lib/prompts/looks.ts) for this call only. */
+  lookId: LookIdSchema.optional(),
 });
 
 export async function PATCH(
@@ -37,7 +45,10 @@ export async function PATCH(
 
   return withSessionOperator(async () => {
     try {
-      const scene = await applySceneAction(id, sceneId, parsed.data.action);
+      const scene = await applySceneAction(id, sceneId, parsed.data.action, {
+        designDirection: parsed.data.designDirection,
+        lookId: parsed.data.lookId,
+      });
       return NextResponse.json({ scene });
     } catch (err) {
       const message = err instanceof Error ? err.message : "Unknown error";

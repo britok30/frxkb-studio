@@ -51,7 +51,7 @@ export async function handleGenerate(
   const operator = getOperator(operatorEmail);
   if (!operator) {
     throw new Error(
-      `Operator not configured for ${operatorEmail}. Check FAL_KEY_* and ANTHROPIC_KEY_* env vars on the deployment.`
+      `Operator not configured for ${operatorEmail}. Check FAL_KEY_* and OPENAI_KEY_* env vars on the deployment.`
     );
   }
   return await step.run("generate-images", async () => {
@@ -78,7 +78,7 @@ export async function handleAnimate(
   const operator = getOperator(operatorEmail);
   if (!operator) {
     throw new Error(
-      `Operator not configured for ${operatorEmail}. Check FAL_KEY_* and ANTHROPIC_KEY_* env vars on the deployment.`
+      `Operator not configured for ${operatorEmail}. Check FAL_KEY_* and OPENAI_KEY_* env vars on the deployment.`
     );
   }
   return await step.run("animate-scenes", async () => {

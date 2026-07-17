@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { generateJSON } from "@/lib/claude";
+import { generateJSON } from "@/lib/llm";
 import type { PromptableConcept } from "./types";
 
 export const MotionPromptSchema = z.object({
@@ -106,11 +106,11 @@ export async function generateMotionPrompts(
   const parsed = MotionPromptsResponseSchema.parse(raw);
   if (parsed.motions.length < input.scenes.length) {
     throw new Error(
-      `Claude returned ${parsed.motions.length} motions, expected ${input.scenes.length}.`
+      `GPT-5.5 returned ${parsed.motions.length} motions, expected ${input.scenes.length}.`
     );
   }
   // Trim to the input length and force each motion's `order` to match the
-  // input scene at the same index. We can't trust Claude to echo `order`
+  // input scene at the same index. We can't trust GPT-5.5 to echo `order`
   // verbatim, AND we can't assume the input is contiguous 1..N — animate
   // retries pass partial targets like [2, 4, 5] when some scenes are already
   // animated. Preserving input.scenes[i].order keeps the downstream

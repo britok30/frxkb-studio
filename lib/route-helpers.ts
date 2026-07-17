@@ -20,7 +20,7 @@ export async function withSessionOperator(
     return NextResponse.json(
       {
         error:
-          "Operator not configured for this account. Set FAL_KEY_* and ANTHROPIC_KEY_* in the environment.",
+          "Operator not configured for this account. Set FAL_KEY_* and OPENAI_KEY_* in the environment.",
       },
       { status: 403 }
     );

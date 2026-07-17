@@ -1,5 +1,5 @@
 import { AsyncLocalStorage } from "node:async_hooks";
-import type { WorldType } from "@/lib/prompts/types";
+import type { PropertyType, WorldType } from "@/lib/prompts/types";
 
 // ── Operator config ──────────────────────────────────────────────────────────
 //
@@ -24,12 +24,20 @@ export type AppLink = {
 export type Operator = {
   email: string;
   falKey: string;
-  anthropicKey: string;
+  openaiKey: string;
   apps: AppLink[];
   /** Visual lanes this operator's apps cover. ArchitectGPT = both interior +
    *  exterior; InteriorGPT = interior only. The /new wizard hides disallowed
    *  options and createProject rejects out-of-lane requests server-side. */
   worldTypes: WorldType[];
+  /** Program lanes this operator covers, orthogonal to worldTypes. ArchitectGPT
+   *  spans residential + commercial architecture; InteriorGPT is residential
+   *  homes only. Gated server-side in the style-explorer create path. */
+  propertyTypes: PropertyType[];
+  /** Public links surfaced in YouTube long-form metadata CTAs — the app's
+   *  Instagram handle (no @) and marketing site. Public, not secrets, so
+   *  hardcoded like `handle`. */
+  socials: { instagram: string; website: string };
 };
 
 /** Resolve an operator config from an allowlisted email. Returns null if the
@@ -40,12 +48,12 @@ export function getOperator(email: string | null | undefined): Operator | null {
 
   if (lower === "britok30@gmail.com") {
     const falKey = process.env.FAL_KEY_BRITOK30;
-    const anthropicKey = process.env.ANTHROPIC_KEY_BRITOK30;
-    if (!falKey || !anthropicKey) return null;
+    const openaiKey = process.env.OPENAI_KEY_BRITOK30;
+    if (!falKey || !openaiKey) return null;
     return {
       email: lower,
       falKey,
-      anthropicKey,
+      openaiKey,
       // ArchitectGPT only — strategic focus on the bigger account. CasaGPT
       // can be added back later (with a `pattern` regex on this entry) if
       // the second app warrants its own content stream.
@@ -59,17 +67,20 @@ export function getOperator(email: string | null | undefined): Operator | null {
       // ArchitectGPT covers both interior and exterior architecture. Add
       // "landscape" here when that vertical ships.
       worldTypes: ["interior", "exterior"],
+      // ArchitectGPT spans homes and commercial buildings alike.
+      propertyTypes: ["residential", "commercial"],
+      socials: { instagram: "architectgpt", website: "https://www.architectgpt.io" },
     };
   }
 
   if (lower === "fremyrosso1@gmail.com") {
     const falKey = process.env.FAL_KEY_FREMYROSSO1;
-    const anthropicKey = process.env.ANTHROPIC_KEY_FREMYROSSO1;
-    if (!falKey || !anthropicKey) return null;
+    const openaiKey = process.env.OPENAI_KEY_FREMYROSSO1;
+    if (!falKey || !openaiKey) return null;
     return {
       email: lower,
       falKey,
-      anthropicKey,
+      openaiKey,
       apps: [
         // Single app, but interior pattern still set so {APP_LINK} substitution
         // works the same way for both operators.
@@ -81,6 +92,9 @@ export function getOperator(email: string | null | undefined): Operator | null {
       ],
       // InteriorGPT is interior-only by design.
       worldTypes: ["interior"],
+      // InteriorGPT covers both residential and commercial interiors.
+      propertyTypes: ["residential", "commercial"],
+      socials: { instagram: "interiordesigngpt", website: "https://www.aiinterior.design" },
     };
   }
 
@@ -99,7 +113,7 @@ export function pickAppLink(operator: Operator, niche: string): string {
 
 // ── Per-request operator context ─────────────────────────────────────────────
 //
-// Every request that hits fal/Claude/app-link substitution needs to know
+// Every request that hits fal/GPT-5.5/app-link substitution needs to know
 // which operator it's running on behalf of. We thread that via
 // AsyncLocalStorage rather than passing `operator` through every function
 // signature. Each authed API route wraps its handler in withOperator() once;

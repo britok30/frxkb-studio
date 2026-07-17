@@ -34,31 +34,31 @@ export const FAL_TOPAZ_PER_SECOND_GT_1080P = 0.08;
  *  pipeline upscales 24fps → 60fps, so the multiplier always applies. */
 export const FAL_TOPAZ_FPS_INTERPOLATION_MULTIPLIER = 2;
 
-/** Anthropic Claude Opus 4.7 — $5/MTok input, $25/MTok output. */
-export const CLAUDE_OPUS_4_7_INPUT_PER_MTOK = 5;
-export const CLAUDE_OPUS_4_7_OUTPUT_PER_MTOK = 25;
+/** OpenAI GPT-5.5 — $5/MTok input, $30/MTok output. (Reasoning tokens bill as
+ *  output; we run reasoning_effort=low so the per-call output stays modest.) */
+export const GPT_5_5_INPUT_PER_MTOK = 5;
+export const GPT_5_5_OUTPUT_PER_MTOK = 30;
 
-/** Cached system prompts (every Claude call we make uses ephemeral cache).
- *  Cache hits are ~90% off input rate; first call pays full price + 25% write
- *  premium. Averaged across calls in a session, effective input rate is
- *  roughly 30% of headline. We approximate at 0.4× to be honest about the
- *  first-call write premium. */
-const CLAUDE_CACHE_INPUT_DISCOUNT_FACTOR = 0.4;
+/** OpenAI auto-caches stable prompt prefixes (our long system prompts) with no
+ *  cache_control needed; cached input tokens bill at a steep discount. Averaged
+ *  across a session — one uncached call plus cached hits — the effective input
+ *  rate lands around 0.4× headline. */
+const LLM_CACHE_INPUT_DISCOUNT_FACTOR = 0.4;
 
 // ── Token estimates per call type ────────────────────────────────────────────
 //
-// These are empirical averages from inspecting a few projects' Claude calls.
+// These are empirical averages from inspecting a few projects' GPT-5.5 calls.
 // Tweak when prompts change materially. Output tokens dominate — input is
 // largely cached.
 
-const CLAUDE_INPUT_TOKENS = {
+const LLM_INPUT_TOKENS = {
   concept: 2200, // system + user
   sceneGen: 2400, // system + user with concept context
   metadata: 2300, // system + user with concept + format/duration
   suggestWorld: 1800, // system + format + history (~10 niches at ~30 tok each)
 };
 
-const CLAUDE_OUTPUT_TOKENS = {
+const LLM_OUTPUT_TOKENS = {
   concept: 600, // workingTitle + hook + vibe + notes + signature + keywords
   sceneGenPerScene: 100, // each scene prompt ~80-120 tokens
   sceneGenOverhead: 200, // tool boilerplate
@@ -68,39 +68,39 @@ const CLAUDE_OUTPUT_TOKENS = {
 
 // ── Per-call cost helpers ────────────────────────────────────────────────────
 
-function claudeCost(inputTokens: number, outputTokens: number): number {
+function llmCost(inputTokens: number, outputTokens: number): number {
   const inputCost =
     (inputTokens / 1_000_000) *
-    CLAUDE_OPUS_4_7_INPUT_PER_MTOK *
-    CLAUDE_CACHE_INPUT_DISCOUNT_FACTOR;
-  const outputCost = (outputTokens / 1_000_000) * CLAUDE_OPUS_4_7_OUTPUT_PER_MTOK;
+    GPT_5_5_INPUT_PER_MTOK *
+    LLM_CACHE_INPUT_DISCOUNT_FACTOR;
+  const outputCost = (outputTokens / 1_000_000) * GPT_5_5_OUTPUT_PER_MTOK;
   return inputCost + outputCost;
 }
 
 export function estimateConceptGen(): number {
-  return claudeCost(CLAUDE_INPUT_TOKENS.concept, CLAUDE_OUTPUT_TOKENS.concept);
+  return llmCost(LLM_INPUT_TOKENS.concept, LLM_OUTPUT_TOKENS.concept);
 }
 
 export function estimateSceneGen(sceneCount: number): number {
   const out =
-    CLAUDE_OUTPUT_TOKENS.sceneGenOverhead +
-    CLAUDE_OUTPUT_TOKENS.sceneGenPerScene * Math.max(0, sceneCount);
-  return claudeCost(CLAUDE_INPUT_TOKENS.sceneGen, out);
+    LLM_OUTPUT_TOKENS.sceneGenOverhead +
+    LLM_OUTPUT_TOKENS.sceneGenPerScene * Math.max(0, sceneCount);
+  return llmCost(LLM_INPUT_TOKENS.sceneGen, out);
 }
 
 export function estimateMetadataGen(): number {
-  return claudeCost(CLAUDE_INPUT_TOKENS.metadata, CLAUDE_OUTPUT_TOKENS.metadata);
+  return llmCost(LLM_INPUT_TOKENS.metadata, LLM_OUTPUT_TOKENS.metadata);
 }
 
 export function estimateSuggestWorld(): number {
-  return claudeCost(CLAUDE_INPUT_TOKENS.suggestWorld, CLAUDE_OUTPUT_TOKENS.suggestWorld);
+  return llmCost(LLM_INPUT_TOKENS.suggestWorld, LLM_OUTPUT_TOKENS.suggestWorld);
 }
 
 /**
  * Cost of generating N scene images for reel/carousel. Every scene runs
  * through nano-banana-pro text-to-image with its own self-contained prompt
  * + a fresh seed — no anchor, no /edit chain. Visual cohesion comes from
- * shared Claude vocabulary across scene prompts, not pixel anchoring.
+ * shared GPT-5.5 vocabulary across scene prompts, not pixel anchoring.
  *
  * Before-after pricing is separate (see estimateProjectTotal): the "after"
  * is a legitimate edit of the operator's upload and uses /edit at $0.15.
@@ -129,7 +129,7 @@ export function estimateBatchImages(sceneCount: number): number {
   return estimateImageBatch(sceneCount);
 }
 
-/** Cost of finalize — Claude metadata only. Thumbnail generation was
+/** Cost of finalize — GPT-5.5 metadata only. Thumbnail generation was
  *  deprecated; covers derive live from scenes. */
 export function estimateFinalize(): number {
   return estimateMetadataGen();
@@ -161,13 +161,13 @@ export function estimateTopazUpscale(
   return Math.max(0, durationSec) * rate;
 }
 
-/** Cost of one motion-prompts batch (single Claude call for N scenes). */
+/** Cost of one motion-prompts batch (single GPT-5.5 call for N scenes). */
 export function estimateMotionPromptsGen(sceneCount: number): number {
   // Reuses the same rough shape as scene-prompt gen — system prompt is cached,
   // each motion is ~30-50 output tokens.
   const inputTokens = 1800;
   const outputTokens = 200 + sceneCount * 60;
-  return claudeCost(inputTokens, outputTokens);
+  return llmCost(inputTokens, outputTokens);
 }
 
 /** All-in cost of the animate step for N scenes at D seconds each. Includes
@@ -196,6 +196,19 @@ export function estimateProjectTotal(format: Format, sceneCount: number): number
       FAL_NANO_BANANA_EDIT_PER_IMAGE + // 1 edit (the "after")
       estimateAnimateBatch(1, dur) + // only the after animates
       estimateMetadataGen() // metadata only — no thumbnail fal call
+    );
+  }
+  if (format === "style-explorer") {
+    // 1 base render (text-to-image) + N styled edits ($0.15 each) + the styles
+    // GPT-5.5 call (bigger per-style output than scene gen) + the YouTube
+    // metadata GPT-5.5 call. No animation (static stills).
+    const styles = Math.max(0, sceneCount);
+    const stylesGen = llmCost(2400, 300 + styles * 350);
+    return (
+      FAL_NANO_BANANA_PER_IMAGE + // base render
+      styles * FAL_NANO_BANANA_EDIT_PER_IMAGE + // styled edits
+      stylesGen +
+      estimateMetadataGen() // YouTube metadata
     );
   }
   return (

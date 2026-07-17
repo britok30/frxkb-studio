@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 
 const generateJSONMock = vi.hoisted(() => vi.fn());
 
-vi.mock("@/lib/claude", () => ({ generateJSON: generateJSONMock }));
+vi.mock("@/lib/llm", () => ({ generateJSON: generateJSONMock }));
 
 import {
   buildMotionSystem,
@@ -84,7 +84,7 @@ describe("generateMotionPrompts", () => {
     };
   }
 
-  it("returns Claude's motions in scene order", async () => {
+  it("returns GPT-5.5's motions in scene order", async () => {
     generateJSONMock.mockResolvedValue(fakeMotions(3));
 
     const out = await generateMotionPrompts({ concept, scenes });
@@ -126,12 +126,12 @@ it("trims excess motions and aligns each to its input scene's order", async () =
     const out = await generateMotionPrompts({ concept, scenes: partialScenes });
 
     // Each returned motion's order must match the corresponding INPUT scene's
-    // order, not Claude's 1..N output, otherwise the downstream Map lookup in
+    // order, not GPT-5.5's 1..N output, otherwise the downstream Map lookup in
     // animateAllScenes (`motionByOrder.get(scene.order)`) misses on retries.
     expect(out.motions.map((m) => m.order)).toEqual([2, 4, 5]);
   });
 
-  it("throws when Claude returns fewer motions than scenes", async () => {
+  it("throws when GPT-5.5 returns fewer motions than scenes", async () => {
     generateJSONMock.mockResolvedValue(fakeMotions(2));
     await expect(generateMotionPrompts({ concept, scenes })).rejects.toThrow(
       /2 motions, expected 3/

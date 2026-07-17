@@ -24,6 +24,9 @@ export type ExportPanelData = {
     imageUrl: string;
     /** Set when scene has been animated (reels). */
     videoUrl?: string | null;
+    /** Style-explorer card copy. */
+    styleName?: string | null;
+    styleSubtitle?: string | null;
   }[];
   metadata: Metadata;
 };
@@ -112,20 +115,66 @@ export function ExportPanel({ data }: { data: ExportPanelData }) {
             </a>
           </div>
 
-          <MetadataView metadata={metadata} />
+          <MetadataView metadata={metadata} scenes={scenes} />
         </CardContent>
       </Card>
     </motion.div>
   );
 }
 
-function MetadataView({ metadata }: { metadata: Metadata }) {
+function MetadataView({
+  metadata,
+  scenes,
+}: {
+  metadata: Metadata;
+  scenes: ExportPanelData["scenes"];
+}) {
   switch (metadata.kind) {
     case "reel":
       return <ReelMetadataView metadata={metadata} />;
     case "carousel":
       return <CarouselMetadataView metadata={metadata} />;
+    case "youtube":
+      return <YouTubeMetadataView metadata={metadata} scenes={scenes} />;
   }
+}
+
+function YouTubeMetadataView({
+  metadata,
+  scenes,
+}: {
+  metadata: Extract<Metadata, { kind: "youtube" }>;
+  scenes: ExportPanelData["scenes"];
+}) {
+  const cards = scenes.filter((s) => !!s.styleName);
+  return (
+    <div className="flex flex-col gap-6">
+      <PlatformSection title="YouTube">
+        <CopyField label="Title" value={metadata.title} />
+        <CopyField label="Thumbnail text (burn into your thumbnail)" value={metadata.thumbnailText} />
+        <CopyField label="Description" value={metadata.description} multiline />
+        <ChipList label="Tags" items={metadata.tags} />
+        <ChipList label="Hashtags" items={metadata.hashtags.map((h) => `#${h}`)} />
+      </PlatformSection>
+      {cards.length > 0 && (
+        <>
+          <Separator />
+          <PlatformSection title="On-screen card copy (per style)">
+            <div className="flex flex-col gap-2">
+              {cards.map((s) => (
+                <div key={s.order} className="rounded-md border bg-muted/30 px-3 py-2">
+                  <div className="text-sm font-medium tracking-tight">{s.styleName}</div>
+                  {s.styleSubtitle && (
+                    <div className="text-xs text-muted-foreground">{s.styleSubtitle}</div>
+                  )}
+                </div>
+              ))}
+            </div>
+          </PlatformSection>
+        </>
+      )}
+    </div>
+  );
 }
 
 function ReelMetadataView({ metadata }: { metadata: Extract<Metadata, { kind: "reel" }> }) {

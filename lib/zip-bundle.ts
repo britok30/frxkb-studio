@@ -13,6 +13,9 @@ export type SceneAsset = {
   videoUrl?: string | null;
   prompt: string;
   durationSec: number | null;
+  /** Style-explorer card copy (title + subtitle for the operator's CapCut cards). */
+  styleName?: string | null;
+  styleSubtitle?: string | null;
 };
 
 export type BundleData = {
@@ -102,6 +105,8 @@ export async function downloadBundle(
         video: s.videoUrl ? `videos/scene-${padded}.mp4` : null,
         prompt: s.prompt,
         durationSec: s.durationSec,
+        styleName: s.styleName ?? null,
+        styleSubtitle: s.styleSubtitle ?? null,
       };
     }),
   };
@@ -171,5 +176,28 @@ function buildPlainTextMetadata(data: BundleData): string {
         m.instagramHashtags.map((h) => `#${h}`).join(" "),
         "",
       ].join("\n");
+    case "youtube": {
+      const cards = data.scenes
+        .filter((s) => !!s.styleName)
+        .map((s) => `- ${s.styleName}${s.styleSubtitle ? ` — ${s.styleSubtitle}` : ""}`);
+      return [
+        ...header,
+        "## YouTube",
+        `Title: ${m.title}`,
+        "",
+        `Thumbnail text: ${m.thumbnailText}`,
+        "",
+        "Description:",
+        m.description,
+        "",
+        `Tags: ${m.tags.join(", ")}`,
+        "",
+        `Hashtags: ${m.hashtags.map((h) => `#${h}`).join(" ")}`,
+        "",
+        "## On-screen card copy (per style)",
+        ...cards,
+        "",
+      ].join("\n");
+    }
   }
 }

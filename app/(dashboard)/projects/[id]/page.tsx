@@ -185,8 +185,11 @@ export default async function ProjectPage({ params }: { params: Promise<{ id: st
                 status: s.status,
                 imageUrl: s.imageUrl,
                 error: s.error,
+                styleName: s.styleName,
+                styleSubtitle: s.styleSubtitle,
               }}
               hideActions={animateStarted}
+              worldType={project.worldType}
             />
           ))}
         </div>
@@ -247,6 +250,8 @@ type SceneRow = {
   imageUrl: string | null;
   videoUrl: string | null;
   status: string;
+  styleName: string | null;
+  styleSubtitle: string | null;
 };
 
 /** Build the props for ExportPanel out of the DB row. Returns null until
@@ -263,6 +268,8 @@ function buildExportData(project: ProjectRow, scenes: SceneRow[]): ExportPanelDa
       durationSec: s.durationSec,
       imageUrl: s.imageUrl as string,
       videoUrl: s.videoUrl,
+      styleName: s.styleName,
+      styleSubtitle: s.styleSubtitle,
     }));
 
   if (renderableScenes.length === 0) return null;
@@ -287,7 +294,18 @@ function buildExportData(project: ProjectRow, scenes: SceneRow[]): ExportPanelDa
 }
 
 function formatLabel(f: string) {
-  return f === "reel" ? "Reel" : f === "carousel" ? "Carousel" : f;
+  switch (f) {
+    case "reel":
+      return "Reel";
+    case "carousel":
+      return "Carousel";
+    case "before-after":
+      return "Before / After";
+    case "style-explorer":
+      return "Style explorer";
+    default:
+      return f;
+  }
 }
 
 type StatusCounts = {

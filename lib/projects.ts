@@ -1,8 +1,21 @@
 import { nanoid } from "nanoid";
 import { generateBeforeAfterConcept, generateConcept } from "@/lib/prompts/concept";
 import { generateScenePrompts } from "@/lib/prompts/scenes";
-import { generateMetadata, type Metadata } from "@/lib/prompts/metadata";
-import { defaultsForFormat, type Format, type AspectRatio, type WorldType } from "@/lib/prompts/types";
+import { ARCHITECTURE_LOCK, generateStyles } from "@/lib/prompts/styles";
+import { applyLookToPrompt, getLook, type LookId } from "@/lib/prompts/looks";
+import {
+  assembleYouTubeMetadata,
+  generateMetadata,
+  generateYouTubeMetadata,
+  type Metadata,
+} from "@/lib/prompts/metadata";
+import {
+  defaultsForFormat,
+  type Format,
+  type AspectRatio,
+  type PropertyType,
+  type WorldType,
+} from "@/lib/prompts/types";
 import { editImage, generateImage } from "@/lib/fal";
 import { generateVideo } from "@/lib/seedance";
 import { upscaleVideo } from "@/lib/topaz";
@@ -45,6 +58,9 @@ export type CreateProjectInput = {
   sceneCount?: number;
   sceneDurationSec?: number;
   operatorNotes?: string;
+  /** Committed photographic look (lib/prompts/looks.ts). Optional — omitted
+   *  means GPT-5.5 chooses the light per concept, the pre-looks behavior. */
+  lookId?: LookId;
 };
 
 export type ProjectWithScenes = { project: Project; scenes: Scene[] };
@@ -72,7 +88,7 @@ export class ProjectBusyError extends Error {
 export async function createProject(input: CreateProjectInput): Promise<CreateProjectResult> {
   // Operator scope check: each operator's apps cover specific visual lanes
   // (e.g., InteriorGPT is interior-only). Reject out-of-lane requests early
-  // before burning Claude tokens.
+  // before burning GPT-5.5 tokens.
   const op = currentOperator();
   if (!op.worldTypes.includes(input.worldType)) {
     throw new Error(
@@ -80,18 +96,31 @@ export async function createProject(input: CreateProjectInput): Promise<CreatePr
     );
   }
 
+  // Resolve + validate the committed look before any LLM spend. A look that
+  // doesn't cover the picked lane (e.g. Twilight Hero on an interior) is an
+  // operator error, not something to silently drop.
+  const look = getLook(input.lookId);
+  if (input.lookId && !look) {
+    throw new Error(`Unknown look "${input.lookId}".`);
+  }
+  if (look && !look.worlds.includes(input.worldType)) {
+    throw new Error(
+      `Look "${look.name}" doesn't cover ${input.worldType} content. Suited lanes: ${look.worlds.join(", ")}.`
+    );
+  }
+
   const defaults = defaultsForFormat(input.format);
   const sceneCount = clamp(input.sceneCount ?? defaults.sceneCount, 1, 120);
   // Carousel contract: durationSec=0 means "static slide, no playback duration."
   const sceneDurationSec = clamp(input.sceneDurationSec ?? defaults.sceneDurationSec, 0, 15);
-  // Claude's prompt schema requires durationSec >= 2; pad carousel's 0 up to 4 just for prompt context.
+  // GPT-5.5's prompt schema requires durationSec >= 2; pad carousel's 0 up to 4 just for prompt context.
   const promptDuration = sceneDurationSec === 0 ? 4 : sceneDurationSec;
   const aspectRatio = defaults.aspectRatio;
   const targetDurationSec = sceneCount * sceneDurationSec;
 
   const projectId = nanoid(12);
 
-  // Run BOTH Claude calls before any DB writes. If either fails we leave no
+  // Run BOTH GPT-5.5 calls before any DB writes. If either fails we leave no
   // orphan project row to clean up.
   const concept = await generateConcept({
     niche: input.niche,
@@ -120,6 +149,7 @@ export async function createProject(input: CreateProjectInput): Promise<CreatePr
     sceneCount,
     sceneDurationSec: promptDuration,
     worldType: input.worldType,
+    look,
   });
 
   // LLM work succeeded — persist.
@@ -130,6 +160,7 @@ export async function createProject(input: CreateProjectInput): Promise<CreatePr
     format: input.format,
     worldType: input.worldType,
     status: "scripting",
+    lookId: look?.id ?? null,
     targetDurationSec: targetDurationSec || null,
     concept: {
       workingTitle: concept.workingTitle,
@@ -164,7 +195,7 @@ export async function createProject(input: CreateProjectInput): Promise<CreatePr
  *    conditioned on the upload as the reference.
  *  - No scene-prompt batch — there are exactly 2 scenes with hardcoded prompts.
  *
- * The Claude concept call still runs because finalize needs concept fields
+ * The GPT-5.5 concept call still runs because finalize needs concept fields
  * (workingTitle/hook/vibe) for metadata + thumbnail.
  */
 export type CreateBeforeAfterInput = {
@@ -254,6 +285,151 @@ export async function createBeforeAfterProject(
   return { project, scenes: insertedScenes };
 }
 
+/**
+ * Style-explorer project creation. One described, AI-rendered base image → N
+ * styled edits of it, for a YouTube long-form "X styles of this space" video.
+ * The base is produced + reviewed via /api/style-base before this runs. Distinct
+ * from
+ * createProject and createBeforeAfterProject because:
+ *  - GPT-5.5 SEES the base (vision) and proposes the styles — no niche/concept
+ *    text drives it.
+ *  - It fans out: one base becomes N pending scenes, each pinned to the base
+ *    via referenceImageUrl so generateAllImages edits each through nano-banana
+ *    /edit (the same conditioning before-after uses for its "after").
+ *  - Each scene carries title + subtitle card copy (styleName/styleSubtitle)
+ *    for the operator's CapCut name cards.
+ *  - Static stills only; no animation, no dedupe.
+ */
+export type CreateStyleExplorerInput = {
+  /** Public Blob URL of the operator-approved base — a text-to-image render
+   *  produced + reviewed via /api/style-base (we never use someone's photo). */
+  baseImageUrl: string;
+  /** Aspect ratio of the base (16:9 for YouTube long-form). Persisted on the
+   *  project so every styled edit inherits the base's shape. */
+  aspectRatio: AspectRatio;
+  worldType: WorldType;
+  propertyType: PropertyType;
+  /** How many styles to propose. Clamped 3–20; defaults to the format default (10). */
+  styleCount?: number;
+  /** Optional steering — location, tier, or angle for the SEO concept. */
+  operatorNotes?: string;
+  /** The operator's own description of the space (what they typed to render the
+   *  base). Persisted as the project niche + concept vibe so the YouTube
+   *  metadata grounds its title/description in the real space, not a generic
+   *  "residential interior". */
+  baseDescription?: string;
+};
+
+export async function createStyleExplorerProject(
+  input: CreateStyleExplorerInput
+): Promise<ProjectWithScenes> {
+  const op = currentOperator();
+  if (!op.worldTypes.includes(input.worldType)) {
+    throw new Error(
+      `Operator ${op.email} doesn't cover ${input.worldType} content. Allowed: ${op.worldTypes.join(", ")}.`
+    );
+  }
+  if (!op.propertyTypes.includes(input.propertyType)) {
+    throw new Error(
+      `Operator ${op.email} doesn't cover ${input.propertyType} content. Allowed: ${op.propertyTypes.join(", ")}.`
+    );
+  }
+
+  const styleCount = clamp(
+    input.styleCount ?? defaultsForFormat("style-explorer").sceneCount,
+    3,
+    20
+  );
+  const projectId = nanoid(12);
+
+  // Vision call: GPT-5.5 sees the uploaded base and proposes the styles before
+  // any DB write, so a failure leaves no orphan project row.
+  const stylesResp = await generateStyles({
+    baseImageUrl: input.baseImageUrl,
+    worldType: input.worldType,
+    propertyType: input.propertyType,
+    count: styleCount,
+    operatorNotes: input.operatorNotes,
+  });
+  if (stylesResp.styles.length === 0) {
+    throw new Error("Style generation returned no styles. Try again or adjust the notes.");
+  }
+
+  const n = stylesResp.styles.length;
+  const workingTitle = `${n} ${capitalize(input.propertyType)} ${capitalize(input.worldType)} Styles`;
+  // The space description is the project's subject (niche). Falls back to notes,
+  // then a generic label, so the row is always meaningful.
+  const niche =
+    input.baseDescription?.trim() ||
+    input.operatorNotes?.trim() ||
+    `${input.propertyType} ${input.worldType} style explorer`;
+
+  const project = await insertProject({
+    id: projectId,
+    title: workingTitle,
+    niche,
+    format: "style-explorer",
+    worldType: input.worldType,
+    propertyType: input.propertyType,
+    aspectRatio: input.aspectRatio,
+    status: "scripting",
+    targetDurationSec: null,
+    concept: {
+      workingTitle,
+      hook: `${n} distinct design styles applied to one ${input.propertyType} ${input.worldType} space.`,
+      // vibe carries the space description; notes carries the operator steering.
+      // finalizeStyleExplorer reads both back for the YouTube metadata.
+      vibe:
+        input.baseDescription?.trim() ||
+        "One base space, reimagined across a set of recognisable design styles.",
+      notes: input.operatorNotes?.trim() ?? "",
+      objectSet: [],
+    },
+    // No dedupe for style-explorer — each upload is unique.
+    worldSignature: null,
+    worldKeywords: null,
+  });
+
+  // Scene 1 = the uploaded base, already "generated" (no fal call) so it shows
+  // as the original. Scenes 2..N+1 = one per style, pending, each pinned to the
+  // base via referenceImageUrl so generateAllImages routes them through
+  // nano-banana /edit. Static stills (durationSec 0) — no animation.
+  // Prepend the deterministic camera + architecture lock so every styled edit
+  // is forced to the base's exact viewpoint — guards against the per-style
+  // angle drift GPT-5.5's own wording occasionally let through. The stored
+  // prompt is what feeds nano-banana /edit (and per-scene regen), so the lock
+  // rides along on every generation.
+  const styleScenes = stylesResp.styles.map((s, i) => ({
+    id: nanoid(12),
+    projectId,
+    order: i + 2,
+    prompt: `${ARCHITECTURE_LOCK}${s.editPrompt}`,
+    styleName: s.styleName,
+    styleSubtitle: s.styleSubtitle,
+    durationSec: 0,
+    status: "pending" as const,
+    referenceImageUrl: input.baseImageUrl,
+  }));
+
+  const insertedScenes = await insertScenes([
+    {
+      id: nanoid(12),
+      projectId,
+      order: 1,
+      prompt: "(base) the original space, before restyling",
+      styleName: "Original",
+      styleSubtitle: "The space, before restyling",
+      durationSec: 0,
+      status: "generated",
+      imageUrl: input.baseImageUrl,
+      referenceImageUrl: null,
+    },
+    ...styleScenes,
+  ]);
+
+  return { project, scenes: insertedScenes };
+}
+
 export async function listProjects(): Promise<Project[]> {
   return await listProjectsRows();
 }
@@ -315,22 +491,27 @@ export async function generateAllImages(
     // frozen referenceImageUrl (set by createBeforeAfterProject for the
     // "after" scene), it runs through nano-banana-pro/edit conditioned on
     // that upload. Otherwise it runs through nano-banana-pro text-to-image
-    // with a fresh seed — visual cohesion comes from shared Claude
+    // with a fresh seed — visual cohesion comes from shared GPT-5.5
     // vocabulary in each scene's self-contained prompt, not from pixel
     // anchoring. Trades some style-lock for more variety and removes the
     // "edits collapse toward the anchor" failure mode.
+    // Project-level committed look, appended to every prompt (no-op when the
+    // project has none — style-explorer and before-after never set one).
+    const look = getLook(project.lookId);
+
     await runWithConcurrency(targets, concurrency, async (scene) => {
       await markSceneGenerating(scene.id);
       try {
+        const promptForFal = applyLookToPrompt(lockedScenePrompt(project, scene), look);
         const result = scene.referenceImageUrl
           ? await editImage({
-              prompt: scene.prompt,
+              prompt: promptForFal,
               imageUrls: [scene.referenceImageUrl],
               aspectRatio,
               seed: freshSeed(),
             })
           : await generateImage({
-              prompt: scene.prompt,
+              prompt: promptForFal,
               aspectRatio,
               seed: freshSeed(),
             });
@@ -372,10 +553,22 @@ export async function generateAllImages(
 
 export type SceneAction = "approve" | "reject" | "regenerate";
 
+/** Optional per-call design direction layered on top of the stored prompt for
+ *  a single regeneration. Only meaningful when action === "regenerate".
+ *  Capped at 500 chars matching the API zod schema. */
+export type SceneActionOptions = {
+  designDirection?: string;
+  /** Optional look override for ONE regeneration — swaps the project's
+   *  committed look (or adds one where the project has none) for this call
+   *  only. The stored prompt and the project's lookId are never mutated. */
+  lookId?: LookId;
+};
+
 export async function applySceneAction(
   projectId: string,
   sceneId: string,
-  action: SceneAction
+  action: SceneAction,
+  options: SceneActionOptions = {},
 ): Promise<Scene> {
   const scene = await selectSceneById(sceneId);
   if (!scene) throw new Error(`Scene ${sceneId} not found`);
@@ -391,7 +584,7 @@ export async function applySceneAction(
       await markSceneRejected(sceneId);
       break;
     case "regenerate":
-      await regenerateScene(projectId, scene);
+      await regenerateScene(projectId, scene, options);
       break;
   }
 
@@ -400,7 +593,41 @@ export async function applySceneAction(
   return refreshed;
 }
 
-async function regenerateScene(projectId: string, scene: Scene): Promise<void> {
+/**
+ * Guarantee the camera + architecture lock leads a style-explorer style scene's
+ * prompt before it hits fal. New projects bake the lock into scene.prompt at
+ * creation, but projects made before the lock existed have lock-less prompts —
+ * this prepends it at generation/regeneration time so their scenes can be fixed
+ * in place (no need to recreate the project). No-op for other formats, for the
+ * "Original" scene (no referenceImageUrl), and for prompts that already carry it.
+ */
+function lockedScenePrompt(project: Project, scene: Scene): string {
+  if (
+    project.format === "style-explorer" &&
+    scene.referenceImageUrl &&
+    !scene.prompt.startsWith(ARCHITECTURE_LOCK)
+  ) {
+    return `${ARCHITECTURE_LOCK}${scene.prompt}`;
+  }
+  return scene.prompt;
+}
+
+/** Layer the operator's design direction on top of the stored scene prompt
+ *  for ONE fal call. The stored prompt is never mutated — each regen can
+ *  carry a fresh direction. Empty / whitespace-only directions are ignored
+ *  (operator hit Regenerate without filling the box → identical to the
+ *  pre-dialog blind reroll behavior). */
+function augmentPromptWithDirection(prompt: string, direction?: string): string {
+  const trimmed = direction?.trim();
+  if (!trimmed) return prompt;
+  return `${prompt}\n\nAdditional direction from the operator (apply on top of everything above — keep the same materials, lineage, and overall world; the direction only adjusts the named axis): ${trimmed}`;
+}
+
+async function regenerateScene(
+  projectId: string,
+  scene: Scene,
+  options: SceneActionOptions = {},
+): Promise<void> {
   const project = await selectProjectById(projectId);
   if (!project) throw new Error(`Project ${projectId} not found`);
   // Project-stored aspect (set per-upload for before-after) wins over the
@@ -408,6 +635,14 @@ async function regenerateScene(projectId: string, scene: Scene): Promise<void> {
   // generate at 1:1 even if the upload was 16:9.
   const aspectRatio =
     project.aspectRatio ?? defaultsForFormat(project.format).aspectRatio;
+  // Layer order: stored prompt → look block → operator direction. The look
+  // override (one call only) beats the project's committed look; the
+  // operator's free-text direction comes last so it beats both.
+  const look = getLook(options.lookId ?? project.lookId);
+  const promptForFal = augmentPromptWithDirection(
+    applyLookToPrompt(lockedScenePrompt(project, scene), look),
+    options.designDirection
+  );
 
   await markSceneGenerating(scene.id);
   try {
@@ -418,13 +653,13 @@ async function regenerateScene(projectId: string, scene: Scene): Promise<void> {
     const useReference = scene.referenceImageUrl;
     const result = useReference
       ? await editImage({
-          prompt: scene.prompt,
+          prompt: promptForFal,
           imageUrls: [useReference],
           aspectRatio,
           seed: freshSeed(),
         })
       : await generateImage({
-          prompt: scene.prompt,
+          prompt: promptForFal,
           aspectRatio,
           seed: freshSeed(),
         });
@@ -532,8 +767,8 @@ export async function animateAllScenes(
       return { animated: 0, failed: 0, skipped };
     }
 
-    // Single Claude call for all motion prompts — cheaper than per-scene
-    // and gives Claude the full sequence so it can vary moves intentionally.
+    // Single GPT-5.5 call for all motion prompts — cheaper than per-scene
+    // and gives GPT-5.5 the full sequence so it can vary moves intentionally.
     // Defensive [] fallback for objectSet — pre-2026-05 concepts persisted
     // before the field existed.
     const motionResp = await generateMotionPrompts({
@@ -609,8 +844,69 @@ export type FinalizeResult = {
 };
 
 /**
+ * Finalize a style-explorer project into YouTube long-form metadata. Parallels
+ * the social finalize path but: generates SEO-optimised YouTube metadata
+ * (title / thumbnail text / description / tags / hashtags), assembles the final
+ * description deterministically (chapters from the actual styles, CTA with the
+ * operator's real Instagram + website), and persists it. No thumbnail render —
+ * the operator brings their own thumbnail and the burned-in text we supply.
+ */
+async function finalizeStyleExplorer(project: Project, scenes: Scene[]): Promise<FinalizeResult> {
+  const renderable = scenes.filter(
+    (s) => !!s.imageUrl && (s.status === "generated" || s.status === "approved")
+  );
+  if (renderable.length === 0) {
+    throw new Error("No generated styles to finalize. Generate the styled images first.");
+  }
+  if (renderable.length < scenes.length) {
+    const missing = scenes.length - renderable.length;
+    throw new Error(
+      `Cannot finalize: ${missing} style${missing === 1 ? "" : "s"} not yet generated. Generate or reject them first.`
+    );
+  }
+
+  const acquired = await tryAcquireFinalizationLock(project.id);
+  if (!acquired) throw new ProjectBusyError(project.id, "finalizing");
+
+  try {
+    // Styles in running order, excluding the uploaded "Original" intro scene —
+    // these become the chapter list and feed the title/description.
+    const styleNames = scenes
+      .filter((s) => !!s.styleName && s.styleName !== "Original")
+      .sort((a, b) => a.order - b.order)
+      .map((s) => s.styleName as string);
+
+    const op = currentOperator();
+    // The space description lives on niche (and concept.vibe); operator steering
+    // lives on concept.notes. Feed both so the title/description are grounded in
+    // the real space the operator described, not a generic "residential interior".
+    const draft = await generateYouTubeMetadata({
+      spaceDescription: project.concept?.vibe?.trim() || project.niche,
+      notes: project.concept?.notes?.trim() || undefined,
+      worldType: project.worldType,
+      propertyType: project.propertyType,
+      styleNames,
+    });
+
+    const metadata = assembleYouTubeMetadata({
+      draft,
+      styleNames,
+      appName: op.apps[0]?.name ?? "our app",
+      instagram: op.socials.instagram,
+      website: op.socials.website,
+    });
+
+    await markProjectFinalized(project.id, { metadata });
+    return { metadata };
+  } catch (err) {
+    await updateProjectStatus(project.id, "ready");
+    throw err;
+  }
+}
+
+/**
  * Run the post-generation pipeline:
- *   1. Generate metadata via Claude.
+ *   1. Generate metadata via GPT-5.5.
  *   2. Generate a thumbnail image via fal (uploaded to Blob).
  *   3. Persist metadata + thumbnailUrl to the project row.
  *   4. Mark project status 'exported'.
@@ -622,6 +918,12 @@ export async function finalizeProject(projectId: string): Promise<FinalizeResult
   const found = await getProjectWithScenes(projectId);
   if (!found) throw new Error(`Project ${projectId} not found`);
   const { project, scenes } = found;
+
+  // Style-explorer finalizes to YouTube long-form metadata instead of the
+  // IG/TikTok social package — different shape, different generator.
+  if (project.format === "style-explorer") {
+    return await finalizeStyleExplorer(project, scenes);
+  }
 
   if (!project.concept) throw new Error("Project has no concept brief");
 
@@ -645,7 +947,7 @@ export async function finalizeProject(projectId: string): Promise<FinalizeResult
     const totalDurationSec = renderable.reduce((acc, s) => acc + (s.durationSec || 0), 0);
 
     // Pull the operator's live apps so the metadata prompt only mentions
-    // apps actually configured (no more telling Claude about CasaGPT when
+    // apps actually configured (no more telling GPT-5.5 about CasaGPT when
     // it's been pulled from rotation).
     const op = currentOperator();
     const rawMetadata = await generateMetadata({
@@ -683,7 +985,7 @@ export async function finalizeProject(projectId: string): Promise<FinalizeResult
 }
 
 /**
- * Replace the {APP_LINK} placeholder in Claude's metadata with the current
+ * Replace the {APP_LINK} placeholder in GPT-5.5's metadata with the current
  * operator's most niche-relevant app URL. Routing logic + URL config live in
  * lib/operators.ts. If the resolved URL is empty, leave the placeholder intact
  * so the operator notices and pastes a link manually.
@@ -714,12 +1016,16 @@ function substituteAppLink(metadata: Metadata, niche: string): Metadata {
         ...metadata,
         instagramCaption: sub(metadata.instagramCaption),
       };
+    case "youtube":
+      // YouTube long-form assembles its CTA + real links in
+      // finalizeStyleExplorer — there's no {APP_LINK} placeholder to swap.
+      return metadata;
   }
 }
 
 /**
  * Locked anchor hashtags per visual lane. Server-side enforcement of the rule
- * Claude is told about in the metadata system prompt — even if Claude forgets
+ * GPT-5.5 is told about in the metadata system prompt — even if GPT-5.5 forgets
  * (or duplicates), we make sure the locks are present and the array is
  * trimmed to 5 total. Mirrors LOCKED_HASHTAGS_BY_WORLD in lib/prompts/metadata.ts.
  */
@@ -751,9 +1057,9 @@ function appendHandle(caption: string, handle: string): string {
 }
 
 /**
- * Post-process Claude's raw metadata: enforce hashtag locks per worldType
+ * Post-process GPT-5.5's raw metadata: enforce hashtag locks per worldType
  * and append the operator's @handle to captions. The lock enforcement is
- * defensive — Claude is told the rule in the system prompt but might forget
+ * defensive — GPT-5.5 is told the rule in the system prompt but might forget
  * or near-duplicate; this guarantees the anchor tags are always present.
  */
 function applyMetadataPolicies(
@@ -780,11 +1086,19 @@ function applyMetadataPolicies(
         instagramCaption: appendHandle(metadata.instagramCaption, handle),
         instagramHashtags: applyHashtagLocks(metadata.instagramHashtags, worldType),
       };
+    case "youtube":
+      // Hashtag locks + @handle suffix are IG/TikTok policies. YouTube metadata
+      // carries its own CTA and hashtags; pass through unchanged.
+      return metadata;
   }
 }
 
 function clamp(n: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, n));
+}
+
+function capitalize(s: string): string {
+  return s.charAt(0).toUpperCase() + s.slice(1);
 }
 
 /**

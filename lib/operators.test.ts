@@ -9,9 +9,9 @@ import {
 
 beforeEach(() => {
   delete process.env.FAL_KEY_BRITOK30;
-  delete process.env.ANTHROPIC_KEY_BRITOK30;
+  delete process.env.OPENAI_KEY_BRITOK30;
   delete process.env.FAL_KEY_FREMYROSSO1;
-  delete process.env.ANTHROPIC_KEY_FREMYROSSO1;
+  delete process.env.OPENAI_KEY_FREMYROSSO1;
   delete process.env.APP_LINK_ARCHITECTGPT;
   delete process.env.APP_LINK_CASAGPT;
   delete process.env.APP_LINK_INTERIORGPT;
@@ -20,7 +20,7 @@ beforeEach(() => {
 describe("getOperator", () => {
   it("returns null for unrecognized emails", () => {
     process.env.FAL_KEY_BRITOK30 = "fk";
-    process.env.ANTHROPIC_KEY_BRITOK30 = "ak";
+    process.env.OPENAI_KEY_BRITOK30 = "ak";
     expect(getOperator("attacker@gmail.com")).toBeNull();
     expect(getOperator(null)).toBeNull();
     expect(getOperator(undefined)).toBeNull();
@@ -31,16 +31,16 @@ describe("getOperator", () => {
     expect(getOperator("britok30@gmail.com")).toBeNull();
 
     process.env.FAL_KEY_BRITOK30 = "fk";
-    expect(getOperator("britok30@gmail.com")).toBeNull(); // still missing anthropic
+    expect(getOperator("britok30@gmail.com")).toBeNull(); // still missing openai
 
     delete process.env.FAL_KEY_BRITOK30;
-    process.env.ANTHROPIC_KEY_BRITOK30 = "ak";
+    process.env.OPENAI_KEY_BRITOK30 = "ak";
     expect(getOperator("britok30@gmail.com")).toBeNull(); // still missing fal
   });
 
   it("returns britok30 with ArchitectGPT only + interior+exterior lanes", () => {
     process.env.FAL_KEY_BRITOK30 = "fk-britok";
-    process.env.ANTHROPIC_KEY_BRITOK30 = "ak-britok";
+    process.env.OPENAI_KEY_BRITOK30 = "ak-britok";
     process.env.APP_LINK_ARCHITECTGPT = "https://architectgpt.example/";
 
     const op = getOperator("britok30@gmail.com");
@@ -48,16 +48,17 @@ describe("getOperator", () => {
     expect(op).toMatchObject({
       email: "britok30@gmail.com",
       falKey: "fk-britok",
-      anthropicKey: "ak-britok",
+      openaiKey: "ak-britok",
     });
     expect(op?.apps.map((a) => a.name)).toEqual(["ArchitectGPT"]);
     expect(op?.apps[0].url).toBe("https://architectgpt.example/");
     expect(op?.worldTypes).toEqual(["interior", "exterior"]);
+    expect(op?.propertyTypes).toEqual(["residential", "commercial"]);
   });
 
   it("returns fremyrosso1 with InteriorGPT + interior-only lane", () => {
     process.env.FAL_KEY_FREMYROSSO1 = "fk-fremy";
-    process.env.ANTHROPIC_KEY_FREMYROSSO1 = "ak-fremy";
+    process.env.OPENAI_KEY_FREMYROSSO1 = "ak-fremy";
     process.env.APP_LINK_INTERIORGPT = "https://interiorgpt.example/";
 
     const op = getOperator("fremyrosso1@gmail.com");
@@ -65,17 +66,18 @@ describe("getOperator", () => {
     expect(op).toMatchObject({
       email: "fremyrosso1@gmail.com",
       falKey: "fk-fremy",
-      anthropicKey: "ak-fremy",
+      openaiKey: "ak-fremy",
     });
     expect(op?.apps.map((a) => a.name)).toEqual(["InteriorGPT"]);
     // InteriorGPT is interior-only by design — exterior content would be
-    // off-brand for the app.
+    // off-brand for the app — but covers both residential and commercial.
     expect(op?.worldTypes).toEqual(["interior"]);
+    expect(op?.propertyTypes).toEqual(["residential", "commercial"]);
   });
 
   it("is case-insensitive on the email", () => {
     process.env.FAL_KEY_BRITOK30 = "fk";
-    process.env.ANTHROPIC_KEY_BRITOK30 = "ak";
+    process.env.OPENAI_KEY_BRITOK30 = "ak";
 
     expect(getOperator("BritoK30@Gmail.com")?.email).toBe("britok30@gmail.com");
     expect(getOperator("FREMYROSSO1@GMAIL.COM")).toBeNull(); // missing keys still
@@ -83,7 +85,7 @@ describe("getOperator", () => {
 
   it("doesn't share keys across operators (no env-var leak)", () => {
     process.env.FAL_KEY_BRITOK30 = "britok-only";
-    process.env.ANTHROPIC_KEY_BRITOK30 = "britok-only";
+    process.env.OPENAI_KEY_BRITOK30 = "britok-only";
     expect(getOperator("fremyrosso1@gmail.com")).toBeNull();
   });
 });
@@ -93,9 +95,11 @@ describe("pickAppLink", () => {
     return {
       email: "x",
       falKey: "x",
-      anthropicKey: "x",
+      openaiKey: "x",
       apps,
       worldTypes: ["interior", "exterior"],
+      propertyTypes: ["residential", "commercial"],
+      socials: { instagram: "architectgpt", website: "https://www.architectgpt.io" },
     };
   }
 
@@ -140,9 +144,11 @@ describe("withOperator / currentOperator", () => {
   const op: Operator = {
     email: "britok30@gmail.com",
     falKey: "fk",
-    anthropicKey: "ak",
+    openaiKey: "ak",
     apps: [{ name: "ArchitectGPT", url: "https://x", handle: "architectgpt" }],
     worldTypes: ["interior", "exterior"],
+    propertyTypes: ["residential", "commercial"],
+    socials: { instagram: "architectgpt", website: "https://www.architectgpt.io" },
   };
 
   it("currentOperator throws when called outside a withOperator scope", () => {

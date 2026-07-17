@@ -3,8 +3,8 @@ import {
   FAL_NANO_BANANA_PER_IMAGE,
   FAL_SEEDANCE_FAST_PER_SECOND_720P,
   FAL_TOPAZ_PER_SECOND_GT_1080P,
-  CLAUDE_OPUS_4_7_INPUT_PER_MTOK,
-  CLAUDE_OPUS_4_7_OUTPUT_PER_MTOK,
+  GPT_5_5_INPUT_PER_MTOK,
+  GPT_5_5_OUTPUT_PER_MTOK,
   estimateConceptGen,
   estimateSceneGen,
   estimateMetadataGen,
@@ -26,9 +26,9 @@ describe("vendor price constants", () => {
     expect(FAL_NANO_BANANA_PER_IMAGE).toBe(0.225);
   });
 
-  it("Claude Opus 4.7: $5/MTok in, $25/MTok out", () => {
-    expect(CLAUDE_OPUS_4_7_INPUT_PER_MTOK).toBe(5);
-    expect(CLAUDE_OPUS_4_7_OUTPUT_PER_MTOK).toBe(25);
+  it("GPT-5.5: $5/MTok in, $30/MTok out", () => {
+    expect(GPT_5_5_INPUT_PER_MTOK).toBe(5);
+    expect(GPT_5_5_OUTPUT_PER_MTOK).toBe(30);
   });
 });
 
@@ -57,8 +57,8 @@ describe("estimateSceneGen", () => {
     const sixty = estimateSceneGen(60);
     expect(sixty).toBeGreaterThan(five);
     // Output dominates — should scale ~linearly with scene count for the
-    // per-scene portion. Differential: 55 scenes × 100 tokens out × $25/Mtok.
-    expect(sixty - five).toBeCloseTo((55 * 100 * 25) / 1_000_000, 4);
+    // per-scene portion. Differential: 55 scenes × 100 tokens out × $30/Mtok.
+    expect(sixty - five).toBeCloseTo((55 * 100 * 30) / 1_000_000, 4);
   });
 
   it("guards against negative scene count", () => {
@@ -83,7 +83,7 @@ describe("estimateProjectTotal (Pro pricing — $0.225/img at 2K)", () => {
     const ten = estimateProjectTotal("carousel", 10);
     const twenty = estimateProjectTotal("carousel", 20);
     expect(twenty).toBeGreaterThan(ten);
-    // 10 extra slides × $0.225 (text-to-image) = $2.25 + small Claude bump.
+    // 10 extra slides × $0.225 (text-to-image) = $2.25 + small GPT-5.5 bump.
     expect(twenty - ten).toBeGreaterThan(2.2);
   });
 
@@ -99,7 +99,7 @@ describe("estimateProjectTotal (Pro pricing — $0.225/img at 2K)", () => {
 });
 
 describe("estimateSuggestWorld", () => {
-  it("is a small fraction of a dollar (single Claude call)", () => {
+  it("is a small fraction of a dollar (single GPT-5.5 call)", () => {
     const cost = estimateSuggestWorld();
     expect(cost).toBeGreaterThan(0);
     expect(cost).toBeLessThan(0.1);
@@ -147,7 +147,7 @@ describe("video pipeline pricing", () => {
   it("animate batch scales linearly with total seconds", () => {
     const baseline = estimateAnimateBatch(3, 5); // 15s
     const doubled = estimateAnimateBatch(6, 5); // 30s
-    // Roughly 2× the per-sec (seedance + topaz w/ interp) costs, plus a smaller Claude bump.
+    // Roughly 2× the per-sec (seedance + topaz w/ interp) costs, plus a smaller GPT-5.5 bump.
     const perSecCost =
       FAL_SEEDANCE_FAST_PER_SECOND_720P + FAL_TOPAZ_PER_SECOND_GT_1080P * 2;
     expect(doubled - baseline).toBeGreaterThan(15 * perSecCost * 0.95);

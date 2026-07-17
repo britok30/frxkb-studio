@@ -1,7 +1,17 @@
 import { z } from "zod";
 
-export const FormatSchema = z.enum(["reel", "carousel", "before-after"]);
+export const FormatSchema = z.enum(["reel", "carousel", "before-after", "style-explorer"]);
 export type Format = z.infer<typeof FormatSchema>;
+
+/**
+ * Program axis, orthogonal to WorldType. residential = homes someone lives in;
+ * commercial = offices, retail, restaurants, hospitality. Threaded alongside
+ * worldType so a prompt can know both the vantage (interior/exterior) and the
+ * program (residential/commercial) — e.g. a commercial interior is a lobby,
+ * not a living room.
+ */
+export const PropertyTypeSchema = z.enum(["residential", "commercial"]);
+export type PropertyType = z.infer<typeof PropertyTypeSchema>;
 
 /**
  * Architecture content splits cleanly into two visual lanes — interior spaces
@@ -25,8 +35,8 @@ export const ConceptBriefSchema = z.object({
   workingTitle: z.string().min(3).max(120),
   hook: z.string().min(8).max(240),
   vibe: z.string().min(8).max(1500),
-  // 2000 char ceiling — Anthropic's tool_use doesn't enforce JSON-schema
-  // maxLength, and Claude regularly overshoots prose fields. Generous bound
+  // 2000 char ceiling — non-strict function calling doesn't enforce JSON-schema
+  // maxLength, and GPT-5.5 regularly overshoots prose fields. Generous bound
   // here + safeTruncate at the parse boundary in concept.ts catches the rest.
   notes: z.string().max(2000).default(""),
   /** Per-piece commitment to 8-15 specific objects (furniture, plants, art,
@@ -88,5 +98,12 @@ export function defaultsForFormat(format: Format): {
       // on projects.aspectRatio). Both scenes animate at 7s — paired length
       // for CapCut edits, comfortably inside seedance's 4-15s native range.
       return { aspectRatio: "1:1", sceneCount: 2, sceneDurationSec: 7 };
+    case "style-explorer":
+      // N styled edits of one uploaded base, for a YouTube long-form "X styles
+      // of this space" video. Like before-after, the real aspect comes from
+      // the upload (stored on projects.aspectRatio); 16:9 here is the long-form
+      // placeholder. Static stills (durationSec 0) — pacing/music/cards are
+      // done in CapCut. Default 10 styles → a ~10-minute SEO walkthrough.
+      return { aspectRatio: "16:9", sceneCount: 10, sceneDurationSec: 0 };
   }
 }

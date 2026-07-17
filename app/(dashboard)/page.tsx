@@ -38,9 +38,9 @@ export default async function ProjectsPage() {
           <span className="text-xs uppercase tracking-[0.18em] text-muted-foreground">
             Start something
           </span>
-          <span className="text-xs text-muted-foreground tabular-nums">4</span>
+          <span className="text-xs text-muted-foreground tabular-nums">5</span>
         </div>
-        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-5">
           <FeatureCard
             href="/new?format=reel"
             kicker="Instagram · TikTok · YouTube Shorts"
@@ -56,6 +56,14 @@ export default async function ProjectsPage() {
             hint="Drop a real photo, AI transforms it. After is animated (7s); the upload stays static for a clean cut. Live ArchitectGPT demo."
             cost="~$3.05"
             aspectClass="aspect-[9/16]"
+          />
+          <FeatureCard
+            href="/new?format=style-explorer"
+            kicker="YouTube long-form"
+            title="Style explorer"
+            hint="Describe a space, review the rendered base, then GPT-5.5 restyles that exact space into ~10 recognisable styles. SEO metadata + card copy included."
+            cost="~$1.75"
+            aspectClass="aspect-video"
           />
           <FeatureCard
             href="/new?format=carousel"

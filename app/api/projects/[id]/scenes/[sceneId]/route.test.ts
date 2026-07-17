@@ -37,7 +37,34 @@ describe("PATCH /api/projects/[id]/scenes/[sceneId]", () => {
     expect(res.status).toBe(200);
     const body = await res.json();
     expect(body.scene.status).toBe("approved");
-    expect(projectsMocks.applySceneAction).toHaveBeenCalledWith("p_1", "s_1", "approve");
+    expect(projectsMocks.applySceneAction).toHaveBeenCalledWith("p_1", "s_1", "approve", {
+      designDirection: undefined,
+    });
+  });
+
+  it("passes designDirection through to applySceneAction for regenerate", async () => {
+    projectsMocks.applySceneAction.mockResolvedValue({ id: "s_1", status: "generated" });
+
+    await PATCH(
+      patchJSON("p_1", "s_1", {
+        action: "regenerate",
+        designDirection: "tighter on the kitchen counter, shift to morning light",
+      }),
+      ctx("p_1", "s_1"),
+    );
+
+    expect(projectsMocks.applySceneAction).toHaveBeenCalledWith("p_1", "s_1", "regenerate", {
+      designDirection: "tighter on the kitchen counter, shift to morning light",
+    });
+  });
+
+  it("rejects a designDirection longer than 500 chars", async () => {
+    const tooLong = "x".repeat(501);
+    const res = await PATCH(
+      patchJSON("p_1", "s_1", { action: "regenerate", designDirection: tooLong }),
+      ctx("p_1", "s_1"),
+    );
+    expect(res.status).toBe(400);
   });
 
   it("returns 400 on invalid JSON", async () => {

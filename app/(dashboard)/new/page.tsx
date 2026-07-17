@@ -8,10 +8,17 @@ import { toast } from "sonner";
 import { ease } from "@/lib/motion";
 import { estimateProjectTotal, estimateSuggestWorld, formatCost } from "@/lib/pricing";
 import { NICHE_POOL, sampleN } from "@/lib/prompts/niche-pool";
+import { getLook, looksForWorld, type Look } from "@/lib/prompts/looks";
 
-type Format = "reel" | "carousel" | "before-after";
+type Format = "reel" | "carousel" | "before-after" | "style-explorer";
 type WorldType = "interior" | "exterior";
+type PropertyType = "residential" | "commercial";
 type AspectRatio = "16:9" | "9:16" | "1:1" | "4:3" | "3:4";
+
+const PROPERTY_LABELS: Record<PropertyType, string> = {
+  residential: "Residential",
+  commercial: "Commercial",
+};
 
 const FORMAT_PRESETS: Record<
   Format,
@@ -50,6 +57,14 @@ const FORMAT_PRESETS: Record<
     sceneDurationSec: 9,
     aspectClass: "aspect-square", // overridden by uploaded image's actual aspect
   },
+  "style-explorer": {
+    label: "Style explorer",
+    kicker: "YouTube long-form",
+    hint: "Describe a space, render a base, then GPT-5.5 restyles that exact space into ~10 recognisable design styles. SEO metadata + card copy included.",
+    sceneCount: 10, // number of styles
+    sceneDurationSec: 0, // static stills
+    aspectClass: "aspect-video", // 16:9 for YouTube
+  },
 };
 
 // NICHE_POOL + sampleN live in lib/prompts/niche-pool.ts so suggest-world
@@ -58,7 +73,9 @@ const FORMAT_PRESETS: Record<
 const STEPS = ["Format", "World", "Review"] as const;
 
 function isFormat(v: string | null): v is Format {
-  return v === "reel" || v === "carousel" || v === "before-after";
+  return (
+    v === "reel" || v === "carousel" || v === "before-after" || v === "style-explorer"
+  );
 }
 
 export default function NewProjectPage() {
@@ -83,16 +100,29 @@ export default function NewProjectPage() {
   // No default — operator must explicitly pick a side, EXCEPT when their
   // operator config only allows one (we auto-select to skip the friction).
   const [worldType, setWorldType] = useState<WorldType | null>(null);
+  // Program axis (style-explorer only). Same single-lane auto-select trick.
+  const [allowedPropertyTypes, setAllowedPropertyTypes] = useState<PropertyType[]>([
+    "residential",
+    "commercial",
+  ]);
+  const [propertyType, setPropertyType] = useState<PropertyType>("residential");
 
   useEffect(() => {
     void (async () => {
       try {
         const res = await fetch("/api/me");
         if (!res.ok) return;
-        const data = (await res.json()) as { worldTypes: WorldType[] };
+        const data = (await res.json()) as {
+          worldTypes: WorldType[];
+          propertyTypes?: PropertyType[];
+        };
         setAllowedWorldTypes(data.worldTypes);
         if (data.worldTypes.length === 1) {
           setWorldType(data.worldTypes[0]);
+        }
+        if (data.propertyTypes?.length) {
+          setAllowedPropertyTypes(data.propertyTypes);
+          setPropertyType((p) => (data.propertyTypes!.includes(p) ? p : data.propertyTypes![0]));
         }
       } catch {
         // Silent — operator can still pick interior or exterior manually.
@@ -101,6 +131,9 @@ export default function NewProjectPage() {
   }, []);
   const [niche, setNiche] = useState("");
   const [operatorNotes, setOperatorNotes] = useState("");
+  // Committed photographic look (reel/carousel only). Null = "let GPT-5.5
+  // choose the light per concept" — the pre-looks behavior.
+  const [lookId, setLookId] = useState<string | null>(null);
   const [showCustomize, setShowCustomize] = useState(false);
   const [sceneCount, setSceneCount] = useState(FORMAT_PRESETS[initialFormat].sceneCount);
   const [sceneDurationSec, setSceneDurationSec] = useState(
@@ -112,6 +145,12 @@ export default function NewProjectPage() {
   const [beforeImageUrl, setBeforeImageUrl] = useState<string | null>(null);
   const [beforeAspect, setBeforeAspect] = useState<AspectRatio | null>(null);
   const [transformationPrompt, setTransformationPrompt] = useState("");
+
+  // Style-explorer-only state. baseDescription drives the text-to-image base;
+  // baseImageUrl is the rendered + reviewed base (cleared whenever an input
+  // that shapes it changes, so styles never fan out from a stale render).
+  const [baseDescription, setBaseDescription] = useState("");
+  const [baseImageUrl, setBaseImageUrl] = useState<string | null>(null);
 
   // Per-session rotated examples. useMemo keyed on worldType so the operator
   // gets a stable set within one session per lane (no jumpy re-rolls on every
@@ -155,7 +194,9 @@ export default function NewProjectPage() {
   const canContinueStep2 =
     format === "before-after"
       ? !!worldType && !!beforeImageUrl && transformationPrompt.trim().length >= 8
-      : !!worldType && niche.trim().length >= 2;
+      : format === "style-explorer"
+        ? !!worldType && !!propertyType && !!baseImageUrl
+        : !!worldType && niche.trim().length >= 2;
 
   async function submit() {
     setSubmitting(true);
@@ -186,6 +227,31 @@ export default function NewProjectPage() {
         return;
       }
 
+      if (format === "style-explorer") {
+        if (!baseImageUrl) throw new Error("Render a base image first.");
+        const res = await fetch("/api/projects/style-explorer", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            baseImageUrl,
+            aspectRatio: "16:9",
+            worldType,
+            propertyType,
+            styleCount: sceneCount,
+            operatorNotes: operatorNotes.trim() || undefined,
+            baseDescription: baseDescription.trim() || undefined,
+          }),
+        });
+        if (!res.ok) {
+          const err = await res.json().catch(() => ({}));
+          throw new Error(err.error ?? `HTTP ${res.status}`);
+        }
+        const data = await res.json();
+        toast.success("Styles ready — generate the images on the next screen");
+        router.push(`/projects/${data.project.id}`);
+        return;
+      }
+
       const res = await fetch("/api/projects", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -196,6 +262,7 @@ export default function NewProjectPage() {
           sceneCount,
           sceneDurationSec,
           operatorNotes: operatorNotes.trim() || undefined,
+          lookId: lookId ?? undefined,
         }),
       });
       if (!res.ok) {
@@ -247,7 +314,7 @@ export default function NewProjectPage() {
                 title="Pick a format."
                 hint="Each format produces a different deliverable — a long ambient YouTube slideshow, a 15-second animated reel, or a static Instagram carousel."
               />
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
                 {(Object.keys(FORMAT_PRESETS) as Format[]).map((f) => (
                   <FormatCard
                     key={f}
@@ -260,7 +327,9 @@ export default function NewProjectPage() {
                     detail={
                       f === "carousel"
                         ? `${FORMAT_PRESETS[f].sceneCount} slides`
-                        : `${FORMAT_PRESETS[f].sceneCount} × ${FORMAT_PRESETS[f].sceneDurationSec}s`
+                        : f === "style-explorer"
+                          ? `${FORMAT_PRESETS[f].sceneCount} styles`
+                          : `${FORMAT_PRESETS[f].sceneCount} × ${FORMAT_PRESETS[f].sceneDurationSec}s`
                     }
                     cost={`~${formatCost(estimateProjectTotal(f, FORMAT_PRESETS[f].sceneCount))} all-in`}
                   />
@@ -280,19 +349,44 @@ export default function NewProjectPage() {
             <StepShell key="2" direction={direction}>
               <StepHeader
                 eyebrow="Step 2 of 3"
-                title={format === "before-after" ? "Drop the before, describe the after." : "What's the world?"}
+                title={
+                  format === "before-after"
+                    ? "Drop the before, describe the after."
+                    : format === "style-explorer"
+                      ? "Describe the space, render a base."
+                      : "What's the world?"
+                }
                 hint={
                   format === "before-after"
                     ? "Upload a real photo of an interior or exterior. Describe what should change. The studio generates the after, animates it, and bundles a transformation triptych."
-                    : "Describe a home a designer would screenshot — a place with strong identity, a quality of light, materials and the kind of objects (plants, art, books) that fill it. Or have the studio suggest one."
+                    : format === "style-explorer"
+                      ? "Pick the program and vantage, describe the space, and render a base image. Review it here — then GPT-5.5 reimagines that exact space in distinct, recognisable design styles."
+                      : "Describe a home a designer would screenshot — a place with strong identity, a quality of light, materials and the kind of objects (plants, art, books) that fill it. Or have the studio suggest one."
                 }
               />
 
               <WorldTypePicker
                 value={worldType}
-                onChange={setWorldType}
+                onChange={(v) => {
+                  setWorldType(v);
+                  setBaseImageUrl(null); // style-explorer: invalidate any stale base
+                  // Lane change invalidates the look — some looks are
+                  // lane-specific (e.g. Twilight Hero is exterior-only).
+                  setLookId(null);
+                }}
                 allowed={allowedWorldTypes ?? ["interior", "exterior"]}
               />
+
+              {format === "style-explorer" && (
+                <PropertyTypePicker
+                  value={propertyType}
+                  onChange={(v) => {
+                    setPropertyType(v);
+                    setBaseImageUrl(null);
+                  }}
+                  allowed={allowedPropertyTypes}
+                />
+              )}
 
               {format === "before-after" ? (
                 <BeforeAfterStep
@@ -305,21 +399,44 @@ export default function NewProjectPage() {
                   transformationPrompt={transformationPrompt}
                   onTransformationChange={setTransformationPrompt}
                 />
+              ) : format === "style-explorer" ? (
+                <StyleExplorerStep
+                  description={baseDescription}
+                  onDescriptionChange={(s) => {
+                    setBaseDescription(s);
+                    setBaseImageUrl(null);
+                  }}
+                  worldType={worldType}
+                  propertyType={propertyType}
+                  baseImageUrl={baseImageUrl}
+                  onBaseGenerated={setBaseImageUrl}
+                  styleCount={sceneCount}
+                  onStyleCountChange={setSceneCount}
+                  notes={operatorNotes}
+                  onNotesChange={setOperatorNotes}
+                />
               ) : (
                 worldType && (
-                  <WorldChooser
-                    niche={niche}
-                    onNiche={setNiche}
-                    format={format}
-                    worldType={worldType}
-                    presets={presets}
-                    placeholderExample={placeholderExample}
-                  />
+                  <>
+                    <WorldChooser
+                      niche={niche}
+                      onNiche={setNiche}
+                      format={format}
+                      worldType={worldType}
+                      presets={presets}
+                      placeholderExample={placeholderExample}
+                    />
+                    <LookPicker
+                      worldType={worldType}
+                      value={lookId}
+                      onChange={setLookId}
+                    />
+                  </>
                 )
               )}
 
               <div className="flex flex-col gap-3">
-                {format !== "before-after" && (
+                {format !== "before-after" && format !== "style-explorer" && (
                 <button
                   type="button"
                   onClick={() => setShowCustomize((v) => !v)}
@@ -332,7 +449,7 @@ export default function NewProjectPage() {
                     ›
                   </span>
                   {format === "reel"
-                    ? "Add notes for Claude"
+                    ? "Add notes for GPT-5.5"
                     : `Customize (${sceneCount} slides)`}
                 </button>
                 )}
@@ -362,7 +479,7 @@ export default function NewProjectPage() {
 
                         <label className="flex flex-col gap-1.5">
                           <span className="text-xs text-muted-foreground tracking-tight">
-                            Notes for Claude (optional)
+                            Notes for GPT-5.5 (optional)
                           </span>
                           <textarea
                             value={operatorNotes}
@@ -394,7 +511,7 @@ export default function NewProjectPage() {
               <StepHeader
                 eyebrow="Step 3 of 3"
                 title="Ready to script."
-                hint="Claude writes a concept brief, then a scene-by-scene shotlist. Takes about 30 seconds. You'll review before any images get generated."
+                hint="GPT-5.5 writes a concept brief, then a scene-by-scene shotlist. Takes about 30 seconds. You'll review before any images get generated."
               />
 
               <div className="rounded-xl border divide-y">
@@ -423,9 +540,29 @@ export default function NewProjectPage() {
                       onEdit={() => go(2)}
                     />
                   </>
+                ) : format === "style-explorer" ? (
+                  <>
+                    <ReviewRow
+                      label="Program"
+                      value={PROPERTY_LABELS[propertyType]}
+                      onEdit={() => go(2)}
+                    />
+                    <ReviewRow label="Description" value={baseDescription.trim()} onEdit={() => go(2)} />
+                    <ReviewRow
+                      label="Base"
+                      value={baseImageUrl ? "Rendered (16:9)" : "Not rendered"}
+                      onEdit={() => go(2)}
+                    />
+                    <ReviewRow label="Styles" value={`${sceneCount}`} onEdit={() => go(2)} />
+                  </>
                 ) : (
                   <>
                     <ReviewRow label="Niche" value={niche.trim()} onEdit={() => go(2)} />
+                    <ReviewRow
+                      label="Look"
+                      value={getLook(lookId)?.name ?? "GPT-5.5's choice"}
+                      onEdit={() => go(2)}
+                    />
                     <ReviewRow
                       label={format === "carousel" ? "Slides" : "Scenes"}
                       value={`${sceneCount}${format === "carousel" ? "" : ` × ${sceneDurationSec}s`}`}
@@ -460,7 +597,13 @@ export default function NewProjectPage() {
                     transition={{ duration: 0.12 }}
                     className="inline-flex h-11 items-center rounded-md bg-foreground px-6 text-sm text-background font-medium tracking-tight hover:opacity-90 disabled:opacity-60 disabled:cursor-not-allowed transition-opacity"
                   >
-                    {submitting ? "Scripting…" : "Create project →"}
+                    {submitting
+                      ? format === "style-explorer"
+                        ? "Generating…"
+                        : "Scripting…"
+                      : format === "style-explorer"
+                        ? "Generate styles →"
+                        : "Create project →"}
                   </motion.button>
                 </Footer>
               )}
@@ -829,6 +972,148 @@ function WorldTypePicker({
   );
 }
 
+// ── Property type picker (residential vs commercial) ───────────────────────
+
+function PropertyTypePicker({
+  value,
+  onChange,
+  allowed,
+}: {
+  value: PropertyType;
+  onChange: (v: PropertyType) => void;
+  allowed: PropertyType[];
+}) {
+  if (allowed.length === 1) {
+    return (
+      <div className="flex flex-col gap-2">
+        <span className="text-[10px] uppercase tracking-[0.22em] text-muted-foreground">
+          Program
+        </span>
+        <div className="text-sm tracking-tight">
+          <span className="font-medium">{PROPERTY_LABELS[allowed[0]]}</span>{" "}
+          <span className="text-xs text-muted-foreground">
+            (only program this operator covers)
+          </span>
+        </div>
+      </div>
+    );
+  }
+  return (
+    <div className="flex flex-col gap-2">
+      <span className="text-[10px] uppercase tracking-[0.22em] text-muted-foreground">
+        Program
+      </span>
+      <div className="grid grid-cols-2 gap-3">
+        {allowed.map((pt) => (
+          <motion.button
+            key={pt}
+            type="button"
+            onClick={() => onChange(pt)}
+            whileTap={{ scale: 0.98 }}
+            transition={{ duration: 0.12 }}
+            className={`text-left rounded-xl border px-4 py-3 transition-colors ${
+              value === pt
+                ? "border-foreground bg-foreground/[0.03]"
+                : "hover:border-foreground/30"
+            }`}
+          >
+            <div className="text-sm font-semibold tracking-tight">{PROPERTY_LABELS[pt]}</div>
+            <div className="text-[11px] text-muted-foreground tracking-tight mt-0.5">
+              {pt === "residential"
+                ? "Homes — living rooms, kitchens, facades, gardens."
+                : "Offices, retail, restaurants, hospitality, lobbies."}
+            </div>
+          </motion.button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// ── Look picker (committed photographic look) ───────────────────────────────
+
+function LookPicker({
+  worldType,
+  value,
+  onChange,
+}: {
+  worldType: WorldType;
+  value: string | null;
+  onChange: (id: string | null) => void;
+}) {
+  const looks = looksForWorld(worldType);
+  return (
+    <div className="flex flex-col gap-2">
+      <div className="flex items-baseline justify-between gap-4">
+        <span className="text-[10px] uppercase tracking-[0.22em] text-muted-foreground">
+          Look
+        </span>
+        <span className="text-[11px] text-muted-foreground tracking-tight">
+          One committed light + camera + grade across every scene
+        </span>
+      </div>
+      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
+        <LookCard
+          selected={value === null}
+          onSelect={() => onChange(null)}
+          name="No look"
+          tagline="GPT-5.5 picks the light per concept"
+          swatch="linear-gradient(135deg, #d8d8d8 0%, #a8a8a8 50%, #6f6f6f 100%)"
+        />
+        {looks.map((l: Look) => (
+          <LookCard
+            key={l.id}
+            selected={value === l.id}
+            onSelect={() => onChange(l.id)}
+            name={l.name}
+            tagline={l.tagline}
+            swatch={l.swatch}
+          />
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function LookCard({
+  selected,
+  onSelect,
+  name,
+  tagline,
+  swatch,
+}: {
+  selected: boolean;
+  onSelect: () => void;
+  name: string;
+  tagline: string;
+  swatch: string;
+}) {
+  return (
+    <motion.button
+      type="button"
+      onClick={onSelect}
+      whileHover={{ y: -2 }}
+      whileTap={{ scale: 0.98 }}
+      transition={{ duration: 0.16, ease }}
+      className={`text-left rounded-xl border p-2.5 flex flex-col gap-2 transition-colors ${
+        selected ? "border-foreground bg-foreground/[0.03]" : "hover:border-foreground/30"
+      }`}
+    >
+      <div
+        aria-hidden
+        className="aspect-video w-full rounded-md"
+        style={{ background: swatch }}
+      />
+      <div className="flex flex-col gap-0.5">
+        <span className="text-xs font-semibold tracking-tight">{name}</span>
+        <span className="text-[10px] text-muted-foreground tracking-tight leading-snug">
+          {tagline}
+        </span>
+      </div>
+    </motion.button>
+  );
+}
+
 // ── Before-after step (upload + transformation prompt) ────────────────────
 
 function BeforeAfterStep({
@@ -945,6 +1230,156 @@ function BeforeAfterStep({
   );
 }
 
+// ── Style-explorer step (describe → render base → review) ──────────────────
+
+function StyleExplorerStep({
+  description,
+  onDescriptionChange,
+  worldType,
+  propertyType,
+  baseImageUrl,
+  onBaseGenerated,
+  styleCount,
+  onStyleCountChange,
+  notes,
+  onNotesChange,
+}: {
+  description: string;
+  onDescriptionChange: (s: string) => void;
+  worldType: WorldType | null;
+  propertyType: PropertyType;
+  baseImageUrl: string | null;
+  onBaseGenerated: (url: string) => void;
+  styleCount: number;
+  onStyleCountChange: (n: number) => void;
+  notes: string;
+  onNotesChange: (s: string) => void;
+}) {
+  const [generating, setGenerating] = useState(false);
+
+  async function generateBase() {
+    if (generating) return;
+    if (!description.trim()) {
+      toast.error("Describe the space first");
+      return;
+    }
+    if (!worldType) {
+      toast.error("Pick interior or exterior first");
+      return;
+    }
+    setGenerating(true);
+    const toastId = toast.loading(
+      baseImageUrl ? "Regenerating base…" : "Rendering your base space…"
+    );
+    try {
+      const res = await fetch("/api/style-base", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ description: description.trim(), worldType, propertyType }),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.error ?? `HTTP ${res.status}`);
+      }
+      const data = (await res.json()) as { url: string };
+      onBaseGenerated(data.url);
+      toast.success("Base ready — review it, then continue", { id: toastId });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Unknown error";
+      toast.error("Couldn't render the base", { id: toastId, description: message });
+    } finally {
+      setGenerating(false);
+    }
+  }
+
+  return (
+    <div className="flex flex-col gap-6">
+      <label className="flex flex-col gap-1.5">
+        <span className="text-[10px] uppercase tracking-[0.22em] text-muted-foreground">
+          The space
+        </span>
+        <textarea
+          value={description}
+          onChange={(e) => onDescriptionChange(e.target.value)}
+          rows={3}
+          placeholder="e.g. A double-height living room with floor-to-ceiling windows onto a garden, an open staircase, and a fireplace on the far wall."
+          className="w-full rounded-md border bg-transparent px-3 py-2 text-sm focus:border-foreground outline-none resize-none tracking-tight"
+        />
+        <span className="text-[11px] text-muted-foreground tracking-tight">
+          We render a neutral base from this — its architecture stays fixed while each style re-dresses it.
+        </span>
+      </label>
+
+      <div className="flex flex-col gap-2">
+        <span className="text-[10px] uppercase tracking-[0.22em] text-muted-foreground">
+          Base image
+        </span>
+        {baseImageUrl ? (
+          <div className="flex flex-col gap-3 rounded-xl border p-4">
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img
+              src={baseImageUrl}
+              alt="Rendered base space"
+              className="w-full rounded-md border bg-muted/30 object-cover aspect-video"
+            />
+            <div className="flex items-center justify-between text-xs text-muted-foreground tracking-tight">
+              <span>16:9 · the exact space every style restyles</span>
+              <button
+                type="button"
+                onClick={() => void generateBase()}
+                disabled={generating}
+                className="hover:text-foreground underline underline-offset-2 disabled:opacity-60"
+              >
+                {generating ? "Regenerating…" : "Regenerate"}
+              </button>
+            </div>
+          </div>
+        ) : (
+          <div className="flex flex-col items-center justify-center gap-3 rounded-xl border-2 border-dashed border-foreground/30 p-8">
+            <p className="text-[11px] text-muted-foreground tracking-tight text-center max-w-xs leading-relaxed">
+              {worldType
+                ? "Render a base from your description, then regenerate until it’s right."
+                : "Pick a vantage above, then render your base."}
+            </p>
+            <motion.button
+              type="button"
+              onClick={() => void generateBase()}
+              disabled={generating || !description.trim() || !worldType}
+              whileTap={generating ? undefined : { scale: 0.98 }}
+              transition={{ duration: 0.12 }}
+              className="inline-flex h-10 items-center rounded-md bg-foreground px-5 text-sm text-background font-medium tracking-tight hover:opacity-90 disabled:opacity-40 disabled:cursor-not-allowed transition-opacity"
+            >
+              {generating ? "Rendering…" : "Generate base image"}
+            </motion.button>
+          </div>
+        )}
+      </div>
+
+      <div className="grid grid-cols-1 sm:grid-cols-[160px_1fr] gap-5">
+        <NumberField
+          label="Styles"
+          value={styleCount}
+          onChange={onStyleCountChange}
+          min={3}
+          max={20}
+        />
+        <label className="flex flex-col gap-1.5">
+          <span className="text-xs text-muted-foreground tracking-tight">
+            Notes for GPT-5.5 (optional)
+          </span>
+          <textarea
+            value={notes}
+            onChange={(e) => onNotesChange(e.target.value)}
+            rows={2}
+            placeholder="e.g. South Florida, high-end; lean coastal and warm."
+            className="w-full rounded-md border bg-transparent px-3 py-2 text-sm focus:border-foreground outline-none resize-none tracking-tight"
+          />
+        </label>
+      </div>
+    </div>
+  );
+}
+
 // ── World chooser (write or AI-suggest) ─────────────────────────────────────
 
 type Mode = "write" | "ai";
@@ -974,11 +1409,11 @@ function WorldChooser({
   const writeNicheRef = useRef<string>("");
   // Tracks the in-flight suggest request so we can cancel it when the
   // operator switches modes or kicks off a new request. Without this,
-  // a stale Claude response overwrites the input the user has since cleared.
+  // a stale GPT-5.5 response overwrites the input the user has since cleared.
   const inflightController = useRef<AbortController | null>(null);
-  // Niches Claude has proposed and the operator has rejected. Persisted to
+  // Niches GPT-5.5 has proposed and the operator has rejected. Persisted to
   // localStorage so the avoid-list is non-empty even on a fresh session's
-  // first click — otherwise Claude gets identical input every time and keeps
+  // first click — otherwise GPT-5.5 gets identical input every time and keeps
   // proposing the same "obvious gap" answer. Capped at 30.
   const REJECTED_KEY = "frxkb-rejected-niches";
   const REJECTED_CAP = 30;
@@ -1014,7 +1449,7 @@ function WorldChooser({
   }
 
   const suggestRequest = useCallback(async () => {
-    // Whatever Claude proposed last is now considered rejected — record it
+    // Whatever GPT-5.5 proposed last is now considered rejected — record it
     // before we ask for another. Persisted to localStorage so it survives
     // page refresh / new sessions.
     if (aiNicheRef.current) rememberRejection(aiNicheRef.current);
@@ -1071,7 +1506,7 @@ function WorldChooser({
     }
   }, [format, worldType, onNiche]);
 
-  // Switch handler: preserve text on each side. Never auto-fires Claude —
+  // Switch handler: preserve text on each side. Never auto-fires GPT-5.5 —
   // suggestion only happens when the operator clicks the button.
   function switchMode(next: Mode) {
     if (next === mode) return;
@@ -1187,7 +1622,7 @@ function WorldChooser({
             className="flex items-center justify-between gap-4 rounded-xl border border-dashed p-4"
           >
             <span className="text-xs text-muted-foreground tracking-tight max-w-md leading-relaxed">
-              Claude looks at past worlds and the ones you&apos;ve skipped, then
+              GPT-5.5 looks at past worlds and the ones you&apos;ve skipped, then
               proposes a fresh save-worthy one.
             </span>
             <motion.button

@@ -81,14 +81,14 @@ describe("POST /api/concepts/suggest", () => {
   });
 
   it("returns 500 when suggest throws", async () => {
-    suggestMock.mockRejectedValue(new Error("Claude rate limited"));
+    suggestMock.mockRejectedValue(new Error("GPT-5.5 rate limited"));
     vi.spyOn(console, "error").mockImplementation(() => {});
 
     const res = await POST(postJSON({ format: "reel", worldType: "interior" }));
     expect(res.status).toBe(500);
   });
 
-  it("forwards recentlyShown to suggestWorld so Claude avoids re-proposing them", async () => {
+  it("forwards recentlyShown to suggestWorld so GPT-5.5 avoids re-proposing them", async () => {
     suggestMock.mockResolvedValue({
       niche: "Some other world",
       rationale: "Different from what was just shown.",

@@ -2,11 +2,12 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 
 const generateJSONMock = vi.hoisted(() => vi.fn());
 
-vi.mock("@/lib/claude", () => ({
+vi.mock("@/lib/llm", () => ({
   generateJSON: generateJSONMock,
 }));
 
 import { buildScenesSystem, buildScenesUser, generateScenePrompts } from "./scenes";
+import { getLook } from "./looks";
 import type { PromptableConcept } from "./types";
 
 const concept: PromptableConcept = {
@@ -69,7 +70,7 @@ describe("buildScenesSystem", () => {
     expect(sys).not.toMatch(/blank walls|unmarked surfaces/i);
   });
 
-  it("does NOT cite specific brand-name objects in the system prompt (those become global defaults Claude reaches for every time)", () => {
+  it("does NOT cite specific brand-name objects in the system prompt (those become global defaults GPT-5.5 reaches for every time)", () => {
     const sys = buildScenesSystem();
     expect(sys).not.toMatch(/Hans Wegner|fiddle-leaf fig|Braun record player|design monographs/);
   });
@@ -121,7 +122,7 @@ describe("buildScenesUser", () => {
     for (const item of concept.objectSet) {
       expect(out).toContain(item);
     }
-    // Distribution rule keeps Claude from naming every object in every scene.
+    // Distribution rule keeps GPT-5.5 from naming every object in every scene.
     expect(out).toMatch(/Distribute these across scenes/i);
   });
 
@@ -135,10 +136,36 @@ describe("buildScenesUser", () => {
     });
     expect(out).not.toMatch(/Object set committed in the brief/i);
   });
+
+  it("injects the committed look block and orders every scene to stay inside it", () => {
+    const look = getLook("golden-hour")!;
+    const out = buildScenesUser({
+      concept,
+      aspectRatio: "9:16",
+      sceneCount: 5,
+      sceneDurationSec: 5,
+      worldType: "interior",
+      look,
+    });
+    expect(out).toContain(`Committed photographic look — ${look.name}`);
+    expect(out).toContain(look.prompt);
+    expect(out).toMatch(/vary composition and subject, never the light/i);
+  });
+
+  it("omits the look block when no look is committed (GPT-5.5 chooses per concept)", () => {
+    const out = buildScenesUser({
+      concept,
+      aspectRatio: "9:16",
+      sceneCount: 5,
+      sceneDurationSec: 5,
+      worldType: "interior",
+    });
+    expect(out).not.toMatch(/Committed photographic look/i);
+  });
 });
 
 describe("generateScenePrompts", () => {
-  it("returns Claude's scenes when count matches", async () => {
+  it("returns GPT-5.5's scenes when count matches", async () => {
     generateJSONMock.mockResolvedValue({ scenes: fakeScenes(8) });
 
     const out = await generateScenePrompts({
@@ -154,7 +181,7 @@ describe("generateScenePrompts", () => {
     expect(out.scenes[7].order).toBe(8);
   });
 
-  it("trims excess scenes and renumbers from 1 if Claude returned too many", async () => {
+  it("trims excess scenes and renumbers from 1 if GPT-5.5 returned too many", async () => {
     generateJSONMock.mockResolvedValue({
       scenes: fakeScenes(12).map((s, i) => ({ ...s, order: i + 50 })),
     });
@@ -171,7 +198,7 @@ describe("generateScenePrompts", () => {
     expect(out.scenes.map((s) => s.order)).toEqual([1, 2, 3, 4, 5, 6, 7, 8]);
   });
 
-  it("throws when Claude returns fewer scenes than requested", async () => {
+  it("throws when GPT-5.5 returns fewer scenes than requested", async () => {
     generateJSONMock.mockResolvedValue({ scenes: fakeScenes(3) });
 
     await expect(

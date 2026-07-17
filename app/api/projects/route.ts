@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import { createProject, listProjects } from "@/lib/projects";
 import { FormatSchema, WorldTypeSchema } from "@/lib/prompts/types";
+import { LookIdSchema } from "@/lib/prompts/looks";
 import { withSessionOperator } from "@/lib/route-helpers";
 
 export const runtime = "nodejs";
@@ -15,6 +16,8 @@ const CreateBody = z.object({
   sceneCount: z.number().int().min(1).max(120).optional(),
   sceneDurationSec: z.number().int().min(0).max(15).optional(),
   operatorNotes: z.string().max(2000).optional(),
+  /** Committed photographic look — an id from lib/prompts/looks.ts. */
+  lookId: LookIdSchema.optional(),
 });
 
 export async function GET() {

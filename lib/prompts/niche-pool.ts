@@ -3,14 +3,14 @@ import type { WorldType } from "./types";
 /** Curated pool of object-led residential niches per visual lane. Each entry
  *  names 2-4 anchor objects of the lineage so (a) the operator sees the
  *  altitude we want when they land on the wizard and (b) the niche string
- *  transitively primes Claude's downstream concept brief with lineage-specific
+ *  transitively primes GPT-5.5's downstream concept brief with lineage-specific
  *  vocabulary. Spans Asia / Mediterranean / Northern Europe / Americas /
  *  Africa / Middle East / Tropical so a session sample covers real
  *  geographic and cultural variety.
  *
  *  Single source of truth — imported by both the wizard (for per-session
  *  preset/placeholder rotation) and suggest-world (for altitude calibration
- *  examples injected into the Claude prompt). */
+ *  examples injected into the GPT-5.5 prompt). */
 export const NICHE_POOL: Record<WorldType, readonly string[]> = {
   interior: [
     "A Kyoto townhouse with paper screens, tatami, ikebana, gray cypress beams",

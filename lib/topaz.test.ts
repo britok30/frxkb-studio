@@ -15,9 +15,11 @@ import { withOperator, type Operator } from "./operators";
 const britok: Operator = {
   email: "britok30@gmail.com",
   falKey: "fal-key",
-  anthropicKey: "ak",
+  openaiKey: "ak",
   apps: [{ name: "ArchitectGPT", url: "https://x", handle: "architectgpt" }],
   worldTypes: ["interior", "exterior"],
+  propertyTypes: ["residential", "commercial"],
+  socials: { instagram: "architectgpt", website: "https://www.architectgpt.io" },
 };
 
 beforeEach(() => {

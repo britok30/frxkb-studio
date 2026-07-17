@@ -18,6 +18,7 @@ export async function GET(): Promise<Response> {
       email: op.email,
       appNames: op.apps.map((a) => a.name),
       worldTypes: op.worldTypes,
+      propertyTypes: op.propertyTypes,
     });
   });
 }

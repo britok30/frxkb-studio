@@ -18,17 +18,21 @@ import { withOperator, type Operator } from "./operators";
 const britok: Operator = {
   email: "britok30@gmail.com",
   falKey: "fal-britok-key",
-  anthropicKey: "ak",
+  openaiKey: "ak",
   apps: [{ name: "ArchitectGPT", url: "https://x", handle: "architectgpt" }],
   worldTypes: ["interior", "exterior"],
+  propertyTypes: ["residential", "commercial"],
+  socials: { instagram: "architectgpt", website: "https://www.architectgpt.io" },
 };
 
 const fremy: Operator = {
   email: "fremyrosso1@gmail.com",
   falKey: "fal-fremy-key",
-  anthropicKey: "ak",
+  openaiKey: "ak",
   apps: [{ name: "InteriorGPT", url: "https://x", handle: "interiorgpt" }],
   worldTypes: ["interior"],
+  propertyTypes: ["residential"],
+  socials: { instagram: "interiordesigngpt", website: "https://www.aiinterior.design" },
 };
 
 beforeEach(() => {

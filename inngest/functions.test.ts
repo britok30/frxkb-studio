@@ -44,7 +44,7 @@ const stubOperator = {
   email: "britok30@gmail.com",
   envSuffix: "BRITOK30",
   falKey: "fal-key",
-  anthropicKey: "ant-key",
+  openaiKey: "ant-key",
   apps: [],
 };
 

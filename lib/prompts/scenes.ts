@@ -1,4 +1,5 @@
-import { generateJSON } from "@/lib/claude";
+import { generateJSON } from "@/lib/llm";
+import type { Look } from "./looks";
 import {
   ScenePromptsResponseSchema,
   type ScenePromptsResponse,
@@ -13,6 +14,11 @@ export type ScenePromptsInput = {
   sceneCount: number;
   sceneDurationSec: number;
   worldType: WorldType;
+  /** Committed photographic look. When present, every scene's light, camera,
+   *  and photographic register must be written inside this look — the same
+   *  block is also appended deterministically at fal time, so the two layers
+   *  reinforce rather than fight. */
+  look?: Look | null;
 };
 
 export function buildScenesSystem(): string {
@@ -55,7 +61,17 @@ Return scenes in the order they should appear, numbered from 1.`;
 }
 
 export function buildScenesUser(input: ScenePromptsInput): string {
-  const { concept, aspectRatio, sceneCount, sceneDurationSec, worldType } = input;
+  const { concept, aspectRatio, sceneCount, sceneDurationSec, worldType, look } = input;
+  // The look wins over any lighting instinct GPT-5.5 has for the concept —
+  // one committed quality of light across the whole sequence is exactly what
+  // separates an editorial set from a generic one.
+  const lookBlock = look
+    ? [
+        "",
+        `Committed photographic look — ${look.name}: ${look.prompt}`,
+        "Write EVERY scene's light, color temperature, camera/lens, and photographic register inside this exact look. Do not drift to a different time of day or light source in any scene; vary composition and subject, never the light.",
+      ].join("\n")
+    : "";
   const worldRules =
     worldType === "interior"
       ? "World is INTERIOR — every scene is inside someone's HOME. Living rooms, kitchens, bedrooms, reading nooks, hallways, kitchens mid-use, bathrooms, studies, entryways. Vary by room and by scale (wide → mid → detail). Never step outside."
@@ -80,6 +96,7 @@ export function buildScenesUser(input: ScenePromptsInput): string {
     `Vibe: ${concept.vibe}`,
     concept.notes ? `Visual rules to lock down:\n${concept.notes}` : "",
     objectSetBlock,
+    lookBlock,
     "",
     worldRules,
     "",
@@ -128,11 +145,11 @@ export async function generateScenePrompts(
   });
   const parsed = ScenePromptsResponseSchema.parse(raw);
 
-  // Defensive: enforce the requested count and renumber from 1 if Claude drifted.
+  // Defensive: enforce the requested count and renumber from 1 if GPT-5.5 drifted.
   const trimmed = parsed.scenes.slice(0, input.sceneCount);
   if (trimmed.length < input.sceneCount) {
     throw new Error(
-      `Claude returned ${trimmed.length} scenes, expected ${input.sceneCount}. Try again or lower the count.`
+      `GPT-5.5 returned ${trimmed.length} scenes, expected ${input.sceneCount}. Try again or lower the count.`
     );
   }
   return {

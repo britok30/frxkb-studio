@@ -41,12 +41,14 @@ const operatorMocks = vi.hoisted(() => {
   const britok = {
     email: "britok30@gmail.com",
     falKey: "fk",
-    anthropicKey: "ak",
+    openaiKey: "ak",
     apps: [
       { name: "ArchitectGPT", url: "", handle: "architectgpt" },
       { name: "CasaGPT", url: "", handle: "casagpt", pattern: /(interior|living)/ },
     ],
     worldTypes: ["interior", "exterior"] as ("interior" | "exterior")[],
+    propertyTypes: ["residential", "commercial"] as ("residential" | "commercial")[],
+    socials: { instagram: "architectgpt", website: "https://www.architectgpt.io" },
   };
   return {
     currentOperator: vi.fn(() => britok),
@@ -144,7 +146,7 @@ beforeEach(() => {
 });
 
 describe("createProject", () => {
-  it("calls Claude for concept then scenes, inserts project + scene rows", async () => {
+  it("calls GPT-5.5 for concept then scenes, inserts project + scene rows", async () => {
     claudeMocks.generateConcept.mockResolvedValue(concept);
     claudeMocks.generateScenePrompts.mockResolvedValue({
       scenes: [
@@ -183,7 +185,7 @@ describe("createProject", () => {
       sceneDurationSec: 5,
     });
 
-    // Both Claude calls must complete before any DB write — no orphan rows on LLM failure.
+    // Both GPT-5.5 calls must complete before any DB write — no orphan rows on LLM failure.
     expect(callOrder).toEqual(["concept", "scenes", "insertProject", "insertScenes"]);
 
     expect(claudeMocks.generateConcept).toHaveBeenCalledWith({
@@ -198,6 +200,7 @@ describe("createProject", () => {
       sceneCount: 2,
       sceneDurationSec: 5,
       worldType: "interior",
+      look: null,
     });
     expect(dbMocks.insertProject).toHaveBeenCalledOnce();
     const projInsert = dbMocks.insertProject.mock.calls[0][0];
@@ -226,6 +229,41 @@ describe("createProject", () => {
     expect(out.scenes).toHaveLength(2);
     // Dedupe found nothing (default mock) — empty array.
     expect(out.similarProjects).toEqual([]);
+  });
+
+  it("threads the committed look into scene scripting and persists lookId on the project", async () => {
+    claudeMocks.generateConcept.mockResolvedValue(concept);
+    claudeMocks.generateScenePrompts.mockResolvedValue({
+      scenes: [
+        { order: 1, prompt: "long enough scene prompt with palm shadows under late afternoon light", durationSec: 5 },
+      ],
+    });
+
+    await createProject({
+      niche: "modernist living rooms",
+      format: "reel",
+      worldType: "interior",
+      sceneCount: 1,
+      lookId: "golden-hour",
+    });
+
+    const scenesCall = claudeMocks.generateScenePrompts.mock.calls[0][0];
+    expect(scenesCall.look?.id).toBe("golden-hour");
+    const projInsert = dbMocks.insertProject.mock.calls[0][0];
+    expect(projInsert.lookId).toBe("golden-hour");
+  });
+
+  it("rejects a look that doesn't cover the picked lane before any LLM spend", async () => {
+    await expect(
+      createProject({
+        niche: "modernist living rooms",
+        format: "reel",
+        worldType: "interior",
+        sceneCount: 1,
+        lookId: "twilight-hero", // exterior-only look
+      })
+    ).rejects.toThrow(/doesn't cover interior/i);
+    expect(claudeMocks.generateConcept).not.toHaveBeenCalled();
   });
 
   it("calls dedupe with concept's signature + keywords and propagates matches", async () => {
@@ -312,7 +350,7 @@ describe("createProject", () => {
 
   it("does not write any DB rows when scene prompt generation fails", async () => {
     claudeMocks.generateConcept.mockResolvedValue(concept);
-    claudeMocks.generateScenePrompts.mockRejectedValue(new Error("Claude rate limited"));
+    claudeMocks.generateScenePrompts.mockRejectedValue(new Error("GPT-5.5 rate limited"));
 
     await expect(
       createProject({ niche: "x", format: "reel", worldType: "interior", sceneCount: 2 })
@@ -323,7 +361,7 @@ describe("createProject", () => {
   });
 
   it("does not write any DB rows when concept generation fails", async () => {
-    claudeMocks.generateConcept.mockRejectedValue(new Error("Claude is down"));
+    claudeMocks.generateConcept.mockRejectedValue(new Error("GPT-5.5 is down"));
 
     await expect(
       createProject({ niche: "x", format: "reel", worldType: "interior", sceneCount: 2 })
@@ -383,7 +421,7 @@ describe("getProjectWithScenes", () => {
 describe("createBeforeAfterProject", () => {
   beforeEach(() => {
     // Slim concept (no worldSignature/worldKeywords — those don't exist on
-    // PromptableConcept and aren't asked from Claude for before-after).
+    // PromptableConcept and aren't asked from GPT-5.5 for before-after).
     claudeMocks.generateBeforeAfterConcept.mockResolvedValue({
       workingTitle: concept.workingTitle,
       hook: concept.hook,
@@ -830,6 +868,62 @@ describe("applySceneAction", () => {
     expect(falMocks.editImage).not.toHaveBeenCalled();
   });
 
+  it("regenerate: designDirection layers on top of the stored prompt for the fal call (does NOT mutate the stored prompt)", async () => {
+    dbMocks.selectSceneById.mockResolvedValue(
+      fakeScene({ id: "s_1", prompt: "A Mallorcan kitchen with terracotta floors and indigo linen." }),
+    );
+
+    await applySceneAction("p_1", "s_1", "regenerate", {
+      designDirection: "tighter on the kitchen counter, shift to morning light",
+    });
+
+    expect(falMocks.generateImage).toHaveBeenCalledTimes(1);
+    const call = falMocks.generateImage.mock.calls[0][0];
+    expect(call.prompt).toContain("A Mallorcan kitchen with terracotta floors and indigo linen.");
+    expect(call.prompt).toContain("tighter on the kitchen counter, shift to morning light");
+    expect(call.prompt).toMatch(/apply on top|keep the same materials/i);
+    // The stored prompt on the scene row is untouched — markSceneGenerated
+    // doesn't receive a prompt field, so the direction is one-shot only.
+    const persistedCall = dbMocks.markSceneGenerated.mock.calls[0][1];
+    expect(persistedCall).not.toHaveProperty("prompt");
+  });
+
+  it("regenerate: empty/whitespace designDirection falls back to blind reroll (no augmentation)", async () => {
+    dbMocks.selectSceneById.mockResolvedValue(
+      fakeScene({ id: "s_1", prompt: "Original prompt text." }),
+    );
+
+    await applySceneAction("p_1", "s_1", "regenerate", { designDirection: "   " });
+
+    const call = falMocks.generateImage.mock.calls[0][0];
+    expect(call.prompt).toBe("Original prompt text.");
+    expect(call.prompt).not.toMatch(/Additional direction/i);
+  });
+
+  it("regenerate: before-after path also respects designDirection (edit endpoint receives the augmented prompt)", async () => {
+    dbMocks.selectSceneById.mockResolvedValue({
+      ...fakeScene({
+        id: "s_2",
+        order: 2,
+        prompt: "Add walnut cabinets and terrazzo to the kitchen.",
+      }),
+      referenceImageUrl: "https://blob.example/upload-before.jpg",
+    });
+    falMocks.editImage.mockResolvedValue({
+      images: [{ url: "https://fal.media/edit-regen.jpg" }],
+      requestId: "req_edit_regen",
+    });
+
+    await applySceneAction("p_1", "s_2", "regenerate", {
+      designDirection: "warmer, softer afternoon light",
+    });
+
+    expect(falMocks.editImage).toHaveBeenCalledTimes(1);
+    const call = falMocks.editImage.mock.calls[0][0];
+    expect(call.prompt).toContain("Add walnut cabinets and terrazzo to the kitchen.");
+    expect(call.prompt).toContain("warmer, softer afternoon light");
+  });
+
   it("regenerate: before-after 'after' scene re-uses its frozen upload via /edit", async () => {
     // Before-after's after-scene has referenceImageUrl pinned to the
     // operator's upload. Per-scene regen must re-pass that same URL.
@@ -1067,7 +1161,7 @@ describe("finalizeProject", () => {
   });
 
   it("enforces locked hashtags per worldType (interior gets interiordesign + interiors)", async () => {
-    // Override Claude's response: imagine it forgot the locks entirely.
+    // Override GPT-5.5's response: imagine it forgot the locks entirely.
     claudeMocks.generateMetadata.mockResolvedValue({
       ...metadata,
       tiktokHashtags: ["brazilianmodernism", "travertine", "calm"],
@@ -1077,7 +1171,7 @@ describe("finalizeProject", () => {
     await finalizeProject("p_1");
 
     const persisted = dbMocks.markProjectFinalized.mock.calls[0][1];
-    // Locks prepended, total still 5 (or fewer if Claude under-returned).
+    // Locks prepended, total still 5 (or fewer if GPT-5.5 under-returned).
     expect(persisted.metadata.tiktokHashtags.slice(0, 2)).toEqual([
       "interiordesign",
       "interiors",
@@ -1092,10 +1186,10 @@ describe("finalizeProject", () => {
     expect(persisted.metadata.instagramHashtags).toHaveLength(5);
   });
 
-  it("dedups locks if Claude already returned them — total stays at 5", async () => {
+  it("dedups locks if GPT-5.5 already returned them — total stays at 5", async () => {
     claudeMocks.generateMetadata.mockResolvedValue({
       ...metadata,
-      // Claude obeyed the rule and included the locks; we shouldn't duplicate.
+      // GPT-5.5 obeyed the rule and included the locks; we shouldn't duplicate.
       tiktokHashtags: ["interiordesign", "interiors", "brazilian", "travertine", "calm"],
       instagramHashtags: ["interiors", "interiordesign", "brazilian", "travertine", "calm"],
     });
@@ -1104,7 +1198,7 @@ describe("finalizeProject", () => {
 
     const persisted = dbMocks.markProjectFinalized.mock.calls[0][1];
     expect(persisted.metadata.tiktokHashtags).toHaveLength(5);
-    // Locks come first; Claude's variable picks fill the rest.
+    // Locks come first; GPT-5.5's variable picks fill the rest.
     expect(persisted.metadata.tiktokHashtags.filter((t: string) => t === "interiordesign")).toHaveLength(1);
     expect(persisted.metadata.tiktokHashtags.filter((t: string) => t === "interiors")).toHaveLength(1);
   });

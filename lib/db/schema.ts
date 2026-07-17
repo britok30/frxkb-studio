@@ -8,10 +8,18 @@ export const projects = pgTable(
     id: text("id").primaryKey(),
     title: text("title").notNull(),
     niche: text("niche").notNull(),
-    format: text("format", { enum: ["reel", "carousel", "before-after"] }).notNull(),
+    format: text("format", {
+      enum: ["reel", "carousel", "before-after", "style-explorer"],
+    }).notNull(),
     /** Visual lane: interior spaces vs exterior shots. Threaded through every
      *  prompt generator so the world stays on one side for the whole project. */
     worldType: text("world_type", { enum: ["interior", "exterior"] }).notNull(),
+    /** Program axis, orthogonal to worldType. residential = homes; commercial =
+     *  offices/retail/restaurants/hospitality. Defaults to residential so every
+     *  pre-existing row reads correctly without a backfill. */
+    propertyType: text("property_type", { enum: ["residential", "commercial"] })
+      .notNull()
+      .default("residential"),
     /** Aspect ratio for downstream image generation. Reel/carousel default
      *  by format (9:16 / 1:1); before-after derives from the uploaded "before"
      *  image's actual dimensions and stores it here. Nullable — readers should
@@ -24,6 +32,11 @@ export const projects = pgTable(
     })
       .notNull()
       .default("draft"),
+    /** Committed photographic look (lighting + camera + grade) picked at
+     *  creation — an id from lib/prompts/looks.ts. Applied to every image
+     *  prompt at generation time via applyLookToPrompt. Nullable: legacy
+     *  projects and "let GPT-5.5 decide" projects have no look. */
+    lookId: text("look_id"),
     targetDurationSec: integer("target_duration_sec"),
     concept: jsonb("concept").$type<{
       workingTitle: string;
@@ -77,10 +90,18 @@ export const scenes = pgTable(
      *  Frozen at first generation so per-scene regen stays consistent with
      *  the rest of the sequence even if the anchor is later regenerated. */
     referenceImageUrl: text("reference_image_url"),
+    /** Style-explorer only: the on-screen card TITLE for this scene's style
+     *  (e.g. "Japandi", "Industrial Loft"). Null for every other format.
+     *  Carried into the export so the operator can add cards in CapCut. */
+    styleName: text("style_name"),
+    /** Style-explorer only: the on-screen card SUBTITLE — a one-line descriptor
+     *  that sits under styleName (e.g. "Warm minimalism in oak and linen").
+     *  Null for every other format. */
+    styleSubtitle: text("style_subtitle"),
     /** Public Vercel Blob URL of the upscaled mp4 (for reels — the seedance
      *  output passed through Topaz Proteus). Null for stills/non-reel formats. */
     videoUrl: text("video_url"),
-    /** The motion description Claude generated for the seedance pass. Stored
+    /** The motion description GPT-5.5 generated for the seedance pass. Stored
      *  for transparency + so re-animation uses the same direction. */
     motionPrompt: text("motion_prompt"),
     falRequestId: text("fal_request_id"),

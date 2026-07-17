@@ -251,7 +251,7 @@ export async function markSceneFailed(id: string, error: string): Promise<void> 
  * The still itself is still good — only the video pipeline (motion prompt,
  * seedance, or topaz) failed. Status stays "generated"/"approved" so the
  * scene remains a valid animate candidate on the next click. motionPrompt is
- * cleared so a retry asks Claude for a fresh direction.
+ * cleared so a retry asks GPT-5.5 for a fresh direction.
  */
 export async function markSceneAnimateFailed(id: string, error: string): Promise<void> {
   await getDb()

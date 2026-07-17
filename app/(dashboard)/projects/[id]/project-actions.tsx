@@ -99,9 +99,10 @@ export function ProjectActions({
   const isAnimatable = isReel || format === "before-after";
   const animatableCount = format === "before-after" ? 1 : totalScenes;
   const animateNeeded = isAnimatable && allStillsDone && animatedCount < animatableCount;
-  // Finalize is gated behind animation for both formats — a before-after
-  // bundle without the after video is missing the whole point, same as a
-  // reel without its motion.
+  // Finalize is gated behind animation for both animatable formats — a
+  // before-after bundle without the after video is missing the whole point,
+  // same as a reel without its motion. Static formats (carousel, style-explorer)
+  // finalize as soon as every still is in.
   const canFinalize =
     allStillsDone && (!isAnimatable || animatedCount >= animatableCount);
 

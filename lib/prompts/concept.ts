@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { generateJSON } from "@/lib/claude";
+import { generateJSON } from "@/lib/llm";
 import {
   ConceptBriefSchema,
   type ConceptBrief,
@@ -82,9 +82,9 @@ export function buildConceptUser(input: ConceptInput): string {
   return lines.join("\n");
 }
 
-// Per Anthropic docs: JSON-schema maxLength is NOT enforced server-side,
+// Per OpenAI docs: JSON-schema maxLength is NOT enforced server-side,
 // even with strict mode. The recommended pattern is to put the limit in the
-// field's `description` (Claude reads it as natural-language guidance and
+// field's `description` (GPT-5.5 reads it as natural-language guidance and
 // obeys ~reliably) AND validate client-side. We do both — descriptions
 // below + safeTruncate before Zod.parse as a safety net.
 const CONCEPT_TOOL_SCHEMA = {
@@ -140,8 +140,8 @@ const CONCEPT_TOOL_SCHEMA = {
 } as const;
 
 /**
- * Anthropic tool_use treats JSON-schema constraints (maxLength, type, etc.)
- * as soft hints. Claude regularly overshoots prose fields AND occasionally
+ * Non-strict function calling treats JSON-schema constraints (maxLength, type, etc.)
+ * as soft hints. GPT-5.5 regularly overshoots prose fields AND occasionally
  * returns the wrong type (e.g. comma-separated string for an array field).
  * Rather than throw on Zod parse, we coerce + trim before validation — a
  * graceful safety net. Logs warnings when corrections happen so we can spot
@@ -163,7 +163,7 @@ function safeTruncateConcept(raw: unknown): unknown {
     const v = obj[key];
     if (typeof v === "string" && v.length > max) {
       console.warn(
-        `[concept] Claude overshot ${key} (${v.length} > ${max}); truncating.`
+        `[concept] GPT-5.5 overshot ${key} (${v.length} > ${max}); truncating.`
       );
       obj[key] = v.slice(0, max - 1) + "…";
     }
@@ -174,7 +174,7 @@ function safeTruncateConcept(raw: unknown): unknown {
   // empties, lowercase.
   if (typeof obj.worldKeywords === "string") {
     console.warn(
-      `[concept] Claude returned worldKeywords as a string; coercing to array.`
+      `[concept] GPT-5.5 returned worldKeywords as a string; coercing to array.`
     );
     obj.worldKeywords = (obj.worldKeywords as string)
       .split(/[,\n]/)
@@ -182,12 +182,12 @@ function safeTruncateConcept(raw: unknown): unknown {
       .filter((t) => t.length >= 2 && t.length <= 40);
   }
 
-  // Same coercion for objectSet — Claude occasionally returns a single
+  // Same coercion for objectSet — GPT-5.5 occasionally returns a single
   // string instead of an array. Preserves capitalization (object names like
   // "Hans Wegner chair" need it, unlike worldKeywords which are lowercase tags).
   if (typeof obj.objectSet === "string") {
     console.warn(
-      `[concept] Claude returned objectSet as a string; coercing to array.`
+      `[concept] GPT-5.5 returned objectSet as a string; coercing to array.`
     );
     obj.objectSet = (obj.objectSet as string)
       .split(/[,\n]/)

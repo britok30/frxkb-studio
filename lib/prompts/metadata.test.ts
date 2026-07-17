@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 
 const generateJSONMock = vi.hoisted(() => vi.fn());
 
-vi.mock("@/lib/claude", () => ({ generateJSON: generateJSONMock }));
+vi.mock("@/lib/llm", () => ({ generateJSON: generateJSONMock }));
 
 import {
   buildCarouselMetadataSystem,
@@ -32,7 +32,7 @@ const concept: PromptableConcept = {
   ],
 };
 
-// Sample valid payloads — what Claude *would* return per variant. Note these
+// Sample valid payloads — what GPT-5.5 *would* return per variant. Note these
 // don't include `kind` because generateMetadata injects that client-side.
 const validReel = {
   tiktokCaption: "Travertine and palm shadow at the slow end of a São Paulo afternoon.",
@@ -100,7 +100,7 @@ describe("buildCarouselMetadataSystem", () => {
   it("pure carousel: no app mention in caption (organic ambient content)", () => {
     const sys = buildCarouselMetadataSystem(["ArchitectGPT"], "interior", "carousel");
     expect(sys).toMatch(/No app mention in the caption/i);
-    // Carousel caption rule should NOT instruct Claude to insert {APP_LINK}.
+    // Carousel caption rule should NOT instruct GPT-5.5 to insert {APP_LINK}.
     const fieldsBlock = sys.split("Field requirements:")[1] ?? "";
     expect(fieldsBlock).not.toMatch(/use the literal placeholder "\{APP_LINK\}"/i);
   });
@@ -225,7 +225,7 @@ describe("generateMetadata — branches by format", () => {
     expect(args.toolName).toBe("submit_carousel_metadata");
   });
 
-  it("rejects when Claude returns a payload that fails the schema", async () => {
+  it("rejects when GPT-5.5 returns a payload that fails the schema", async () => {
     // 6 hashtags exceeds the 5-cap for IG.
     generateJSONMock.mockResolvedValue({
       ...validReel,

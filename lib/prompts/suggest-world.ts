@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { generateJSON } from "@/lib/claude";
+import { generateJSON } from "@/lib/llm";
 import type { Format, WorldType } from "./types";
 import { NICHE_POOL, sampleN } from "./niche-pool";
 
@@ -12,7 +12,7 @@ export const SuggestedWorldSchema = z.object({
 });
 export type SuggestedWorld = z.infer<typeof SuggestedWorldSchema>;
 
-/** A compact representation of a past project — fed to Claude as the avoid-list. */
+/** A compact representation of a past project — fed to GPT-5.5 as the avoid-list. */
 export type WorldHistoryEntry = {
   niche: string;
   worldSignature: string;
@@ -21,19 +21,19 @@ export type WorldHistoryEntry = {
 
 export type SuggestWorldInput = {
   format: Format;
-  /** Visual lane the operator picked — Claude scopes the suggestion to one
+  /** Visual lane the operator picked — GPT-5.5 scopes the suggestion to one
    *  side so an interior request never returns a facade niche. */
   worldType: WorldType;
   /** Recent past worlds the operator (or studio) has already produced.
-   *  Claude is instructed to avoid anything close to these. */
+   *  GPT-5.5 is instructed to avoid anything close to these. */
   history: WorldHistoryEntry[];
   /** Niches we already showed the operator THIS session and they rejected via
    *  "Try another." Persisted only client-side, sent on every retry — without
-   *  this, Claude has no signal that we rejected a previous suggestion (since
+   *  this, GPT-5.5 has no signal that we rejected a previous suggestion (since
    *  rejected suggestions never hit the DB). */
   recentlyShown?: string[];
   /** Altitude-calibration examples drawn from NICHE_POOL[worldType]. Injected
-   *  into the user prompt so Claude calibrates to object-led, lineage-anchored
+   *  into the user prompt so GPT-5.5 calibrates to object-led, lineage-anchored
    *  niches instead of falling back to its own academic defaults (which is
    *  what produced the historic "Costa Brava drift" failure mode). Auto-
    *  populated by suggestWorld() if omitted; tests pass [] to skip injection. */
@@ -47,7 +47,7 @@ const ALTITUDE_EXAMPLE_COUNT = 3;
 /** Sample N altitude-calibration niches from NICHE_POOL[worldType], filtering
  *  out any that already appear (case-insensitive substring match) in the
  *  operator's history or current-session rejected list. Otherwise we'd suggest
- *  Claude a niche the operator just skipped. */
+ *  GPT-5.5 a niche the operator just skipped. */
 export function pickAltitudeExamples(
   worldType: WorldType,
   history: WorldHistoryEntry[],
@@ -134,9 +134,9 @@ export function buildSuggestUser(input: SuggestWorldInput): string {
   }
 
   // Altitude calibration. The strongest known anti-genericness lever — without
-  // this, Claude's suggest defaults collapse to a handful of academic niches
+  // this, GPT-5.5's suggest defaults collapse to a handful of academic niches
   // ("1960s Brazilian modernism," "Mediterranean villas at golden hour"). With
-  // these examples in front of it, Claude either picks one verbatim or invents
+  // these examples in front of it, GPT-5.5 either picks one verbatim or invents
   // something at the same altitude.
   if (input.altitudeExamples && input.altitudeExamples.length > 0) {
     lines.push(

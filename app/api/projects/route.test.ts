@@ -99,7 +99,7 @@ describe("POST /api/projects", () => {
   });
 
   it("returns 500 when createProject throws", async () => {
-    projectsMocks.createProject.mockRejectedValue(new Error("Claude rate limited"));
+    projectsMocks.createProject.mockRejectedValue(new Error("GPT-5.5 rate limited"));
     vi.spyOn(console, "error").mockImplementation(() => {});
 
     const res = await POST(
@@ -107,6 +107,6 @@ describe("POST /api/projects", () => {
     );
     expect(res.status).toBe(500);
     const body = await res.json();
-    expect(body.error).toBe("Claude rate limited");
+    expect(body.error).toBe("GPT-5.5 rate limited");
   });
 });
