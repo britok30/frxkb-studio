@@ -1,0 +1,27 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <!-- frxkb studio — an archway of golden-hour light. The gradient is the
+       Golden Hour look's swatch (lib/prompts/looks.ts). -->
+  <defs>
+    <linearGradient id="arch" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#f6c66d"/>
+      <stop offset="0.55" stop-color="#e08e45"/>
+      <stop offset="1" stop-color="#8a4a2b"/>
+    </linearGradient>
+    <linearGradient id="floor" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#e08e45" stop-opacity="0"/>
+      <stop offset="0.5" stop-color="#f6c66d" stop-opacity="0.85"/>
+      <stop offset="1" stop-color="#e08e45" stop-opacity="0"/>
+    </linearGradient>
+    <radialGradient id="haze" cx="0.5" cy="1" r="1">
+      <stop offset="0" stop-color="#f6c66d" stop-opacity="0.18"/>
+      <stop offset="0.7" stop-color="#f6c66d" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+  <rect width="64" height="64" rx="14" fill="#181310"/>
+  <!-- ambient haze rising from the doorway -->
+  <rect x="4" y="4" width="56" height="56" rx="11" fill="url(#haze)"/>
+  <!-- the arch of light -->
+  <path d="M21.5 51 V31.5 a10.5 10.5 0 0 1 21 0 V51 Z" fill="url(#arch)"/>
+  <!-- light spilling across the floor -->
+  <rect x="13" y="51" width="38" height="2.4" rx="1.2" fill="url(#floor)"/>
+</svg>
