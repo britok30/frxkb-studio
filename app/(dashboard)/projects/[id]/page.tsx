@@ -1,5 +1,7 @@
 import { notFound } from "next/navigation";
 import Link from "next/link";
+import { auth } from "@/auth";
+import { getOperator } from "@/lib/operators";
 import { getProjectWithScenes } from "@/lib/projects";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -47,6 +49,18 @@ export default async function ProjectPage({ params }: { params: Promise<{ id: st
     projectSpend = await sumProjectSpend(project.id);
   } catch {
     projectSpend = null;
+  }
+
+  // Whether the signed-in operator has their own Shotstack key. Without one,
+  // stitching still works via the fal fallback (hard cuts) — the panel shows
+  // an opt-in hint for crossfades. Soft-fails to true to avoid nagging when
+  // the session can't be read.
+  let hasShotstack = true;
+  try {
+    const session = await auth();
+    hasShotstack = !!getOperator(session?.user?.email)?.shotstackKey;
+  } catch {
+    hasShotstack = true;
   }
   const concept = project.concept;
   const counts = countByStatus(scenes);
@@ -199,6 +213,7 @@ export default async function ProjectPage({ params }: { params: Promise<{ id: st
           projectId={project.id}
           format={project.format}
           finalVideoUrl={project.finalVideoUrl}
+          hasShotstack={hasShotstack}
           aspect={
             project.format === "before-after"
               ? (project.aspectRatio ?? "1:1")

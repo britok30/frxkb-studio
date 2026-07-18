@@ -24,11 +24,16 @@ export function StitchPanel({
   format,
   finalVideoUrl,
   aspect,
+  hasShotstack = true,
 }: {
   projectId: string;
   format: string;
   finalVideoUrl: string | null;
   aspect: string;
+  /** Whether the signed-in operator has their own Shotstack key. Without
+   *  one, stitching uses the fal fallback (hard cuts) and the panel shows
+   *  the crossfade opt-in hint. */
+  hasShotstack?: boolean;
 }) {
   const router = useRouter();
   const [stitching, setStitching] = useState(false);
@@ -138,6 +143,15 @@ export function StitchPanel({
           </div>
         </CardHeader>
         <CardContent className="flex flex-col gap-4">
+          {!hasShotstack && (
+            <p className="rounded-md border border-dashed bg-muted/30 px-3 py-2 text-xs text-muted-foreground leading-relaxed">
+              Heads up: your videos stitch with simple hard cuts. Add your own
+              Shotstack API key (<code className="text-[11px]">SHOTSTACK_KEY_&lt;YOU&gt;</code> in
+              the environment — shotstack.io, pay-as-you-go ~$0.30 per rendered
+              minute) to get smooth crossfades between clips and gentle motion
+              on slideshow stills.
+            </p>
+          )}
           {finalVideoUrl && (
             <div className="flex flex-col gap-2 max-w-[280px]">
               <video
