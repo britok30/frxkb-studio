@@ -18,6 +18,13 @@ import {
 } from "@/lib/prompts/types";
 import { editImage, generateImage, type Resolution } from "@/lib/fal";
 import { composeVideo, type ComposeKeyframe, type ComposeTrack } from "@/lib/compose";
+import {
+  isShotstackConfigured,
+  renderShotstack,
+  SHOTSTACK_PER_MINUTE,
+  type ShotstackClip,
+  type ShotstackEdit,
+} from "@/lib/shotstack";
 import { generateVideo } from "@/lib/seedance";
 import { upscaleVideo } from "@/lib/topaz";
 import { generateMotionPrompts, getCameraMove } from "@/lib/prompts/motion";
@@ -1263,8 +1270,7 @@ export async function stitchFinalVideo(
   }
 
   const ordered = [...scenes].sort((a, b) => a.order - b.order);
-  const keyframes: ComposeKeyframe[] = [];
-  let t = 0;
+  const segments: StitchSegment[] = [];
 
   if (project.format === "style-explorer") {
     const renderable = ordered.filter(
@@ -1286,8 +1292,7 @@ export async function stitchFinalVideo(
     const cycles = Math.max(1, Math.ceil(targetMs / cycleMs));
     for (let c = 0; c < cycles; c++) {
       for (const s of renderable) {
-        keyframes.push({ timestamp: t, duration: perStillMs, url: s.imageUrl as string });
-        t += perStillMs;
+        segments.push({ kind: "image", url: s.imageUrl as string, ms: perStillMs });
       }
     }
   } else if (project.format === "before-after") {
@@ -1295,11 +1300,8 @@ export async function stitchFinalVideo(
     const after = ordered.find((s) => !!s.referenceImageUrl);
     if (!before?.imageUrl) throw new Error("Missing the before image.");
     if (!after?.videoUrl) throw new Error("Animate the after scene first — no morph clip yet.");
-    keyframes.push({ timestamp: 0, duration: BEFORE_HOLD_MS, url: before.imageUrl });
-    t = BEFORE_HOLD_MS;
-    const morphMs = (after.durationSec || 9) * 1000;
-    keyframes.push({ timestamp: t, duration: morphMs, url: after.videoUrl });
-    t += morphMs;
+    segments.push({ kind: "image", url: before.imageUrl, ms: BEFORE_HOLD_MS });
+    segments.push({ kind: "video", url: after.videoUrl, ms: (after.durationSec || 9) * 1000 });
   } else {
     const missing = ordered.filter((s) => !s.videoUrl);
     if (ordered.length === 0 || missing.length > 0) {
@@ -1308,41 +1310,44 @@ export async function stitchFinalVideo(
       );
     }
     for (const s of ordered) {
-      const ms = (s.durationSec || 5) * 1000;
-      keyframes.push({ timestamp: t, duration: ms, url: s.videoUrl as string });
-      t += ms;
+      segments.push({ kind: "video", url: s.videoUrl as string, ms: (s.durationSec || 5) * 1000 });
     }
   }
 
-  const tracks: ComposeTrack[] = [{ id: "video", type: "video", keyframes }];
-  if (opts.musicUrl) {
-    // Tile the song across the timeline when its length is known and shorter
-    // than the video — compose does not loop audio, and a 10-minute ambient
-    // video going silent at minute 3 is a dead upload. The last tile is
-    // trimmed to the timeline end.
-    const songMs = opts.musicDurationSec ? Math.floor(opts.musicDurationSec * 1000) : t;
-    const musicKeyframes: ComposeKeyframe[] = [];
-    for (let start = 0; start < t; start += songMs) {
-      musicKeyframes.push({
-        timestamp: start,
-        duration: Math.min(songMs, t - start),
-        url: opts.musicUrl,
-      });
-    }
-    tracks.push({ id: "music", type: "audio", keyframes: musicKeyframes });
-  }
+  const totalMs = segments.reduce((n, s) => n + s.ms, 0);
+  const aspect =
+    project.format === "style-explorer"
+      ? (project.aspectRatio ?? "16:9")
+      : project.format === "before-after"
+        ? (project.aspectRatio ?? "9:16")
+        : "9:16";
 
-  const composed = await composeVideo(tracks);
-  await recordSpend({
-    projectId,
-    kind: "compose",
-    amountUsd: (t / 1000) * FAL_COMPOSE_PER_SECOND,
-    meta: { format: project.format, outputSec: Math.round(t / 1000) },
-  });
+  // Backend pick: Shotstack (crossfades + Ken Burns on stills) when a key is
+  // configured; fal ffmpeg compose (hard cuts) otherwise. Same inputs, same
+  // re-host + persist either way.
+  let renderedUrl: string;
+  if (isShotstackConfigured()) {
+    const edit = buildShotstackEdit(project.format, segments, aspect, opts);
+    renderedUrl = (await renderShotstack(edit)).videoUrl;
+    await recordSpend({
+      projectId,
+      kind: "compose",
+      amountUsd: (totalMs / 60_000) * SHOTSTACK_PER_MINUTE,
+      meta: { format: project.format, outputSec: Math.round(totalMs / 1000), backend: "shotstack" },
+    });
+  } else {
+    renderedUrl = (await composeVideo(buildFalComposeTracks(segments, totalMs, opts))).videoUrl;
+    await recordSpend({
+      projectId,
+      kind: "compose",
+      amountUsd: (totalMs / 1000) * FAL_COMPOSE_PER_SECOND,
+      meta: { format: project.format, outputSec: Math.round(totalMs / 1000), backend: "fal" },
+    });
+  }
 
   // Re-host on our own Blob so the deliverable URL is stable + downloadable.
   const stored = await storeFromUrl({
-    url: composed.videoUrl,
+    url: renderedUrl,
     kind: "videos",
     projectId,
     filename: `final-${nanoid(6)}.mp4`,
@@ -1350,6 +1355,131 @@ export async function stitchFinalVideo(
   await markProjectFinalVideo(projectId, stored.url);
 
   return { finalVideoUrl: stored.url };
+}
+
+/** One entry on the stitch timeline — backend-neutral. */
+type StitchSegment = { kind: "video" | "image"; url: string; ms: number };
+
+const SHOTSTACK_SIZES: Record<string, { width: number; height: number }> = {
+  "9:16": { width: 1080, height: 1920 },
+  "16:9": { width: 1920, height: 1080 },
+  "1:1": { width: 1080, height: 1080 },
+  "4:3": { width: 1440, height: 1080 },
+  "3:4": { width: 1080, height: 1440 },
+};
+
+/**
+ * Map the neutral timeline to a Shotstack edit.
+ *  - Reel: fade transitions between clips.
+ *  - Style-explorer: fade transitions + alternating slow Ken Burns zoom on
+ *    every still, so the long-form breathes instead of sitting frozen.
+ *  - Before-after: NO transition and NO motion on the before still — the
+ *    morph clip starts on exactly that frame, so a hard joint is seamless
+ *    by construction and a fade would soften the reveal.
+ *  - Music: Shotstack MIXES audio tracks by default, so when a music bed is
+ *    provided the video clips are muted to preserve the established
+ *    "music replaces ambient" semantics; the bed is tiled when the song is
+ *    shorter than the timeline.
+ */
+function buildShotstackEdit(
+  format: string,
+  segments: StitchSegment[],
+  aspect: string,
+  opts: { musicUrl?: string; musicDurationSec?: number }
+): ShotstackEdit {
+  const withTransitions = format !== "before-after";
+  const kenBurns = format === "style-explorer";
+  const muteClips = !!opts.musicUrl;
+
+  let cursor = 0;
+  const clips: ShotstackClip[] = segments.map((seg, i) => {
+    const start = cursor / 1000;
+    const length = seg.ms / 1000;
+    cursor += seg.ms;
+    const clip: ShotstackClip = {
+      asset:
+        seg.kind === "video"
+          ? { type: "video", src: seg.url, volume: muteClips ? 0 : 1 }
+          : { type: "image", src: seg.url },
+      start,
+      length,
+      fit: "crop",
+    };
+    if (withTransitions) {
+      clip.transition = {
+        ...(i > 0 ? { in: "fade" } : {}),
+        ...(i < segments.length - 1 ? { out: "fade" } : {}),
+      };
+    }
+    if (kenBurns && seg.kind === "image") {
+      clip.effect = i % 2 === 0 ? "zoomInSlow" : "zoomOutSlow";
+    }
+    return clip;
+  });
+
+  const totalMs = cursor;
+  const tracks: { clips: ShotstackClip[] }[] = [{ clips }];
+
+  const edit: ShotstackEdit = {
+    timeline: { background: "#000000", tracks },
+    output: {
+      format: "mp4",
+      size: SHOTSTACK_SIZES[aspect] ?? SHOTSTACK_SIZES["9:16"],
+      fps: 30,
+    },
+  };
+
+  if (opts.musicUrl) {
+    const songMs = opts.musicDurationSec ? Math.floor(opts.musicDurationSec * 1000) : totalMs;
+    if (songMs < totalMs) {
+      // Tile the bed across the timeline on its own audio track.
+      const musicClips: ShotstackClip[] = [];
+      for (let start = 0; start < totalMs; start += songMs) {
+        musicClips.push({
+          asset: { type: "audio", src: opts.musicUrl, volume: 1 },
+          start: start / 1000,
+          length: Math.min(songMs, totalMs - start) / 1000,
+        });
+      }
+      tracks.push({ clips: musicClips });
+    } else {
+      edit.timeline.soundtrack = { src: opts.musicUrl, effect: "fadeInFadeOut" };
+    }
+  }
+
+  return edit;
+}
+
+/** Map the neutral timeline to fal compose tracks (hard cuts, tiled music). */
+function buildFalComposeTracks(
+  segments: StitchSegment[],
+  totalMs: number,
+  opts: { musicUrl?: string; musicDurationSec?: number }
+): ComposeTrack[] {
+  let t = 0;
+  const keyframes: ComposeKeyframe[] = segments.map((seg) => {
+    const kf = { timestamp: t, duration: seg.ms, url: seg.url };
+    t += seg.ms;
+    return kf;
+  });
+  const tracks: ComposeTrack[] = [{ id: "video", type: "video", keyframes }];
+  if (opts.musicUrl) {
+    // Tile the song across the timeline when its length is known and shorter
+    // than the video — compose does not loop audio, and a 10-minute ambient
+    // video going silent at minute 3 is a dead upload. The last tile is
+    // trimmed to the timeline end.
+    const songMs = opts.musicDurationSec ? Math.floor(opts.musicDurationSec * 1000) : totalMs;
+    const musicKeyframes: ComposeKeyframe[] = [];
+    for (let start = 0; start < totalMs; start += songMs) {
+      musicKeyframes.push({
+        timestamp: start,
+        duration: Math.min(songMs, totalMs - start),
+        url: opts.musicUrl,
+      });
+    }
+    tracks.push({ id: "music", type: "audio", keyframes: musicKeyframes });
+  }
+  return tracks;
 }
 
 /** Bumped when the bundle/manifest shape changes incompatibly. */

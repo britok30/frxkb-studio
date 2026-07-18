@@ -89,6 +89,17 @@ const composeMocks = vi.hoisted(() => ({
 }));
 vi.mock("@/lib/compose", () => ({ composeVideo: composeMocks.composeVideo }));
 
+const shotstackMocks = vi.hoisted(() => ({
+  renderShotstack: vi.fn(),
+  // Default false → existing stitch tests exercise the fal fallback path.
+  isShotstackConfigured: vi.fn(() => false),
+}));
+vi.mock("@/lib/shotstack", () => ({
+  renderShotstack: shotstackMocks.renderShotstack,
+  isShotstackConfigured: shotstackMocks.isShotstackConfigured,
+  SHOTSTACK_PER_MINUTE: 0.3,
+}));
+
 const spendMocks = vi.hoisted(() => ({
   recordSpend: vi.fn(),
   assertWithinDailyBudget: vi.fn(),
@@ -174,6 +185,10 @@ beforeEach(() => {
   });
   spendMocks.recordSpend.mockReset().mockResolvedValue(undefined);
   spendMocks.assertWithinDailyBudget.mockReset().mockResolvedValue(undefined);
+  shotstackMocks.renderShotstack.mockReset().mockResolvedValue({
+    videoUrl: "https://shotstack.io/out.mp4",
+  });
+  shotstackMocks.isShotstackConfigured.mockReset().mockReturnValue(false);
 });
 
 describe("createProject", () => {
@@ -1734,5 +1749,98 @@ describe("applySceneAction set-motion", () => {
       applySceneAction("p_1", "s_1", "set-motion", { motionPreset: "warp-drive" })
     ).rejects.toThrow(/Unknown camera move/);
     expect(dbMocks.setSceneMotionPreset).not.toHaveBeenCalled();
+  });
+});
+
+describe("stitchFinalVideo — Shotstack backend (transitions)", () => {
+  function reelReady() {
+    dbMocks.selectProjectById.mockResolvedValue({
+      id: "p_1", format: "reel", worldType: "interior", status: "ready", quality: "standard",
+    });
+    dbMocks.selectScenesByProject.mockResolvedValue([
+      { ...fakeScene({ id: "s_1", order: 1 }), videoUrl: "https://blob/v1.mp4", durationSec: 5 },
+      { ...fakeScene({ id: "s_2", order: 2 }), videoUrl: "https://blob/v2.mp4", durationSec: 5 },
+      { ...fakeScene({ id: "s_3", order: 3 }), videoUrl: "https://blob/v3.mp4", durationSec: 5 },
+    ]);
+    storageMocks.storeFromUrl.mockResolvedValue({
+      url: "https://blob.vercel-storage.com/videos/p_1/final.mp4", pathname: "x",
+    });
+  }
+
+  it("reel: fade transitions between clips (first has no in, last has no out), 9:16 output, fal untouched", async () => {
+    shotstackMocks.isShotstackConfigured.mockReturnValue(true);
+    reelReady();
+
+    await stitchFinalVideo("p_1");
+
+    expect(composeMocks.composeVideo).not.toHaveBeenCalled();
+    const edit = shotstackMocks.renderShotstack.mock.calls[0][0];
+    const clips = edit.timeline.tracks[0].clips;
+    expect(clips).toHaveLength(3);
+    expect(clips[0].transition).toEqual({ out: "fade" });
+    expect(clips[1].transition).toEqual({ in: "fade", out: "fade" });
+    expect(clips[2].transition).toEqual({ in: "fade" });
+    expect(clips[1].start).toBe(5);
+    expect(edit.output.size).toEqual({ width: 1080, height: 1920 });
+  });
+
+  it("slideshow: alternating slow Ken Burns zoom on stills + fades", async () => {
+    shotstackMocks.isShotstackConfigured.mockReturnValue(true);
+    dbMocks.selectProjectById.mockResolvedValue({
+      id: "p_1", format: "style-explorer", worldType: "interior", status: "ready", aspectRatio: "16:9",
+    });
+    dbMocks.selectScenesByProject.mockResolvedValue([
+      { ...fakeScene({ id: "s_1", order: 1, status: "generated" }), imageUrl: "https://blob/base.jpg" },
+      { ...fakeScene({ id: "s_2", order: 2, status: "generated" }), imageUrl: "https://blob/a.jpg" },
+    ]);
+    storageMocks.storeFromUrl.mockResolvedValue({ url: "https://blob/final.mp4", pathname: "x" });
+
+    await stitchFinalVideo("p_1", { perStillSec: 5 });
+
+    const clips = shotstackMocks.renderShotstack.mock.calls[0][0].timeline.tracks[0].clips;
+    expect(clips[0].effect).toBe("zoomInSlow");
+    expect(clips[1].effect).toBe("zoomOutSlow");
+    expect(clips[0].transition).toEqual({ out: "fade" });
+  });
+
+  it("music mutes the clips' own audio (Shotstack mixes; ours replaces) and tiles a short song", async () => {
+    shotstackMocks.isShotstackConfigured.mockReturnValue(true);
+    reelReady();
+
+    await stitchFinalVideo("p_1", { musicUrl: "https://blob/song.mp3", musicDurationSec: 6 });
+
+    const edit = shotstackMocks.renderShotstack.mock.calls[0][0];
+    for (const c of edit.timeline.tracks[0].clips) {
+      expect(c.asset.volume).toBe(0);
+    }
+    // 15s timeline, 6s song → 3 tiles (6+6+3).
+    const music = edit.timeline.tracks[1].clips;
+    expect(music.map((c: { length: number }) => c.length)).toEqual([6, 6, 3]);
+    expect(edit.timeline.soundtrack).toBeUndefined();
+  });
+
+  it("before-after: hard joint (no transitions, no Ken Burns) — the morph IS the transition", async () => {
+    shotstackMocks.isShotstackConfigured.mockReturnValue(true);
+    dbMocks.selectProjectById.mockResolvedValue({
+      id: "p_1", format: "before-after", worldType: "interior", status: "ready", aspectRatio: "9:16",
+    });
+    dbMocks.selectScenesByProject.mockResolvedValue([
+      { ...fakeScene({ id: "s_1", order: 1, status: "generated" }), imageUrl: "https://blob/before.jpg" },
+      {
+        ...fakeScene({ id: "s_2", order: 2, status: "generated" }),
+        imageUrl: "https://blob/after.jpg",
+        referenceImageUrl: "https://blob/before.jpg",
+        videoUrl: "https://blob/morph.mp4",
+        durationSec: 9,
+      },
+    ]);
+    storageMocks.storeFromUrl.mockResolvedValue({ url: "https://blob/final.mp4", pathname: "x" });
+
+    await stitchFinalVideo("p_1");
+
+    const clips = shotstackMocks.renderShotstack.mock.calls[0][0].timeline.tracks[0].clips;
+    expect(clips[0].transition).toBeUndefined();
+    expect(clips[0].effect).toBeUndefined();
+    expect(clips[1].start).toBe(2.5);
   });
 });
