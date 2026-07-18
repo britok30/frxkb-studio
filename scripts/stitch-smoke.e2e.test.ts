@@ -15,10 +15,10 @@ const REEL_PROJECT_ID = "veHQjQXvcJA6"; // Kyoto Japandi smoke reel
 
 describe.runIf(RUN)("stitch smoke", () => {
   it("re-stitches the smoke reel with the configured backend", { timeout: 10 * 60 * 1000 }, async () => {
-    console.log("shotstack configured:", isShotstackConfigured());
     const op = getOperator("britok30@gmail.com");
     if (!op) throw new Error("operator not configured");
     await withOperator(op, async () => {
+      console.log("shotstack configured:", isShotstackConfigured());
       const out = await stitchFinalVideo(REEL_PROJECT_ID);
       console.log("final:", out.finalVideoUrl);
       expect(out.finalVideoUrl).toMatch(/^https:/);

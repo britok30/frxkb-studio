@@ -25,6 +25,13 @@ export type Operator = {
   email: string;
   falKey: string;
   openaiKey: string;
+  /** Shotstack render key — PER OPERATOR so each account pays for its own
+   *  stitch renders. Optional: operators without one fall back to fal
+   *  compose (hard cuts, no crossfades) automatically. */
+  shotstackKey?: string;
+  /** Shotstack environment for this operator's key: "v1" (production,
+   *  billed) or "stage" (free sandbox, watermarked). Defaults to "v1". */
+  shotstackEnv?: "v1" | "stage";
   apps: AppLink[];
   /** Visual lanes this operator's apps cover. ArchitectGPT = both interior +
    *  exterior; InteriorGPT = interior only. The /new wizard hides disallowed
@@ -59,6 +66,8 @@ export function getOperator(email: string | null | undefined): Operator | null {
       email: lower,
       falKey,
       openaiKey,
+      shotstackKey: process.env.SHOTSTACK_KEY_BRITOK30 || undefined,
+      shotstackEnv: process.env.SHOTSTACK_ENV_BRITOK30 === "stage" ? "stage" : "v1",
       // ArchitectGPT only — strategic focus on the bigger account. CasaGPT
       // can be added back later (with a `pattern` regex on this entry) if
       // the second app warrants its own content stream.
@@ -87,6 +96,8 @@ export function getOperator(email: string | null | undefined): Operator | null {
       email: lower,
       falKey,
       openaiKey,
+      shotstackKey: process.env.SHOTSTACK_KEY_FREMYROSSO1 || undefined,
+      shotstackEnv: process.env.SHOTSTACK_ENV_FREMYROSSO1 === "stage" ? "stage" : "v1",
       apps: [
         // Single app, but interior pattern still set so {APP_LINK} substitution
         // works the same way for both operators.

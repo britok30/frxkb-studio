@@ -1,13 +1,15 @@
 // Shotstack render API — the transition-capable stitch backend. Same
 // timeline mental model as fal compose (tracks → clips with start/length)
 // but with the two things fal's ffmpeg API can't do: crossfades between
-// clips and Ken Burns motion on stills. Used by stitchFinalVideo when
-// SHOTSTACK_API_KEY is set; fal compose remains the fallback.
+// clips and Ken Burns motion on stills.
 //
-// Env:
-//   SHOTSTACK_API_KEY — required to enable this backend.
-//   SHOTSTACK_ENV     — "v1" (production, billed ~$0.30/min PAYG) or
-//                       "stage" (free sandbox, watermarked). Default "v1".
+// Keys are PER OPERATOR (operator.shotstackKey / shotstackEnv, sourced from
+// SHOTSTACK_KEY_<OPERATOR> env vars in lib/operators.ts) so each operator's
+// renders bill to their own Shotstack account — same isolation model as the
+// fal and OpenAI keys. An operator without a key falls back to fal compose
+// (hard cuts) automatically.
+
+import { currentOperator } from "@/lib/operators";
 
 export type ShotstackClip = {
   asset:
@@ -40,11 +42,11 @@ export type ShotstackEdit = {
 };
 
 export function isShotstackConfigured(): boolean {
-  return !!process.env.SHOTSTACK_API_KEY;
+  return !!currentOperator().shotstackKey;
 }
 
 function apiBase(): string {
-  const env = process.env.SHOTSTACK_ENV === "stage" ? "stage" : "v1";
+  const env = currentOperator().shotstackEnv === "stage" ? "stage" : "v1";
   return `https://api.shotstack.io/${env}`;
 }
 
@@ -60,8 +62,8 @@ const POLL_TIMEOUT_MS = 5 * 60 * 1000;
  * fal path).
  */
 export async function renderShotstack(edit: ShotstackEdit): Promise<{ videoUrl: string }> {
-  const apiKey = process.env.SHOTSTACK_API_KEY;
-  if (!apiKey) throw new Error("SHOTSTACK_API_KEY is not set");
+  const apiKey = currentOperator().shotstackKey;
+  if (!apiKey) throw new Error("No Shotstack key configured for this operator");
 
   const submit = await fetch(`${apiBase()}/render`, {
     method: "POST",
