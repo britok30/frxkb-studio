@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useTransition } from "react";
-import { useRouter, usePathname } from "next/navigation";
+import { useRouter, usePathname, unstable_rethrow } from "next/navigation";
 import { motion } from "motion/react";
 import { toast } from "sonner";
 import { ease } from "@/lib/motion";
@@ -35,6 +35,10 @@ export function SignInClient({
         // If signIn() resolves without redirecting, that's actually unexpected.
         toast.dismiss(toastId);
       } catch (err) {
+        // signIn() redirects by THROWING Next's internal NEXT_REDIRECT error —
+        // rethrow it so the router performs the navigation instead of us
+        // toasting the redirect as a failure.
+        unstable_rethrow(err);
         const msg = err instanceof Error ? err.message : "Unknown error";
         toast.error("Couldn't reach Google", { id: toastId, description: msg });
       }
