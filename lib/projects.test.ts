@@ -1767,7 +1767,7 @@ describe("stitchFinalVideo — Shotstack backend (transitions)", () => {
     });
   }
 
-  it("reel: fade transitions between clips (first has no in, last has no out), 9:16 output, fal untouched", async () => {
+  it("reel: true crossfades — one track per clip (later clips on top), 1s overlap, fade-in on incoming", async () => {
     shotstackMocks.isShotstackConfigured.mockReturnValue(true);
     reelReady();
 
@@ -1775,12 +1775,19 @@ describe("stitchFinalVideo — Shotstack backend (transitions)", () => {
 
     expect(composeMocks.composeVideo).not.toHaveBeenCalled();
     const edit = shotstackMocks.renderShotstack.mock.calls[0][0];
-    const clips = edit.timeline.tracks[0].clips;
-    expect(clips).toHaveLength(3);
-    expect(clips[0].transition).toEqual({ out: "fade" });
-    expect(clips[1].transition).toEqual({ in: "fade", out: "fade" });
-    expect(clips[2].transition).toEqual({ in: "fade" });
-    expect(clips[1].start).toBe(5);
+    const tracks = edit.timeline.tracks;
+    // tracks[0] is TOPMOST → must hold the LAST clip so fade-ins blend over
+    // the clip beneath.
+    expect(tracks).toHaveLength(3);
+    const [top, mid, bottom] = tracks.map((t: { clips: unknown[] }) => t.clips[0]) as Array<{
+      start: number; length: number; transition?: { in?: string };
+    }>;
+    expect(bottom.start).toBe(0);
+    expect(bottom.transition).toBeUndefined();
+    expect(mid.start).toBe(4); // 5s clip, 1s overlap
+    expect(mid.transition).toEqual({ in: "fade" });
+    expect(top.start).toBe(8);
+    expect(top.transition).toEqual({ in: "fade" });
     expect(edit.output.size).toEqual({ width: 1080, height: 1920 });
   });
 
@@ -1797,10 +1804,17 @@ describe("stitchFinalVideo — Shotstack backend (transitions)", () => {
 
     await stitchFinalVideo("p_1", { perStillSec: 5 });
 
-    const clips = shotstackMocks.renderShotstack.mock.calls[0][0].timeline.tracks[0].clips;
-    expect(clips[0].effect).toBe("zoomInSlow");
-    expect(clips[1].effect).toBe("zoomOutSlow");
-    expect(clips[0].transition).toEqual({ out: "fade" });
+    const tracks = shotstackMocks.renderShotstack.mock.calls[0][0].timeline.tracks;
+    // Reversed order: tracks[1] = first still, tracks[0] = second still.
+    const first = tracks[1].clips[0];
+    const second = tracks[0].clips[0];
+    expect(first.effect).toBe("zoomInSlow");
+    expect(second.effect).toBe("zoomOutSlow");
+    // Chapter-safe: still 2 fades in over [4s, 5s] and is fully visible at
+    // exactly 5s (the chapter boundary); its hold extends by the overlap.
+    expect(second.start).toBe(4);
+    expect(second.length).toBe(6);
+    expect(second.transition).toEqual({ in: "fade" });
   });
 
   it("music mutes the clips' own audio (Shotstack mixes; ours replaces) and tiles a short song", async () => {
@@ -1810,12 +1824,14 @@ describe("stitchFinalVideo — Shotstack backend (transitions)", () => {
     await stitchFinalVideo("p_1", { musicUrl: "https://blob/song.mp3", musicDurationSec: 6 });
 
     const edit = shotstackMocks.renderShotstack.mock.calls[0][0];
-    for (const c of edit.timeline.tracks[0].clips) {
-      expect(c.asset.volume).toBe(0);
+    // 3 video tracks + 1 music track (bottom). All video clips muted.
+    expect(edit.timeline.tracks).toHaveLength(4);
+    for (const t of edit.timeline.tracks.slice(0, 3)) {
+      expect(t.clips[0].asset.volume).toBe(0);
     }
-    // 15s timeline, 6s song → 3 tiles (6+6+3).
-    const music = edit.timeline.tracks[1].clips;
-    expect(music.map((c: { length: number }) => c.length)).toEqual([6, 6, 3]);
+    // Crossfaded reel: 15s − 2×1s overlap = 13s timeline; 6s song → 6+6+1.
+    const music = edit.timeline.tracks[3].clips;
+    expect(music.map((c: { length: number }) => c.length)).toEqual([6, 6, 1]);
     expect(edit.timeline.soundtrack).toBeUndefined();
   });
 
@@ -1838,9 +1854,13 @@ describe("stitchFinalVideo — Shotstack backend (transitions)", () => {
 
     await stitchFinalVideo("p_1");
 
-    const clips = shotstackMocks.renderShotstack.mock.calls[0][0].timeline.tracks[0].clips;
-    expect(clips[0].transition).toBeUndefined();
-    expect(clips[0].effect).toBeUndefined();
-    expect(clips[1].start).toBe(2.5);
+    const tracks = shotstackMocks.renderShotstack.mock.calls[0][0].timeline.tracks;
+    // Reversed: tracks[1] = before still, tracks[0] = morph clip.
+    const before = tracks[1].clips[0];
+    const morph = tracks[0].clips[0];
+    expect(before.transition).toBeUndefined();
+    expect(before.effect).toBeUndefined();
+    expect(morph.transition).toBeUndefined();
+    expect(morph.start).toBe(2.5);
   });
 });

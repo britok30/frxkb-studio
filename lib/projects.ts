@@ -1322,20 +1322,27 @@ export async function stitchFinalVideo(
         ? (project.aspectRatio ?? "9:16")
         : "9:16";
 
-  // Backend pick: Shotstack (crossfades + Ken Burns on stills) when a key is
-  // configured; fal ffmpeg compose (hard cuts) otherwise. Same inputs, same
-  // re-host + persist either way.
-  let renderedUrl: string;
+  // Backend pick: Shotstack (true crossfades + Ken Burns on stills) when a
+  // key is configured; fal ffmpeg compose (hard cuts) otherwise — and as an
+  // automatic fallback if a Shotstack render errors, so stitch never hard-
+  // fails over the fancier backend.
+  let renderedUrl: string | null = null;
   if (isShotstackConfigured()) {
-    const edit = buildShotstackEdit(project.format, segments, aspect, opts);
-    renderedUrl = (await renderShotstack(edit)).videoUrl;
-    await recordSpend({
-      projectId,
-      kind: "compose",
-      amountUsd: (totalMs / 60_000) * SHOTSTACK_PER_MINUTE,
-      meta: { format: project.format, outputSec: Math.round(totalMs / 1000), backend: "shotstack" },
-    });
-  } else {
+    try {
+      const edit = buildShotstackEdit(project.format, segments, aspect, opts);
+      renderedUrl = (await renderShotstack(edit)).videoUrl;
+      await recordSpend({
+        projectId,
+        kind: "compose",
+        amountUsd: (totalMs / 60_000) * SHOTSTACK_PER_MINUTE,
+        meta: { format: project.format, outputSec: Math.round(totalMs / 1000), backend: "shotstack" },
+      });
+    } catch (err) {
+      console.warn("[stitch] Shotstack failed; falling back to fal compose:", err);
+      renderedUrl = null;
+    }
+  }
+  if (!renderedUrl) {
     renderedUrl = (await composeVideo(buildFalComposeTracks(segments, totalMs, opts))).videoUrl;
     await recordSpend({
       projectId,
@@ -1368,18 +1375,30 @@ const SHOTSTACK_SIZES: Record<string, { width: number; height: number }> = {
   "3:4": { width: 1080, height: 1440 },
 };
 
+/** Crossfade length. Matches Shotstack's default "fade" transition duration
+ *  so the incoming clip reaches full opacity right as the overlap ends. */
+const XFADE_SEC = 1;
+
 /**
  * Map the neutral timeline to a Shotstack edit.
- *  - Reel: fade transitions between clips.
- *  - Style-explorer: fade transitions + alternating slow Ken Burns zoom on
- *    every still, so the long-form breathes instead of sitting frozen.
- *  - Before-after: NO transition and NO motion on the before still — the
- *    morph clip starts on exactly that frame, so a hard joint is seamless
- *    by construction and a fade would soften the reveal.
- *  - Music: Shotstack MIXES audio tracks by default, so when a music bed is
- *    provided the video clips are muted to preserve the established
- *    "music replaces ambient" semantics; the bed is tiled when the song is
- *    shorter than the timeline.
+ *
+ * TRUE crossfades (verified on stage 2026-07-18): Shotstack forbids
+ * overlapping clips on one track and its adjacent-clip "fade" dips to the
+ * background, so each clip gets its OWN track — later clips on HIGHER
+ * tracks (tracks[0] is topmost) — and each incoming clip starts XFADE_SEC
+ * before the previous one ends with a fade-in, blending over it.
+ *
+ *  - Reel: crossfaded clips; total shortens by (n-1) × XFADE_SEC.
+ *  - Style-explorer: crossfades + alternating slow Ken Burns zoom on every
+ *    still. Timing is chapter-safe: still k fades IN over [k×per − X, k×per]
+ *    and is fully visible at exactly k×per, so description timestamps hold;
+ *    total duration stays cycles × per.
+ *  - Before-after: NO overlap, NO fade, NO motion — the morph clip starts
+ *    on exactly the before frame, so a hard joint is seamless by
+ *    construction and a fade would soften the reveal.
+ *  - Music: Shotstack MIXES audio tracks, so when a music bed is provided
+ *    the video clips are muted to preserve the established "music replaces
+ *    ambient" semantics; the bed is tiled when shorter than the timeline.
  */
 function buildShotstackEdit(
   format: string,
@@ -1387,38 +1406,52 @@ function buildShotstackEdit(
   aspect: string,
   opts: { musicUrl?: string; musicDurationSec?: number }
 ): ShotstackEdit {
-  const withTransitions = format !== "before-after";
+  const crossfade = format !== "before-after";
   const kenBurns = format === "style-explorer";
   const muteClips = !!opts.musicUrl;
+  const xfadeMs = crossfade ? XFADE_SEC * 1000 : 0;
 
-  let cursor = 0;
+  let boundary = 0; // where each segment WOULD start with hard cuts
   const clips: ShotstackClip[] = segments.map((seg, i) => {
-    const start = cursor / 1000;
-    const length = seg.ms / 1000;
-    cursor += seg.ms;
+    const overlap = i > 0 ? xfadeMs : 0;
+    let startMs: number;
+    let lengthMs: number;
+    if (seg.kind === "image" && crossfade) {
+      // Stills are elastic: start the fade X early and extend the hold so
+      // full visibility lands exactly on the hard-cut boundary (chapters).
+      startMs = boundary - overlap;
+      lengthMs = seg.ms + overlap;
+      boundary += seg.ms;
+    } else if (crossfade) {
+      // Videos have fixed footage: slide the whole clip X earlier instead.
+      startMs = boundary - overlap;
+      lengthMs = seg.ms;
+      boundary = startMs + seg.ms;
+    } else {
+      startMs = boundary;
+      lengthMs = seg.ms;
+      boundary += seg.ms;
+    }
     const clip: ShotstackClip = {
       asset:
         seg.kind === "video"
           ? { type: "video", src: seg.url, volume: muteClips ? 0 : 1 }
           : { type: "image", src: seg.url },
-      start,
-      length,
+      start: startMs / 1000,
+      length: lengthMs / 1000,
       fit: "crop",
     };
-    if (withTransitions) {
-      clip.transition = {
-        ...(i > 0 ? { in: "fade" } : {}),
-        ...(i < segments.length - 1 ? { out: "fade" } : {}),
-      };
-    }
+    if (crossfade && i > 0) clip.transition = { in: "fade" };
     if (kenBurns && seg.kind === "image") {
       clip.effect = i % 2 === 0 ? "zoomInSlow" : "zoomOutSlow";
     }
     return clip;
   });
 
-  const totalMs = cursor;
-  const tracks: { clips: ShotstackClip[] }[] = [{ clips }];
+  const totalMs = Math.max(...clips.map((c) => (c.start + c.length) * 1000));
+  // One track per clip; LATER clips must sit on HIGHER tracks (tracks[0] is
+  // topmost) so each fade-in blends over the clip beneath it.
+  const tracks: { clips: ShotstackClip[] }[] = [...clips].reverse().map((c) => ({ clips: [c] }));
 
   const edit: ShotstackEdit = {
     timeline: { background: "#000000", tracks },
@@ -1432,7 +1465,7 @@ function buildShotstackEdit(
   if (opts.musicUrl) {
     const songMs = opts.musicDurationSec ? Math.floor(opts.musicDurationSec * 1000) : totalMs;
     if (songMs < totalMs) {
-      // Tile the bed across the timeline on its own audio track.
+      // Tile the bed across the timeline on its own (bottom) audio track.
       const musicClips: ShotstackClip[] = [];
       for (let start = 0; start < totalMs; start += songMs) {
         musicClips.push({
