@@ -18,6 +18,9 @@ const CreateBody = z.object({
   operatorNotes: z.string().max(2000).optional(),
   /** Committed photographic look — an id from lib/prompts/looks.ts. */
   lookId: LookIdSchema.optional(),
+  /** Render-quality tier: standard (2K stills, 1080p video) or hero
+   *  (4K stills, Topaz 4K60 video). */
+  quality: z.enum(["standard", "hero"]).optional(),
 });
 
 export async function GET() {

@@ -17,6 +17,8 @@ export type ExportPanelData = {
   niche: string;
   format: string;
   thumbnailUrl: string;
+  /** Stitched final MP4, when the operator ran Stitch — packed into the zip. */
+  finalVideoUrl?: string | null;
   scenes: {
     order: number;
     prompt: string;
@@ -48,6 +50,7 @@ export function ExportPanel({ data }: { data: ExportPanelData }) {
         niche: data.niche,
         format: data.format,
         thumbnailUrl: data.thumbnailUrl,
+        finalVideoUrl: data.finalVideoUrl,
         scenes,
         metadata,
       };

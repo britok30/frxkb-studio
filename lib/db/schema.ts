@@ -37,6 +37,13 @@ export const projects = pgTable(
      *  prompt at generation time via applyLookToPrompt. Nullable: legacy
      *  projects and "let GPT-5.5 decide" projects have no look. */
     lookId: text("look_id"),
+    /** Render-quality tier. standard = 2K stills + native 1080p video (the
+     *  Reels delivery ceiling). hero = 4K stills + Topaz 4K60 video pass —
+     *  for YouTube/portfolio work where viewers zoom or the platform serves
+     *  true 4K. Drives resolution + upscale decisions in lib/projects.ts. */
+    quality: text("quality", { enum: ["standard", "hero"] })
+      .notNull()
+      .default("standard"),
     targetDurationSec: integer("target_duration_sec"),
     concept: jsonb("concept").$type<{
       workingTitle: string;
@@ -60,6 +67,11 @@ export const projects = pgTable(
     metadata: jsonb("metadata").$type<Metadata>(),
     /** Public Vercel Blob URL of the rendered thumbnail. */
     thumbnailUrl: text("thumbnail_url"),
+    /** Public Blob URL of the stitched, ready-to-post final video (reel:
+     *  concatenated clips; before-after: held before still → morph clip),
+     *  produced by fal ffmpeg compose. Null until the operator stitches.
+     *  Re-stitching (e.g. with a music bed) overwrites. */
+    finalVideoUrl: text("final_video_url"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },
@@ -112,6 +124,32 @@ export const scenes = pgTable(
   (t) => [index("scenes_project_order_idx").on(t.projectId, t.order)]
 );
 
+/** Variant history for a scene's stills. Every time a regen (or batch regen)
+ *  is about to overwrite scene.imageUrl, the outgoing render is snapshotted
+ *  here first — so rerolls are never destructive and the operator can restore
+ *  any earlier take. The CURRENT render lives on scenes.imageUrl; rows here
+ *  are the non-active takes. */
+export const sceneVersions = pgTable(
+  "scene_versions",
+  {
+    id: text("id").primaryKey(),
+    sceneId: text("scene_id")
+      .notNull()
+      .references(() => scenes.id, { onDelete: "cascade" }),
+    imageUrl: text("image_url").notNull(),
+    /** The exact prompt that produced this render (post look/direction
+     *  augmentation), for transparency + reproducibility. */
+    prompt: text("prompt"),
+    seed: integer("seed"),
+    /** Operator free-text direction used for this take, if any. */
+    designDirection: text("design_direction"),
+    /** One-off look override used for this take, if any. */
+    lookId: text("look_id"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index("scene_versions_scene_idx").on(t.sceneId, t.createdAt)]
+);
+
 export const assets = pgTable(
   "assets",
   {
@@ -148,8 +186,13 @@ export const projectsRelations = relations(projects, ({ many }) => ({
   exports: many(exports_),
 }));
 
-export const scenesRelations = relations(scenes, ({ one }) => ({
+export const scenesRelations = relations(scenes, ({ one, many }) => ({
   project: one(projects, { fields: [scenes.projectId], references: [projects.id] }),
+  versions: many(sceneVersions),
+}));
+
+export const sceneVersionsRelations = relations(sceneVersions, ({ one }) => ({
+  scene: one(scenes, { fields: [sceneVersions.sceneId], references: [scenes.id] }),
 }));
 
 export const assetsRelations = relations(assets, ({ one }) => ({
@@ -164,5 +207,7 @@ export type Project = typeof projects.$inferSelect;
 export type NewProject = typeof projects.$inferInsert;
 export type Scene = typeof scenes.$inferSelect;
 export type NewScene = typeof scenes.$inferInsert;
+export type SceneVersion = typeof sceneVersions.$inferSelect;
+export type NewSceneVersion = typeof sceneVersions.$inferInsert;
 export type Asset = typeof assets.$inferSelect;
 export type Export = typeof exports_.$inferSelect;

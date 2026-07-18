@@ -34,7 +34,7 @@ const okResponse = {
 };
 
 describe("generateVideo", () => {
-  it("calls bytedance/seedance-2.0/fast/image-to-video with required params", async () => {
+  it("calls the standard bytedance/seedance-2.0/image-to-video endpoint (Fast caps at 720p and lacks end_image_url)", async () => {
     subscribeMock.mockResolvedValue(okResponse);
 
     await withOperator(britok, () =>
@@ -45,13 +45,13 @@ describe("generateVideo", () => {
     );
 
     const [endpoint, args] = subscribeMock.mock.calls[0];
-    expect(endpoint).toBe("bytedance/seedance-2.0/fast/image-to-video");
+    expect(endpoint).toBe("bytedance/seedance-2.0/image-to-video");
     expect(args.input.prompt).toBe("Slow dolly-in toward the back of the room.");
     expect(args.input.image_url).toBe("https://blob.example/in.jpg");
     expect(args.logs).toBe(false);
   });
 
-  it("defaults: duration=4, resolution=720p, aspect=9:16", async () => {
+  it("defaults: duration=4, resolution=1080p (Reels' delivery ceiling), aspect=9:16", async () => {
     subscribeMock.mockResolvedValue(okResponse);
 
     await withOperator(britok, () =>
@@ -60,17 +60,38 @@ describe("generateVideo", () => {
 
     const args = subscribeMock.mock.calls[0][1];
     expect(args.input.duration).toBe("4");
-    expect(args.input.resolution).toBe("720p");
+    expect(args.input.resolution).toBe("1080p");
     expect(args.input.aspect_ratio).toBe("9:16");
   });
 
-  it("disables generated audio (operator adds music in CapCut)", async () => {
+  it("keeps generated audio ON (synced ambient sound is included in the price)", async () => {
     subscribeMock.mockResolvedValue(okResponse);
 
     await withOperator(britok, () =>
       generateVideo({ imageUrl: "https://x", motionPrompt: "p" })
     );
-    expect(subscribeMock.mock.calls[0][1].input.generate_audio).toBe(false);
+    expect(subscribeMock.mock.calls[0][1].input.generate_audio).toBe(true);
+  });
+
+  it("passes end_image_url when an endImageUrl is provided (first→last morph), omits it otherwise", async () => {
+    subscribeMock.mockResolvedValue(okResponse);
+
+    await withOperator(britok, () =>
+      generateVideo({
+        imageUrl: "https://blob.example/before.jpg",
+        endImageUrl: "https://blob.example/after.jpg",
+        motionPrompt: "The room transforms.",
+      })
+    );
+    expect(subscribeMock.mock.calls[0][1].input.end_image_url).toBe(
+      "https://blob.example/after.jpg"
+    );
+
+    subscribeMock.mockClear();
+    await withOperator(britok, () =>
+      generateVideo({ imageUrl: "https://x", motionPrompt: "p" })
+    );
+    expect(subscribeMock.mock.calls[0][1].input.end_image_url).toBeUndefined();
   });
 
   it("clamps duration to seedance's 4-15s range — reels default to 3s but the API rejects anything below 4", async () => {

@@ -1,10 +1,10 @@
 "use client";
 
-import { useState, useTransition } from "react";
+import { useEffect, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { motion, AnimatePresence } from "motion/react";
 import { toast } from "sonner";
-import { RotateCw, Check, X } from "lucide-react";
+import { RotateCw, Check, X, History } from "lucide-react";
 import { Dialog } from "@base-ui/react/dialog";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -38,20 +38,54 @@ export type SceneCardProps = {
     styleSubtitle?: string | null;
   };
   /** True once Animate has been kicked off on the project — clicking Animate
-   *  is an implicit approval of all stills, so the per-scene action overlay
-   *  (Approve/Regenerate/Reject) is hidden from that point on. */
+   *  is an implicit approval of all stills, so Approve/Reject hide from that
+   *  point on. Regenerate stays available: a targeted fix invalidates just
+   *  that scene's video, and re-running Animate only re-renders scenes
+   *  without a videoUrl. */
   hideActions?: boolean;
   /** The project's visual lane. Filters which look chips the regen dialog
    *  offers; when omitted the look row is hidden entirely. */
   worldType?: "interior" | "exterior";
+  /** Keyboard-review focus ring (driven by SceneGrid's J/K navigation). */
+  focused?: boolean;
 };
 
-export function SceneCard({ projectId, scene, hideActions = false, worldType }: SceneCardProps) {
+/** Shared PATCH helper for scene actions — used by the card buttons and by
+ *  SceneGrid's keyboard shortcuts so both paths behave identically. */
+export async function sceneActionRequest(
+  projectId: string,
+  sceneId: string,
+  action: "regenerate" | "approve" | "reject",
+  options: { designDirection?: string; lookId?: string } = {}
+): Promise<void> {
+  const res = await fetch(`/api/projects/${projectId}/scenes/${sceneId}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      action,
+      ...(options.designDirection ? { designDirection: options.designDirection } : {}),
+      ...(options.lookId ? { lookId: options.lookId } : {}),
+    }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error ?? `HTTP ${res.status}`);
+  }
+}
+
+export function SceneCard({
+  projectId,
+  scene,
+  hideActions = false,
+  worldType,
+  focused = false,
+}: SceneCardProps) {
   const router = useRouter();
   const [busy, setBusy] = useState<null | "regenerate" | "approve" | "reject">(null);
   const [regenDialogOpen, setRegenDialogOpen] = useState(false);
   const [regenDirection, setRegenDirection] = useState("");
   const [regenLookId, setRegenLookId] = useState<string | null>(null);
+  const [lightboxOpen, setLightboxOpen] = useState(false);
   const [, startTransition] = useTransition();
   const looks = worldType ? looksForWorld(worldType) : [];
 
@@ -65,19 +99,7 @@ export function SceneCard({ projectId, scene, hideActions = false, worldType }: 
       action === "regenerate" ? "Regenerating" : action === "approve" ? "Approving" : "Rejecting";
     const toastId = toast.loading(`${verbing} scene ${scene.order}…`);
     try {
-      const res = await fetch(`/api/projects/${projectId}/scenes/${scene.id}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          action,
-          ...(options.designDirection ? { designDirection: options.designDirection } : {}),
-          ...(options.lookId ? { lookId: options.lookId } : {}),
-        }),
-      });
-      if (!res.ok) {
-        const err = await res.json().catch(() => ({}));
-        throw new Error(err.error ?? `HTTP ${res.status}`);
-      }
+      await sceneActionRequest(projectId, scene.id, action, options);
       toast.success(`Scene ${scene.order} ${action === "regenerate" ? "regenerated" : action + "d"}`, { id: toastId });
       startTransition(() => router.refresh());
     } catch (err) {
@@ -114,7 +136,12 @@ export function SceneCard({ projectId, scene, hideActions = false, worldType }: 
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.4, ease, delay: staggerDelay(scene.order - 1) }}
     >
-      <Card className="overflow-hidden group pt-0">
+      <Card
+        data-scene-card={scene.id}
+        className={`overflow-hidden group pt-0 transition-shadow ${
+          focused ? "ring-2 ring-foreground ring-offset-2 ring-offset-background" : ""
+        }`}
+      >
         <div className="relative aspect-video bg-muted/40 flex items-center justify-center text-xs text-muted-foreground">
           <AnimatePresence mode="wait">
             {hasImage ? (
@@ -126,12 +153,21 @@ export function SceneCard({ projectId, scene, hideActions = false, worldType }: 
                 exit={{ opacity: 0 }}
                 transition={{ duration: 0.5, ease }}
               >
-                {/* eslint-disable-next-line @next/next/no-img-element */}
-                <img
-                  src={scene.imageUrl!}
-                  alt=""
-                  className="w-full h-full object-cover"
-                />
+                {/* Click to open the full-size lightbox — thumbnails are for
+                    triage, judging materials/light needs the real pixels. */}
+                <button
+                  type="button"
+                  onClick={() => setLightboxOpen(true)}
+                  className="w-full h-full cursor-zoom-in"
+                  aria-label={`Open scene ${scene.order} full size`}
+                >
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img
+                    src={scene.imageUrl!}
+                    alt=""
+                    className="w-full h-full object-cover"
+                  />
+                </button>
               </motion.div>
             ) : isGenerating ? (
               <motion.span
@@ -164,12 +200,12 @@ export function SceneCard({ projectId, scene, hideActions = false, worldType }: 
             )}
           </AnimatePresence>
 
-          {/* Hover-revealed action overlay. Hidden once Animate has been
-              kicked off — that's an implicit approval, no need to keep
-              showing review controls on stills the operator already moved on
-              from. */}
-          {!hideActions && (
-            <div className="absolute inset-x-0 bottom-0 flex items-center justify-end gap-1 p-2 bg-gradient-to-t from-black/55 to-transparent opacity-0 group-hover:opacity-100 transition-opacity">
+          {/* Hover-revealed action overlay. Once Animate has been kicked off,
+              Approve/Reject hide (implicit approval) but Regenerate stays —
+              a targeted fix nulls that scene's video and re-running Animate
+              only re-renders scenes missing a videoUrl. */}
+          <div className="absolute inset-x-0 bottom-0 flex items-center justify-end gap-1 p-2 bg-gradient-to-t from-black/55 to-transparent opacity-0 group-hover:opacity-100 transition-opacity">
+            {!hideActions && (
               <ActionButton
                 label="Approve"
                 icon={<Check className="size-3.5" />}
@@ -177,12 +213,22 @@ export function SceneCard({ projectId, scene, hideActions = false, worldType }: 
                 disabled={!hasImage || !!busy || isGenerating}
                 onClick={() => run("approve")}
               />
+            )}
+            <ActionButton
+              label="Regenerate"
+              icon={<RotateCw className={`size-3.5 ${busy === "regenerate" ? "animate-spin" : ""}`} />}
+              disabled={!!busy || isGenerating}
+              onClick={() => setRegenDialogOpen(true)}
+            />
+            {hasImage && (
               <ActionButton
-                label="Regenerate"
-                icon={<RotateCw className={`size-3.5 ${busy === "regenerate" ? "animate-spin" : ""}`} />}
+                label="History"
+                icon={<History className="size-3.5" />}
                 disabled={!!busy || isGenerating}
-                onClick={() => setRegenDialogOpen(true)}
+                onClick={() => setLightboxOpen(true)}
               />
+            )}
+            {!hideActions && (
               <ActionButton
                 label="Reject"
                 icon={<X className="size-3.5" />}
@@ -191,8 +237,8 @@ export function SceneCard({ projectId, scene, hideActions = false, worldType }: 
                 disabled={!!busy || isGenerating}
                 onClick={() => run("reject")}
               />
-            </div>
-          )}
+            )}
+          </div>
         </div>
         <CardHeader className="py-3">
           <div className="flex items-center justify-between gap-2">
@@ -293,7 +339,164 @@ export function SceneCard({ projectId, scene, hideActions = false, worldType }: 
           </Dialog.Popup>
         </Dialog.Portal>
       </Dialog.Root>
+
+      {/* Lightbox: full-size view + variant history. Regens never destroy a
+          take — earlier renders live here and can be restored with one click. */}
+      <Dialog.Root open={lightboxOpen} onOpenChange={setLightboxOpen}>
+        <Dialog.Portal>
+          <Dialog.Backdrop className="fixed inset-0 z-40 bg-black/70 backdrop-blur-sm data-[starting-style]:opacity-0 data-[ending-style]:opacity-0 transition-opacity duration-200" />
+          <Dialog.Popup className="fixed left-1/2 top-1/2 z-50 -translate-x-1/2 -translate-y-1/2 w-[min(94vw,1100px)] max-h-[92vh] overflow-y-auto rounded-xl border bg-background p-4 shadow-2xl outline-none data-[starting-style]:opacity-0 data-[ending-style]:opacity-0 transition-opacity duration-200">
+            <div className="flex items-center justify-between gap-3 pb-3">
+              <Dialog.Title className="text-sm font-semibold tracking-tight">
+                {scene.styleName ?? `Scene ${scene.order}`} — full size
+              </Dialog.Title>
+              <Dialog.Close className="text-muted-foreground hover:text-foreground transition-colors" aria-label="Close">
+                <X className="size-4" />
+              </Dialog.Close>
+            </div>
+            {scene.imageUrl && (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img
+                src={scene.imageUrl}
+                alt=""
+                className="w-full max-h-[64vh] object-contain rounded-md bg-muted/30"
+              />
+            )}
+            {lightboxOpen && (
+              <VersionStrip
+                projectId={projectId}
+                sceneId={scene.id}
+                sceneOrder={scene.order}
+                activeImageUrl={scene.imageUrl}
+                onRestored={() => {
+                  startTransition(() => router.refresh());
+                }}
+              />
+            )}
+            <p className="pt-3 text-xs text-muted-foreground leading-relaxed">{scene.prompt}</p>
+          </Dialog.Popup>
+        </Dialog.Portal>
+      </Dialog.Root>
     </motion.div>
+  );
+}
+
+type SceneVersionRow = {
+  id: string;
+  imageUrl: string;
+  createdAt: string;
+};
+
+/** Lazy-loaded variant history inside the lightbox. Fetches when mounted
+ *  (i.e. when the lightbox opens); "Use this take" swaps the version in as
+ *  the active image — the outgoing render goes back into the history. */
+function VersionStrip({
+  projectId,
+  sceneId,
+  sceneOrder,
+  activeImageUrl,
+  onRestored,
+}: {
+  projectId: string;
+  sceneId: string;
+  sceneOrder: number;
+  activeImageUrl: string | null;
+  onRestored: () => void;
+}) {
+  const [versions, setVersions] = useState<SceneVersionRow[] | null>(null);
+  const [restoring, setRestoring] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      try {
+        const res = await fetch(`/api/projects/${projectId}/scenes/${sceneId}/versions`);
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const data = (await res.json()) as { versions: SceneVersionRow[] };
+        if (!cancelled) setVersions(data.versions);
+      } catch {
+        if (!cancelled) setVersions([]);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [projectId, sceneId]);
+
+  async function restore(versionId: string) {
+    if (restoring) return;
+    setRestoring(versionId);
+    const toastId = toast.loading(`Restoring earlier take of scene ${sceneOrder}…`);
+    try {
+      const res = await fetch(`/api/projects/${projectId}/scenes/${sceneId}/versions`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ versionId }),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.error ?? `HTTP ${res.status}`);
+      }
+      toast.success(`Scene ${sceneOrder} restored`, { id: toastId });
+      setVersions(null); // refetch below via onRestored's refresh; clear stale strip
+      onRestored();
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Unknown error";
+      toast.error("Restore failed", { id: toastId, description: message });
+    } finally {
+      setRestoring(null);
+    }
+  }
+
+  if (versions === null) {
+    return (
+      <div className="pt-3 text-[11px] text-muted-foreground tracking-tight">Loading takes…</div>
+    );
+  }
+  if (versions.length === 0) {
+    return (
+      <div className="pt-3 text-[11px] text-muted-foreground tracking-tight">
+        No earlier takes yet — every regenerate archives the outgoing render here.
+      </div>
+    );
+  }
+  return (
+    <div className="pt-3 flex flex-col gap-2">
+      <span className="text-[10px] uppercase tracking-[0.18em] text-muted-foreground">
+        Earlier takes ({versions.length})
+      </span>
+      <div className="flex gap-2 overflow-x-auto pb-1">
+        {activeImageUrl && (
+          <div className="relative shrink-0 w-36">
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img
+              src={activeImageUrl}
+              alt=""
+              className="aspect-video w-full object-cover rounded-md ring-2 ring-foreground"
+            />
+            <span className="absolute bottom-1 left-1 rounded bg-background/85 px-1.5 py-0.5 text-[9px] tracking-tight">
+              current
+            </span>
+          </div>
+        )}
+        {versions.map((v) => (
+          <button
+            key={v.id}
+            type="button"
+            disabled={!!restoring}
+            onClick={() => void restore(v.id)}
+            className="group/take relative shrink-0 w-36 rounded-md overflow-hidden border hover:border-foreground/50 transition-colors disabled:opacity-50"
+            title="Use this take"
+          >
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img src={v.imageUrl} alt="" className="aspect-video w-full object-cover" />
+            <span className="absolute inset-0 hidden group-hover/take:flex items-center justify-center bg-black/45 text-[10px] font-medium text-white tracking-tight">
+              {restoring === v.id ? "Restoring…" : "Use this take"}
+            </span>
+          </button>
+        ))}
+      </div>
+    </div>
   );
 }
 

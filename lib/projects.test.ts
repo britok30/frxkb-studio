@@ -17,6 +17,10 @@ const dbMocks = vi.hoisted(() => ({
   tryAcquireGenerationLock: vi.fn(),
   tryAcquireFinalizationLock: vi.fn(),
   resetOrphanedScenes: vi.fn(),
+  heartbeatGenerationLock: vi.fn(),
+  insertSceneVersion: vi.fn(),
+  setProjectSceneReferences: vi.fn(),
+  markProjectFinalVideo: vi.fn(),
 }));
 
 const claudeMocks = vi.hoisted(() => ({
@@ -79,6 +83,11 @@ const dedupeMocks = vi.hoisted(() => ({
 }));
 vi.mock("@/lib/world-dedupe", () => dedupeMocks);
 
+const composeMocks = vi.hoisted(() => ({
+  composeVideo: vi.fn(),
+}));
+vi.mock("@/lib/compose", () => ({ composeVideo: composeMocks.composeVideo }));
+
 import {
   applySceneAction,
   createBeforeAfterProject,
@@ -87,6 +96,7 @@ import {
   generateAllImages,
   getProjectWithScenes,
   listProjects,
+  stitchFinalVideo,
   ProjectBusyError,
 } from "./projects";
 
@@ -143,6 +153,15 @@ beforeEach(() => {
   dbMocks.tryAcquireGenerationLock.mockResolvedValue(true);
   dbMocks.tryAcquireFinalizationLock.mockResolvedValue(true);
   dbMocks.resetOrphanedScenes.mockResolvedValue(0);
+  dbMocks.heartbeatGenerationLock.mockResolvedValue(undefined);
+  dbMocks.insertSceneVersion.mockResolvedValue(undefined);
+  dbMocks.setProjectSceneReferences.mockResolvedValue(undefined);
+  dbMocks.markProjectFinalVideo.mockResolvedValue(undefined);
+  composeMocks.composeVideo.mockReset().mockResolvedValue({
+    videoUrl: "https://fal.media/composed.mp4",
+    thumbnailUrl: null,
+    requestId: "req_compose",
+  });
 });
 
 describe("createProject", () => {
@@ -550,25 +569,44 @@ describe("generateAllImages", () => {
     await expect(generateAllImages("nope")).rejects.toThrow(/not found/);
   });
 
-  it("reel/carousel: every scene runs through text-to-image with a fresh seed (no /edit, no anchor)", async () => {
+  it("reel/carousel: the anchor renders text-to-image, every other scene chains through /edit against it", async () => {
     const result = await generateAllImages("p_1");
 
     expect(result).toEqual({ generated: 2, failed: 0, skipped: 0, reclaimed: 0 });
-    expect(falMocks.generateImage).toHaveBeenCalledTimes(2);
-    expect(falMocks.editImage).not.toHaveBeenCalled();
+    // Scene 1 (anchor) = text-to-image; scene 2 = /edit conditioned on the
+    // anchor's STORED Blob URL so the whole set reads as one home.
+    expect(falMocks.generateImage).toHaveBeenCalledTimes(1);
+    expect(falMocks.editImage).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({
+        imageUrls: ["https://blob.vercel-storage.com/images/p_1/x.jpg"],
+      })
+    );
     expect(dbMocks.markSceneGenerating).toHaveBeenCalledTimes(2);
     expect(dbMocks.markSceneGenerated).toHaveBeenCalledTimes(2);
     expect(dbMocks.markSceneFailed).not.toHaveBeenCalled();
     expect(dbMocks.updateProjectStatus.mock.calls.map((c) => c[1])).toEqual(["ready"]);
   });
 
-  it("leaves referenceImageUrl untouched on text-to-image scenes (no pixel pinning)", async () => {
+  it("freezes the anchor URL as the reference for the sibling scenes", async () => {
     await generateAllImages("p_1");
 
-    // Neither call should write referenceImageUrl — text-to-image scenes
-    // stay null so per-scene regen also runs text-to-image.
+    expect(dbMocks.setProjectSceneReferences).toHaveBeenCalledWith(
+      "p_1",
+      "s_1",
+      "https://blob.vercel-storage.com/images/p_1/x.jpg"
+    );
+    // markSceneGenerated itself never writes referenceImageUrl — the freeze
+    // happens through setProjectSceneReferences (fills NULLs only).
     for (const call of dbMocks.markSceneGenerated.mock.calls) {
       expect(call[1]).not.toHaveProperty("referenceImageUrl");
+    }
+  });
+
+  it("persists the seed each render used", async () => {
+    await generateAllImages("p_1");
+
+    for (const call of dbMocks.markSceneGenerated.mock.calls) {
+      expect(call[1].seed).toEqual(expect.any(Number));
     }
   });
 
@@ -620,12 +658,15 @@ describe("generateAllImages", () => {
     const result = await generateAllImages("p_1");
 
     expect(result).toEqual({ generated: 1, failed: 0, skipped: 2, reclaimed: 0 });
-    // Only the pending scene fires fal — and it's text-to-image (reel/carousel).
-    expect(falMocks.generateImage).toHaveBeenCalledTimes(1);
-    expect(falMocks.editImage).not.toHaveBeenCalled();
+    // Only the pending scene fires fal — chained through /edit against the
+    // already-generated anchor's image.
+    expect(falMocks.generateImage).not.toHaveBeenCalled();
+    expect(falMocks.editImage).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({ imageUrls: ["https://blob.example/existing-1.jpg"] })
+    );
   });
 
-  it("force=true re-generates every scene via text-to-image", async () => {
+  it("force=true re-generates everything: anchor via text-to-image, siblings chained via /edit", async () => {
     dbMocks.selectScenesByProject.mockResolvedValue([
       {
         ...fakeScene({ id: "s_1", order: 1, status: "approved" }),
@@ -640,8 +681,11 @@ describe("generateAllImages", () => {
     const result = await generateAllImages("p_1", { force: true });
 
     expect(result).toEqual({ generated: 2, failed: 0, skipped: 0, reclaimed: 0 });
-    expect(falMocks.generateImage).toHaveBeenCalledTimes(2);
-    expect(falMocks.editImage).not.toHaveBeenCalled();
+    expect(falMocks.generateImage).toHaveBeenCalledTimes(1);
+    expect(falMocks.editImage).toHaveBeenCalledTimes(1);
+    // Both outgoing renders are snapshotted into the variant history before
+    // the overwrite lands.
+    expect(dbMocks.insertSceneVersion).toHaveBeenCalledTimes(2);
   });
 
   it("re-generates rejected scenes by default", async () => {
@@ -655,19 +699,28 @@ describe("generateAllImages", () => {
   });
 
   it("marks individual scenes failed without poisoning the rest, ends at ready (lock released)", async () => {
-    // s_1 succeeds; s_2 fails on the fal call. Scenes are independent now,
-    // so one failure doesn't cascade.
-    falMocks.generateImage
-      .mockResolvedValueOnce({ images: [{ url: "https://fal.media/ok.jpg" }], requestId: "req_ok" })
-      .mockRejectedValueOnce(new Error("rate limited"));
+    // s_1 (anchor, t2i) succeeds; s_2 (chained /edit) fails on the fal call —
+    // including the automatic retry pass. One failure doesn't cascade.
+    falMocks.editImage.mockRejectedValue(new Error("rate limited"));
 
     const result = await generateAllImages("p_1", { concurrency: 1 });
 
     expect(result).toEqual({ generated: 1, failed: 1, skipped: 0, reclaimed: 0 });
     expect(dbMocks.markSceneGenerated).toHaveBeenCalledTimes(1);
-    expect(dbMocks.markSceneFailed).toHaveBeenCalledTimes(1);
     expect(dbMocks.markSceneFailed).toHaveBeenCalledWith("s_2", "rate limited");
     expect(dbMocks.updateProjectStatus.mock.calls.map((c) => c[1])).toEqual(["ready"]);
+  });
+
+  it("automatically retries the failed subset once before leaving scenes rejected", async () => {
+    // s_2's chained /edit fails once, then succeeds on the retry pass.
+    falMocks.editImage
+      .mockRejectedValueOnce(new Error("transient hiccup"))
+      .mockResolvedValueOnce({ images: [{ url: "https://fal.media/retry-ok.jpg" }], requestId: "req_retry" });
+
+    const result = await generateAllImages("p_1", { concurrency: 1 });
+
+    expect(result).toEqual({ generated: 2, failed: 0, skipped: 0, reclaimed: 0 });
+    expect(falMocks.editImage).toHaveBeenCalledTimes(2);
   });
 
   it("one scene failing doesn't abort the rest — every scene is independent now", async () => {
@@ -1300,5 +1353,259 @@ describe("finalizeProject", () => {
 
     await expect(finalizeProject("p_1")).rejects.toThrow(/not yet generated/);
     expect(claudeMocks.generateMetadata).not.toHaveBeenCalled();
+  });
+});
+
+describe("stitchFinalVideo", () => {
+  function reelWithVideos() {
+    dbMocks.selectProjectById.mockResolvedValue({
+      id: "p_1",
+      format: "reel",
+      worldType: "interior",
+      status: "ready",
+      quality: "standard",
+    });
+    dbMocks.selectScenesByProject.mockResolvedValue([
+      { ...fakeScene({ id: "s_2", order: 2 }), videoUrl: "https://blob/v2.mp4", durationSec: 5 },
+      { ...fakeScene({ id: "s_1", order: 1 }), videoUrl: "https://blob/v1.mp4", durationSec: 5 },
+      { ...fakeScene({ id: "s_3", order: 3 }), videoUrl: "https://blob/v3.mp4", durationSec: 5 },
+    ]);
+    storageMocks.storeFromUrl.mockResolvedValue({
+      url: "https://blob.vercel-storage.com/videos/p_1/final.mp4",
+      pathname: "videos/p_1/final.mp4",
+    });
+  }
+
+  it("reel: concatenates clips in scene order on one video track and persists the re-hosted URL", async () => {
+    reelWithVideos();
+
+    const out = await stitchFinalVideo("p_1");
+
+    expect(out.finalVideoUrl).toBe("https://blob.vercel-storage.com/videos/p_1/final.mp4");
+    const tracks = composeMocks.composeVideo.mock.calls[0][0];
+    expect(tracks).toHaveLength(1); // no music → native per-clip audio rides along
+    expect(tracks[0].type).toBe("video");
+    expect(tracks[0].keyframes).toEqual([
+      { timestamp: 0, duration: 5000, url: "https://blob/v1.mp4" },
+      { timestamp: 5000, duration: 5000, url: "https://blob/v2.mp4" },
+      { timestamp: 10000, duration: 5000, url: "https://blob/v3.mp4" },
+    ]);
+    expect(dbMocks.markProjectFinalVideo).toHaveBeenCalledWith(
+      "p_1",
+      "https://blob.vercel-storage.com/videos/p_1/final.mp4"
+    );
+  });
+
+  it("adds a full-length music track when musicUrl is provided (replaces per-clip ambient)", async () => {
+    reelWithVideos();
+
+    await stitchFinalVideo("p_1", { musicUrl: "https://blob/music.mp3" });
+
+    const tracks = composeMocks.composeVideo.mock.calls[0][0];
+    expect(tracks).toHaveLength(2);
+    expect(tracks[1]).toEqual({
+      id: "music",
+      type: "audio",
+      keyframes: [{ timestamp: 0, duration: 15000, url: "https://blob/music.mp3" }],
+    });
+  });
+
+  it("refuses to stitch a reel with un-animated scenes", async () => {
+    dbMocks.selectProjectById.mockResolvedValue({ id: "p_1", format: "reel", worldType: "interior", status: "ready" });
+    dbMocks.selectScenesByProject.mockResolvedValue([
+      { ...fakeScene({ id: "s_1", order: 1 }), videoUrl: "https://blob/v1.mp4" },
+      { ...fakeScene({ id: "s_2", order: 2 }), videoUrl: null },
+    ]);
+
+    await expect(stitchFinalVideo("p_1")).rejects.toThrow(/not animated/);
+    expect(composeMocks.composeVideo).not.toHaveBeenCalled();
+  });
+
+  it("before-after: holds the before still 2.5s then plays the morph, on a single video track", async () => {
+    dbMocks.selectProjectById.mockResolvedValue({
+      id: "p_1",
+      format: "before-after",
+      worldType: "interior",
+      status: "ready",
+    });
+    dbMocks.selectScenesByProject.mockResolvedValue([
+      {
+        ...fakeScene({ id: "s_1", order: 1, status: "generated" }),
+        imageUrl: "https://blob/before.jpg",
+        referenceImageUrl: null,
+        durationSec: 9,
+      },
+      {
+        ...fakeScene({ id: "s_2", order: 2, status: "generated" }),
+        imageUrl: "https://blob/after.jpg",
+        referenceImageUrl: "https://blob/before.jpg",
+        videoUrl: "https://blob/morph.mp4",
+        durationSec: 9,
+      },
+    ]);
+    storageMocks.storeFromUrl.mockResolvedValue({
+      url: "https://blob.vercel-storage.com/videos/p_1/final.mp4",
+      pathname: "videos/p_1/final.mp4",
+    });
+
+    await stitchFinalVideo("p_1");
+
+    const tracks = composeMocks.composeVideo.mock.calls[0][0];
+    // compose rejects multiple video tracks — the still must be a keyframe
+    // INSIDE the single video track (verified against the live API).
+    expect(tracks).toHaveLength(1);
+    expect(tracks[0].keyframes).toEqual([
+      { timestamp: 0, duration: 2500, url: "https://blob/before.jpg" },
+      { timestamp: 2500, duration: 9000, url: "https://blob/morph.mp4" },
+    ]);
+  });
+
+  it("before-after: refuses when the morph clip is missing", async () => {
+    dbMocks.selectProjectById.mockResolvedValue({ id: "p_1", format: "before-after", worldType: "interior", status: "ready" });
+    dbMocks.selectScenesByProject.mockResolvedValue([
+      { ...fakeScene({ id: "s_1", order: 1, status: "generated" }), imageUrl: "https://blob/before.jpg" },
+      {
+        ...fakeScene({ id: "s_2", order: 2, status: "generated" }),
+        imageUrl: "https://blob/after.jpg",
+        referenceImageUrl: "https://blob/before.jpg",
+        videoUrl: null,
+      },
+    ]);
+
+    await expect(stitchFinalVideo("p_1")).rejects.toThrow(/Animate the after/);
+  });
+
+  it("rejects formats without an animated deliverable", async () => {
+    dbMocks.selectProjectById.mockResolvedValue({ id: "p_1", format: "carousel", worldType: "interior", status: "ready" });
+    dbMocks.selectScenesByProject.mockResolvedValue([]);
+
+    await expect(stitchFinalVideo("p_1")).rejects.toThrow(/only available/);
+  });
+});
+
+describe("stitchFinalVideo — style-explorer slideshow", () => {
+  function styleExplorerReady() {
+    dbMocks.selectProjectById.mockResolvedValue({
+      id: "p_1",
+      format: "style-explorer",
+      worldType: "interior",
+      status: "ready",
+      aspectRatio: "16:9",
+    });
+    dbMocks.selectScenesByProject.mockResolvedValue([
+      { ...fakeScene({ id: "s_1", order: 1, status: "generated" }), imageUrl: "https://blob/base.jpg", durationSec: 0 },
+      { ...fakeScene({ id: "s_2", order: 2, status: "generated" }), imageUrl: "https://blob/style-a.jpg", durationSec: 0 },
+      { ...fakeScene({ id: "s_3", order: 3, status: "approved" }), imageUrl: "https://blob/style-b.jpg", durationSec: 0 },
+    ]);
+    storageMocks.storeFromUrl.mockResolvedValue({
+      url: "https://blob.vercel-storage.com/videos/p_1/final.mp4",
+      pathname: "videos/p_1/final.mp4",
+    });
+  }
+
+  it("holds every still for a uniform duration (Original first) — a stills+music YouTube long-form", async () => {
+    styleExplorerReady();
+
+    await stitchFinalVideo("p_1", { musicUrl: "https://blob/lofi.mp3", perStillSec: 5 });
+
+    const tracks = composeMocks.composeVideo.mock.calls[0][0];
+    expect(tracks[0].keyframes).toEqual([
+      { timestamp: 0, duration: 5000, url: "https://blob/base.jpg" },
+      { timestamp: 5000, duration: 5000, url: "https://blob/style-a.jpg" },
+      { timestamp: 10000, duration: 5000, url: "https://blob/style-b.jpg" },
+    ]);
+    // Music spans the full slideshow.
+    expect(tracks[1].keyframes).toEqual([
+      { timestamp: 0, duration: 15000, url: "https://blob/lofi.mp3" },
+    ]);
+  });
+
+  it("defaults to 7s per still and clamps out-of-range values", async () => {
+    styleExplorerReady();
+    await stitchFinalVideo("p_1");
+    expect(composeMocks.composeVideo.mock.calls[0][0][0].keyframes[1].timestamp).toBe(7000);
+
+    composeMocks.composeVideo.mockClear();
+    styleExplorerReady();
+    await stitchFinalVideo("p_1", { perStillSec: 99 });
+    expect(composeMocks.composeVideo.mock.calls[0][0][0].keyframes[1].timestamp).toBe(15000);
+  });
+
+  it("refuses when any style is not generated yet", async () => {
+    dbMocks.selectProjectById.mockResolvedValue({ id: "p_1", format: "style-explorer", worldType: "interior", status: "ready" });
+    dbMocks.selectScenesByProject.mockResolvedValue([
+      { ...fakeScene({ id: "s_1", order: 1, status: "generated" }), imageUrl: "https://blob/base.jpg" },
+      { ...fakeScene({ id: "s_2", order: 2, status: "pending" }), imageUrl: null },
+    ]);
+
+    await expect(stitchFinalVideo("p_1")).rejects.toThrow(/not generated/);
+    expect(composeMocks.composeVideo).not.toHaveBeenCalled();
+  });
+});
+
+describe("stitchFinalVideo — long-form looping + music tiling", () => {
+  function threeStills() {
+    dbMocks.selectProjectById.mockResolvedValue({
+      id: "p_1",
+      format: "style-explorer",
+      worldType: "interior",
+      status: "ready",
+    });
+    dbMocks.selectScenesByProject.mockResolvedValue([
+      { ...fakeScene({ id: "s_1", order: 1, status: "generated" }), imageUrl: "https://blob/base.jpg" },
+      { ...fakeScene({ id: "s_2", order: 2, status: "generated" }), imageUrl: "https://blob/a.jpg" },
+      { ...fakeScene({ id: "s_3", order: 3, status: "generated" }), imageUrl: "https://blob/b.jpg" },
+    ]);
+    storageMocks.storeFromUrl.mockResolvedValue({
+      url: "https://blob.vercel-storage.com/videos/p_1/final.mp4",
+      pathname: "videos/p_1/final.mp4",
+    });
+  }
+
+  it("loops whole cycles until the target length is reached (10 min from a 30s cycle → 20 cycles)", async () => {
+    threeStills();
+
+    await stitchFinalVideo("p_1", { perStillSec: 10, targetMinutes: 10 });
+
+    const kf = composeMocks.composeVideo.mock.calls[0][0][0].keyframes;
+    // 3 stills × 10s = 30s cycle; 10 min target → exactly 20 cycles = 60 keyframes.
+    expect(kf).toHaveLength(60);
+    expect(kf[0]).toEqual({ timestamp: 0, duration: 10000, url: "https://blob/base.jpg" });
+    // Cycle two starts with the base again.
+    expect(kf[3]).toEqual({ timestamp: 30000, duration: 10000, url: "https://blob/base.jpg" });
+    // Ends on the last style, exactly at 10:00.
+    const last = kf[kf.length - 1];
+    expect(last.url).toBe("https://blob/b.jpg");
+    expect(last.timestamp + last.duration).toBe(600000);
+  });
+
+  it("tiles the music bed across the timeline when the song is shorter, trimming the final tile", async () => {
+    threeStills();
+
+    // 90s video (3 stills × 10s × 3 cycles), 40s song → tiles at 0/40/80, last one 10s.
+    await stitchFinalVideo("p_1", {
+      perStillSec: 10,
+      targetMinutes: 1, // 60s target → ceil(60/30) = 2 cycles... use 90s via targetMinutes 2
+      musicUrl: "https://blob/song.mp3",
+      musicDurationSec: 40,
+    });
+
+    const tracks = composeMocks.composeVideo.mock.calls[0][0];
+    const music = tracks[1].keyframes;
+    const videoEnd = tracks[0].keyframes.at(-1)!.timestamp + tracks[0].keyframes.at(-1)!.duration;
+    // Tiles cover the timeline exactly with no gap and no overhang.
+    expect(music[0].timestamp).toBe(0);
+    for (let i = 1; i < music.length; i++) {
+      expect(music[i].timestamp).toBe(music[i - 1].timestamp + music[i - 1].duration);
+    }
+    const musicEnd = music.at(-1)!.timestamp + music.at(-1)!.duration;
+    expect(musicEnd).toBe(videoEnd);
+    expect(music.every((k: { url: string }) => k.url === "https://blob/song.mp3")).toBe(true);
+  });
+
+  it("without targetMinutes a single pass is produced (backward-compatible)", async () => {
+    threeStills();
+    await stitchFinalVideo("p_1", { perStillSec: 7 });
+    expect(composeMocks.composeVideo.mock.calls[0][0][0].keyframes).toHaveLength(3);
   });
 });

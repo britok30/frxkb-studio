@@ -1,7 +1,7 @@
 /**
  * Cost estimation for studio operations. Numbers verified against vendor
- * pricing pages on 2026-05-09 (see project memory for sources). Update this
- * file when prices change — every UI cost label reads from here.
+ * pricing pages on 2026-07-17 (fal model pages + OpenAPI schemas). Update
+ * this file when prices change — every UI cost label reads from here.
  *
  * All prices stored in **dollars** (not cents) to keep math obvious; format
  * with `formatCost` for display.
@@ -13,16 +13,27 @@ import { defaultsForFormat, type Format } from "@/lib/prompts/types";
 
 /** fal.ai nano-banana-pro (Gemini 3 Pro Image). We default to 2K resolution
  *  ($0.225/img). 1K is $0.15 (cheaper but visibly softer on Retina), 4K is
- *  $0.30 (overkill for our use). */
+ *  $0.30 — used by hero-quality projects. */
 export const FAL_NANO_BANANA_PER_IMAGE = 0.225;
+export const FAL_NANO_BANANA_PER_IMAGE_4K = 0.3;
 
 /** fal.ai nano-banana-pro/edit — flat $0.15/image at 1K/2K (4K is $0.30).
  *  Used for non-anchor scenes to lock visual continuity against an anchor
  *  image. Cheaper per call than text-to-image at 2K. */
 export const FAL_NANO_BANANA_EDIT_PER_IMAGE = 0.15;
+export const FAL_NANO_BANANA_EDIT_PER_IMAGE_4K = 0.3;
 
-/** Seedance 2.0 Fast image-to-video at 720p — $0.2419 per second of video. */
-export const FAL_SEEDANCE_FAST_PER_SECOND_720P = 0.2419;
+/** Seedance 2.0 standard image-to-video, token-billed by pixels:
+ *  tokens = (height × width × duration × 24) / 1024 at $0.014/1k tokens.
+ *  Works out per second of output to the rates below (720p matches the
+ *  advertised $0.3024/s flat rate exactly). The old Fast tier was $0.2419/s
+ *  at 720p but caps there and lacks end_image_url, so we run standard. */
+export const FAL_SEEDANCE_PER_SECOND: Record<"480p" | "720p" | "1080p" | "4k", number> = {
+  "480p": 0.1345,
+  "720p": 0.3024,
+  "1080p": 0.6804,
+  "4k": 2.7216,
+};
 
 /** Topaz video upscale tiered pricing per second of OUTPUT.
  *  ≤720p: $0.01/s, ≤1080p: $0.02/s, >1080p: $0.08/s.
@@ -33,6 +44,10 @@ export const FAL_TOPAZ_PER_SECOND_GT_1080P = 0.08;
 /** Multiplier applied to the tier rate when target_fps is set. Default
  *  pipeline upscales 24fps → 60fps, so the multiplier always applies. */
 export const FAL_TOPAZ_FPS_INTERPOLATION_MULTIPLIER = 2;
+
+/** fal ffmpeg-api/compose (final-video stitch) — $0.0002 per second of
+ *  output. Rounding error next to seedance; surfaced for completeness. */
+export const FAL_COMPOSE_PER_SECOND = 0.0002;
 
 /** OpenAI GPT-5.5 — $5/MTok input, $30/MTok output. (Reasoning tokens bill as
  *  output; we run reasoning_effort=low so the per-call output stays modest.) */
@@ -97,16 +112,22 @@ export function estimateSuggestWorld(): number {
 }
 
 /**
- * Cost of generating N scene images for reel/carousel. Every scene runs
- * through nano-banana-pro text-to-image with its own self-contained prompt
- * + a fresh seed — no anchor, no /edit chain. Visual cohesion comes from
- * shared GPT-5.5 vocabulary across scene prompts, not pixel anchoring.
+ * Cost of generating N scene images for reel/carousel. The anchor (lowest-
+ * order scene) runs text-to-image; every other scene runs /edit conditioned
+ * on the anchor so the whole set reads as one home. At standard (2K) that's
+ * 1 × $0.225 + (N-1) × $0.15; hero quality renders everything at 4K ($0.30).
  *
  * Before-after pricing is separate (see estimateProjectTotal): the "after"
  * is a legitimate edit of the operator's upload and uses /edit at $0.15.
  */
-export function estimateImageBatch(imageCount: number): number {
-  return Math.max(0, imageCount) * FAL_NANO_BANANA_PER_IMAGE;
+export function estimateImageBatch(
+  imageCount: number,
+  quality: "standard" | "hero" = "standard"
+): number {
+  const n = Math.max(0, imageCount);
+  if (n === 0) return 0;
+  if (quality === "hero") return n * FAL_NANO_BANANA_PER_IMAGE_4K;
+  return FAL_NANO_BANANA_PER_IMAGE + (n - 1) * FAL_NANO_BANANA_EDIT_PER_IMAGE;
 }
 
 /** Thumbnail uses nano-banana-pro/edit conditioned on the project's anchor
@@ -125,8 +146,11 @@ export function estimateProjectScripting(sceneCount: number): number {
 }
 
 /** Cost of running the full image batch on a project. */
-export function estimateBatchImages(sceneCount: number): number {
-  return estimateImageBatch(sceneCount);
+export function estimateBatchImages(
+  sceneCount: number,
+  quality: "standard" | "hero" = "standard"
+): number {
+  return estimateImageBatch(sceneCount, quality);
 }
 
 /** Cost of finalize — GPT-5.5 metadata only. Thumbnail generation was
@@ -137,9 +161,13 @@ export function estimateFinalize(): number {
 
 // ── Video pipeline (reels) ──────────────────────────────────────────────────
 
-/** Seedance 2.0 Fast image-to-video at 720p, billed per second of output. */
-export function estimateSeedance(durationSec: number): number {
-  return Math.max(0, durationSec) * FAL_SEEDANCE_FAST_PER_SECOND_720P;
+/** Seedance 2.0 standard image-to-video, billed per second of output at the
+ *  chosen resolution. Pipeline default is 1080p. */
+export function estimateSeedance(
+  durationSec: number,
+  resolution: "480p" | "720p" | "1080p" | "4k" = "1080p"
+): number {
+  return Math.max(0, durationSec) * FAL_SEEDANCE_PER_SECOND[resolution];
 }
 
 /** Topaz upscale cost. Default path: 720p → 1440p (2× upscale → above 1080p)
@@ -170,15 +198,20 @@ export function estimateMotionPromptsGen(sceneCount: number): number {
   return llmCost(inputTokens, outputTokens);
 }
 
-/** All-in cost of the animate step for N scenes at D seconds each. Includes
- *  motion prompts + seedance + Topaz upscale (defaults to gt-1080p tier
- *  since our default is 720p → 1440p Proteus 2×). */
-export function estimateAnimateBatch(sceneCount: number, perSceneDurationSec: number): number {
+/** All-in cost of the animate step for N scenes at D seconds each. Standard
+ *  quality: native 1080p seedance, no upscale (Instagram delivers at 1080p —
+ *  upscaling past it is money burned). Hero quality: 1080p seedance + Topaz
+ *  2×→4K60 for YouTube-grade output. */
+export function estimateAnimateBatch(
+  sceneCount: number,
+  perSceneDurationSec: number,
+  quality: "standard" | "hero" = "standard"
+): number {
   const totalSec = sceneCount * Math.max(0, perSceneDurationSec);
   return (
     estimateMotionPromptsGen(sceneCount) +
-    estimateSeedance(totalSec) +
-    estimateTopazUpscale(totalSec, "gt-1080p")
+    estimateSeedance(totalSec, "1080p") +
+    (quality === "hero" ? estimateTopazUpscale(totalSec, "gt-1080p") : 0)
   );
 }
 

@@ -74,7 +74,7 @@ describe("buildReelMetadataSystem", () => {
     expect(interiorSys).toMatch(/3 slots for design-specific tags/);
 
     const exteriorSys = buildReelMetadataSystem(["ArchitectGPT"], "exterior");
-    expect(exteriorSys).toMatch(/'architecture'.*'architect'.*'architectura'/);
+    expect(exteriorSys).toMatch(/'architecture'.*'architect'.*'archdaily'/);
     expect(exteriorSys).toMatch(/2 slots for design-specific tags/);
   });
 

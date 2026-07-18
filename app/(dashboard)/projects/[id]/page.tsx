@@ -4,13 +4,16 @@ import { getProjectWithScenes } from "@/lib/projects";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { ProjectActions } from "./project-actions";
-import { SceneCard } from "./scene-card";
+import { SceneGrid } from "./scene-grid";
 import { AnimatedSceneCard } from "./animated-scene-card";
 import { ExportPanel, type ExportPanelData } from "./export-panel";
 import { FlowBanner } from "./flow-banner";
 import { RegenerateAllLink } from "./regenerate-all-link";
 import { AutoRefresh } from "./auto-refresh";
-import { estimateBatchImages, formatCost } from "@/lib/pricing";
+import { BatchActions } from "./batch-actions";
+import { JobNotifier } from "./job-notifier";
+import { StitchPanel } from "./stitch-panel";
+import { estimateBatchImages, estimateImageBatch, formatCost } from "@/lib/pricing";
 
 export const dynamic = "force-dynamic";
 
@@ -59,6 +62,7 @@ export default async function ProjectPage({ params }: { params: Promise<{ id: st
   return (
     <div className="mx-auto max-w-6xl px-6 pt-10 pb-16 flex flex-col gap-8">
       <AutoRefresh active={isBusy} />
+      <JobNotifier busy={isBusy} projectTitle={project.title} />
       <div className="flex items-start justify-between gap-6">
         <div className="flex flex-col gap-2">
           <Link
@@ -74,8 +78,26 @@ export default async function ProjectPage({ params }: { params: Promise<{ id: st
             <span>{formatLabel(project.format)}</span>
             <span aria-hidden>·</span>
             <span className="capitalize">{project.worldType}</span>
+            {project.quality === "hero" && (
+              <>
+                <span aria-hidden>·</span>
+                <span>Hero 4K</span>
+              </>
+            )}
             <span aria-hidden>·</span>
             <Badge variant="secondary" className="text-[10px]">{project.status}</Badge>
+            {(project.format === "reel" || project.format === "carousel") && (
+              <>
+                <span aria-hidden>·</span>
+                <Link
+                  href={duplicateHref(project)}
+                  className="text-xs hover:text-foreground transition-colors"
+                  title="Start a new project pre-filled with this one's recipe"
+                >
+                  Duplicate as template
+                </Link>
+              </>
+            )}
           </div>
         </div>
         <ProjectActions
@@ -147,6 +169,30 @@ export default async function ProjectPage({ params }: { params: Promise<{ id: st
         </Card>
       )}
 
+      {/* Stitch appears once the deliverable's inputs exist: all clips for a
+          reel, the morph for before-after, all stills for style-explorer's
+          stills+music YouTube long-form. */}
+      {((project.format === "reel" &&
+        scenes.length > 0 &&
+        animatedCount === scenes.length) ||
+        (project.format === "before-after" && animatedCount > 0) ||
+        (project.format === "style-explorer" &&
+          scenes.length > 0 &&
+          counts.generated + counts.approved === scenes.length)) && (
+        <StitchPanel
+          projectId={project.id}
+          format={project.format}
+          finalVideoUrl={project.finalVideoUrl}
+          aspect={
+            project.format === "before-after"
+              ? (project.aspectRatio ?? "1:1")
+              : project.format === "style-explorer"
+                ? (project.aspectRatio ?? "16:9")
+                : "9:16"
+          }
+        />
+      )}
+
       {exportData && <ExportPanel data={exportData} />}
 
       <section className="flex flex-col gap-4">
@@ -159,11 +205,24 @@ export default async function ProjectPage({ params }: { params: Promise<{ id: st
               {counts.generated + counts.approved}/{scenes.length} ready ·{" "}
               {counts.pending} pending · {counts.rejected} failed
             </div>
+            {!animateStarted && (
+              <BatchActions
+                projectId={project.id}
+                generatedCount={counts.generated}
+                retryableCount={counts.pending + counts.rejected}
+                retryCostLabel={formatCost(
+                  estimateImageBatch(counts.pending + counts.rejected, project.quality)
+                )}
+                jobInFlight={
+                  project.status === "generating" || project.status === "finalizing"
+                }
+              />
+            )}
             {scenes.length > 0 && (
               <RegenerateAllLink
                 projectId={project.id}
                 totalScenes={scenes.length}
-                costLabel={formatCost(estimateBatchImages(scenes.length))}
+                costLabel={formatCost(estimateBatchImages(scenes.length, project.quality))}
                 hasAnyAnimated={animatedCount > 0}
                 jobInFlight={
                   project.status === "generating" || project.status === "finalizing"
@@ -173,26 +232,21 @@ export default async function ProjectPage({ params }: { params: Promise<{ id: st
           </div>
         </div>
 
-        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-          {scenes.map((s) => (
-            <SceneCard
-              key={s.id}
-              projectId={project.id}
-              scene={{
-                id: s.id,
-                order: s.order,
-                prompt: s.prompt,
-                status: s.status,
-                imageUrl: s.imageUrl,
-                error: s.error,
-                styleName: s.styleName,
-                styleSubtitle: s.styleSubtitle,
-              }}
-              hideActions={animateStarted}
-              worldType={project.worldType}
-            />
-          ))}
-        </div>
+        <SceneGrid
+          projectId={project.id}
+          scenes={scenes.map((s) => ({
+            id: s.id,
+            order: s.order,
+            prompt: s.prompt,
+            status: s.status,
+            imageUrl: s.imageUrl,
+            error: s.error,
+            styleName: s.styleName,
+            styleSubtitle: s.styleSubtitle,
+          }))}
+          hideActions={animateStarted}
+          worldType={project.worldType}
+        />
       </section>
 
       {(project.format === "reel" || project.format === "before-after") &&
@@ -240,6 +294,7 @@ type ProjectRow = {
   title: string;
   niche: string;
   format: string;
+  finalVideoUrl: string | null;
   metadata: ExportPanelData["metadata"] | null;
 };
 
@@ -288,9 +343,29 @@ function buildExportData(project: ProjectRow, scenes: SceneRow[]): ExportPanelDa
     niche: project.niche,
     format: project.format,
     thumbnailUrl: cover.imageUrl,
+    finalVideoUrl: project.finalVideoUrl,
     metadata: project.metadata,
     scenes: renderableScenes,
   };
+}
+
+/** Deep-link to /new pre-filled with this project's recipe — format, niche,
+ *  lane, look, and quality. The proven-recipe path to "make my Tuesday reel". */
+function duplicateHref(project: {
+  format: string;
+  niche: string;
+  worldType: string;
+  lookId: string | null;
+  quality: string;
+}): string {
+  const params = new URLSearchParams({
+    format: project.format,
+    niche: project.niche,
+    world: project.worldType,
+    quality: project.quality,
+  });
+  if (project.lookId) params.set("look", project.lookId);
+  return `/new?${params.toString()}`;
 }
 
 function formatLabel(f: string) {

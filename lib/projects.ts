@@ -16,7 +16,8 @@ import {
   type PropertyType,
   type WorldType,
 } from "@/lib/prompts/types";
-import { editImage, generateImage } from "@/lib/fal";
+import { editImage, generateImage, type Resolution } from "@/lib/fal";
+import { composeVideo, type ComposeKeyframe, type ComposeTrack } from "@/lib/compose";
 import { generateVideo } from "@/lib/seedance";
 import { upscaleVideo } from "@/lib/topaz";
 import { generateMotionPrompts } from "@/lib/prompts/motion";
@@ -25,11 +26,18 @@ import { runWithConcurrency } from "@/lib/concurrency";
 import { currentOperator, pickAppLink } from "@/lib/operators";
 import { findSimilarProjects, type DuplicateMatch } from "@/lib/world-dedupe";
 import {
+  deleteSceneVersion,
+  heartbeatGenerationLock,
   insertProject,
   insertScenes,
+  insertSceneVersion,
+  selectSceneVersionById,
+  selectSceneVersions,
+  setSceneActiveImage,
   listProjectsRows,
   listProjectsWithCovers,
   markProjectFinalized,
+  markProjectFinalVideo,
   markSceneAnimated,
   markSceneAnimateFailed,
   markSceneAnimating,
@@ -43,11 +51,12 @@ import {
   selectProjectById,
   selectSceneById,
   selectScenesByProject,
+  setProjectSceneReferences,
   tryAcquireFinalizationLock,
   tryAcquireGenerationLock,
   updateProjectStatus,
 } from "@/lib/projects-db";
-import type { Project, Scene } from "@/lib/db";
+import type { Project, Scene, SceneVersion } from "@/lib/db";
 
 export type CreateProjectInput = {
   niche: string;
@@ -61,6 +70,9 @@ export type CreateProjectInput = {
   /** Committed photographic look (lib/prompts/looks.ts). Optional — omitted
    *  means GPT-5.5 chooses the light per concept, the pre-looks behavior. */
   lookId?: LookId;
+  /** Render-quality tier. standard (default) = 2K stills + native 1080p
+   *  video. hero = 4K stills + Topaz 4K60 video pass. */
+  quality?: "standard" | "hero";
 };
 
 export type ProjectWithScenes = { project: Project; scenes: Scene[] };
@@ -161,6 +173,7 @@ export async function createProject(input: CreateProjectInput): Promise<CreatePr
     worldType: input.worldType,
     status: "scripting",
     lookId: look?.id ?? null,
+    quality: input.quality ?? "standard",
     targetDurationSec: targetDurationSec || null,
     concept: {
       workingTitle: concept.workingTitle,
@@ -477,6 +490,13 @@ export async function generateAllImages(
 
   const reclaimed = await resetOrphanedScenes(projectId);
 
+  // Keep the generation lock fresh for the whole batch — a 120-scene run
+  // outlives STALE_LOCK_MS, and without the heartbeat a second event could
+  // reclaim the lock mid-run and double-spend.
+  const heartbeat = setInterval(() => {
+    heartbeatGenerationLock(projectId).catch(() => {});
+  }, 60_000);
+
   try {
     const allScenes = await selectScenesByProject(projectId);
     const targets = allScenes.filter((s) =>
@@ -487,60 +507,127 @@ export async function generateAllImages(
     let failed = 0;
     const skipped = allScenes.length - targets.length;
 
-    // Every scene generates independently and in parallel. If a scene has a
-    // frozen referenceImageUrl (set by createBeforeAfterProject for the
-    // "after" scene), it runs through nano-banana-pro/edit conditioned on
-    // that upload. Otherwise it runs through nano-banana-pro text-to-image
-    // with a fresh seed — visual cohesion comes from shared GPT-5.5
-    // vocabulary in each scene's self-contained prompt, not from pixel
-    // anchoring. Trades some style-lock for more variety and removes the
-    // "edits collapse toward the anchor" failure mode.
     // Project-level committed look, appended to every prompt (no-op when the
     // project has none — style-explorer and before-after never set one).
     const look = getLook(project.lookId);
+    const resolution: Resolution = project.quality === "hero" ? "4K" : "2K";
 
-    await runWithConcurrency(targets, concurrency, async (scene) => {
+    const renderScene = async (scene: Scene, referenceUrl: string | null) => {
       await markSceneGenerating(scene.id);
+      const promptForFal = applyLookToPrompt(lockedScenePrompt(project, scene), look);
+      const seed = freshSeed();
+      const result = referenceUrl
+        ? await editImage({
+            prompt: promptForFal,
+            imageUrls: [referenceUrl],
+            aspectRatio,
+            resolution,
+            seed,
+          })
+        : await generateImage({
+            prompt: promptForFal,
+            aspectRatio,
+            resolution,
+            seed,
+          });
+      const first = result.images[0];
+      if (!first?.url) throw new Error("fal returned no image url");
+
+      const filename = `scene-${String(scene.order).padStart(3, "0")}-${nanoid(6)}.jpg`;
+      const stored = await storeFromUrl({
+        url: first.url,
+        kind: "images",
+        projectId,
+        filename,
+      });
+
+      // Non-destructive overwrite: snapshot the outgoing render (force /
+      // regenerate-all paths) into the variant history first.
+      if (scene.imageUrl) {
+        await insertSceneVersion({
+          id: nanoid(12),
+          sceneId: scene.id,
+          imageUrl: scene.imageUrl,
+          prompt: scene.prompt,
+          seed: scene.seed,
+        });
+      }
+
+      await markSceneGenerated(scene.id, {
+        imageUrl: stored.url,
+        falRequestId: result.requestId,
+        seed,
+        invalidateAnimation: !!scene.imageUrl,
+        // referenceImageUrl for chained scenes is frozen separately via
+        // setProjectSceneReferences; omitted here means "preserve".
+      });
+      return stored.url;
+    };
+
+    // ── Anchor chaining (reel/carousel) ────────────────────────────────────
+    // The lowest-order scene is the ANCHOR: it renders via text-to-image and
+    // defines the home. Every other scene renders via /edit conditioned on
+    // the anchor so scene 5 is unmistakably the same house as scene 1 —
+    // shared prompt vocabulary alone does not hold materials, furniture, or
+    // architecture stable. The anchor URL is frozen onto each scene's
+    // referenceImageUrl so later per-scene regens stay in the same world
+    // even if the anchor is regenerated afterwards.
+    const chained = project.format === "reel" || project.format === "carousel";
+    let pending = targets;
+    let anchorUrl: string | null = null;
+
+    if (chained && allScenes.length > 1) {
+      const anchor = allScenes.reduce((a, b) => (a.order <= b.order ? a : b));
+      const anchorTarget = pending.find((s) => s.id === anchor.id);
+      if (anchorTarget) {
+        // Anchor renders first, alone — everything else chains off it.
+        try {
+          anchorUrl = await renderScene(anchorTarget, anchorTarget.referenceImageUrl);
+          generated++;
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : "unknown error";
+          await markSceneFailed(anchorTarget.id, msg);
+          failed++;
+        }
+        pending = pending.filter((s) => s.id !== anchor.id);
+      } else {
+        anchorUrl = anchor.imageUrl ?? null;
+      }
+      if (anchorUrl) {
+        await setProjectSceneReferences(projectId, anchor.id, anchorUrl);
+      }
+    }
+
+    const failedScenes: Scene[] = [];
+    const referenceFor = (scene: Scene): string | null =>
+      scene.referenceImageUrl ?? (chained ? anchorUrl : null);
+
+    await runWithConcurrency(pending, concurrency, async (scene) => {
       try {
-        const promptForFal = applyLookToPrompt(lockedScenePrompt(project, scene), look);
-        const result = scene.referenceImageUrl
-          ? await editImage({
-              prompt: promptForFal,
-              imageUrls: [scene.referenceImageUrl],
-              aspectRatio,
-              seed: freshSeed(),
-            })
-          : await generateImage({
-              prompt: promptForFal,
-              aspectRatio,
-              seed: freshSeed(),
-            });
-        const first = result.images[0];
-        if (!first?.url) throw new Error("fal returned no image url");
-
-        const filename = `scene-${String(scene.order).padStart(3, "0")}-${nanoid(6)}.jpg`;
-        const stored = await storeFromUrl({
-          url: first.url,
-          kind: "images",
-          projectId,
-          filename,
-        });
-
-        await markSceneGenerated(scene.id, {
-          imageUrl: stored.url,
-          falRequestId: result.requestId,
-          invalidateAnimation: !!scene.imageUrl,
-          // Preserve whatever referenceImageUrl was already set. Reel/
-          // carousel scenes leave it null; before-after "after" keeps the
-          // operator's upload pinned for per-scene regen.
-        });
+        await renderScene(scene, referenceFor(scene));
         generated++;
       } catch (err) {
         const msg = err instanceof Error ? err.message : "unknown error";
         await markSceneFailed(scene.id, msg);
+        failedScenes.push(scene);
         failed++;
       }
     });
+
+    // One automatic retry pass over the failed subset — fal hiccups are
+    // usually transient, and a single retry beats making the operator click
+    // through rejected scenes by hand.
+    if (failedScenes.length > 0) {
+      await runWithConcurrency(failedScenes, concurrency, async (scene) => {
+        try {
+          await renderScene(scene, referenceFor(scene));
+          generated++;
+          failed--;
+        } catch {
+          // Already marked failed on the first pass; leave it rejected.
+        }
+      });
+    }
 
     await updateProjectStatus(projectId, "ready");
 
@@ -548,6 +635,8 @@ export async function generateAllImages(
   } catch (err) {
     await updateProjectStatus(projectId, "scripting");
     throw err;
+  } finally {
+    clearInterval(heartbeat);
   }
 }
 
@@ -646,22 +735,26 @@ async function regenerateScene(
 
   await markSceneGenerating(scene.id);
   try {
-    // Scenes without a stored reference regenerate via text-to-image
-    // (reel/carousel). Scenes WITH a reference re-use that frozen upload
-    // through /edit (before-after "after" scene stays locked to the
-    // operator's before image).
+    // Scenes without a stored reference regenerate via text-to-image (the
+    // anchor scene). Scenes WITH a reference re-use that frozen reference
+    // through /edit — the anchor for chained reel/carousel scenes, the
+    // operator's upload for before-after, the base for style-explorer.
+    const resolution: Resolution = project.quality === "hero" ? "4K" : "2K";
+    const seed = freshSeed();
     const useReference = scene.referenceImageUrl;
     const result = useReference
       ? await editImage({
           prompt: promptForFal,
           imageUrls: [useReference],
           aspectRatio,
-          seed: freshSeed(),
+          resolution,
+          seed,
         })
       : await generateImage({
           prompt: promptForFal,
           aspectRatio,
-          seed: freshSeed(),
+          resolution,
+          seed,
         });
     const first = result.images[0];
     if (!first?.url) throw new Error("fal returned no image url");
@@ -674,9 +767,25 @@ async function regenerateScene(
       filename,
     });
 
+    // Non-destructive reroll: the outgoing render goes into the variant
+    // history so the operator can restore it if this take is worse. The
+    // archived row carries the stored prompt + the seed that render used;
+    // direction/look overrides of PAST takes weren't recorded on the scene,
+    // so they stay null.
+    if (scene.imageUrl) {
+      await insertSceneVersion({
+        id: nanoid(12),
+        sceneId: scene.id,
+        imageUrl: scene.imageUrl,
+        prompt: scene.prompt,
+        seed: scene.seed,
+      });
+    }
+
     await markSceneGenerated(scene.id, {
       imageUrl: stored.url,
       falRequestId: result.requestId,
+      seed,
       // Per-scene regen always invalidates animation — the operator clicked
       // ↻ to get a different image, so the existing video (animated from the
       // old image) shouldn't ship in the bundle.
@@ -688,6 +797,59 @@ async function regenerateScene(
     await markSceneFailed(scene.id, msg);
     throw err;
   }
+}
+
+// ── Variant history ─────────────────────────────────────────────────────────
+
+/** All archived takes for a scene, newest first. */
+export async function listSceneVersions(
+  projectId: string,
+  sceneId: string
+): Promise<SceneVersion[]> {
+  const scene = await selectSceneById(sceneId);
+  if (!scene) throw new Error(`Scene ${sceneId} not found`);
+  if (scene.projectId !== projectId) {
+    throw new Error(`Scene ${sceneId} does not belong to project ${projectId}`);
+  }
+  return await selectSceneVersions(sceneId);
+}
+
+/**
+ * Restore an archived take as the scene's active image. The takes SWAP: the
+ * currently-active render goes into the history (so nothing is ever lost) and
+ * the restored version's row is removed. Any existing video is invalidated —
+ * it was animated from the outgoing image.
+ */
+export async function restoreSceneVersion(
+  projectId: string,
+  sceneId: string,
+  versionId: string
+): Promise<Scene> {
+  const scene = await selectSceneById(sceneId);
+  if (!scene) throw new Error(`Scene ${sceneId} not found`);
+  if (scene.projectId !== projectId) {
+    throw new Error(`Scene ${sceneId} does not belong to project ${projectId}`);
+  }
+  const version = await selectSceneVersionById(versionId);
+  if (!version || version.sceneId !== sceneId) {
+    throw new Error(`Version ${versionId} not found for scene ${sceneId}`);
+  }
+
+  if (scene.imageUrl && scene.imageUrl !== version.imageUrl) {
+    await insertSceneVersion({
+      id: nanoid(12),
+      sceneId,
+      imageUrl: scene.imageUrl,
+      prompt: scene.prompt,
+      seed: scene.seed,
+    });
+  }
+  await setSceneActiveImage(sceneId, { imageUrl: version.imageUrl, seed: version.seed });
+  await deleteSceneVersion(versionId);
+
+  const refreshed = await selectSceneById(sceneId);
+  if (!refreshed) throw new Error(`Scene ${sceneId} disappeared mid-restore`);
+  return refreshed;
 }
 
 // ── Animate (reel-only): seedance + Topaz upscale ───────────────────────────
@@ -735,6 +897,16 @@ export async function animateAllScenes(
   // signature query requires motionPrompt to be set, which only animate-
   // attempts set.
   await recoverAnimateFailedScenes(projectId);
+  // Also surface scenes orphaned in "generating" by a crashed IMAGE run —
+  // resetting them to pending makes the "not yet generated" error below name
+  // the real problem instead of silently blocking animate forever.
+  await resetOrphanedScenes(projectId);
+
+  // Seedance runs are minutes-long; keep the lock fresh so a second animate
+  // click can't reclaim it mid-run and double-spend.
+  const heartbeat = setInterval(() => {
+    heartbeatGenerationLock(projectId).catch(() => {});
+  }, 60_000);
 
   try {
     const allScenes = await selectScenesByProject(projectId);
@@ -767,18 +939,77 @@ export async function animateAllScenes(
       return { animated: 0, failed: 0, skipped };
     }
 
-    // Single GPT-5.5 call for all motion prompts — cheaper than per-scene
+    // Before-after renders a true first→last morph (before frame → after
+    // frame via seedance's end_image_url), so the motion direction is a
+    // fixed transformation prompt — no GPT call needed. Every other format
+    // gets one GPT-5.5 call for all motion prompts — cheaper than per-scene
     // and gives GPT-5.5 the full sequence so it can vary moves intentionally.
     // Defensive [] fallback for objectSet — pre-2026-05 concepts persisted
     // before the field existed.
-    const motionResp = await generateMotionPrompts({
-      concept: { ...project.concept, objectSet: project.concept.objectSet ?? [] },
-      scenes: targets.map((s) => ({ order: s.order, prompt: s.prompt })),
-    });
-    const motionByOrder = new Map(motionResp.motions.map((m) => [m.order, m.motion]));
+    const isMorph = project.format === "before-after";
+    const motionByOrder = isMorph
+      ? new Map(targets.map((s) => [s.order, BEFORE_AFTER_MORPH_MOTION]))
+      : new Map(
+          (
+            await generateMotionPrompts({
+              concept: { ...project.concept, objectSet: project.concept.objectSet ?? [] },
+              scenes: targets.map((s) => ({ order: s.order, prompt: s.prompt })),
+            })
+          ).motions.map((m) => [m.order, m.motion])
+        );
 
     let animated = 0;
     let failed = 0;
+    const failedScenes: Scene[] = [];
+
+    const animateOne = async (scene: Scene, motion: string) => {
+      await markSceneAnimating(scene.id, motion);
+
+        // Seedance: image → video at the project's aspect (9:16 for reels,
+        // upload-derived for before-after) at native 1080p — the Reels
+        // delivery ceiling; native detail beats upscaled 720p. Fresh seed
+        // per call so the same motion prompt + still doesn't keep landing
+        // on the same camera move.
+        //
+        // Before-after is a true morph: the operator's BEFORE photo is the
+        // first frame and the generated AFTER render is the last frame, so
+        // the clip shows the room actually transforming instead of ambient
+        // motion on the after still.
+        const seedanceResult = await generateVideo({
+          imageUrl: isMorph ? (scene.referenceImageUrl as string) : (scene.imageUrl as string),
+          endImageUrl: isMorph ? (scene.imageUrl as string) : undefined,
+          motionPrompt: motion,
+          durationSec: scene.durationSec || 5,
+          resolution: "1080p",
+          aspectRatio: animateAspect,
+          seed: freshSeed(),
+        });
+
+        // Topaz 2× → 4K60 is a hero-quality pass only. At standard quality
+        // native 1080p ships as-is — Instagram recompresses to 1080p anyway,
+        // so upscaling past it for Reels is money burned.
+        const finalVideoUrl =
+          project.quality === "hero"
+            ? (
+                await upscaleVideo({
+                  videoUrl: seedanceResult.videoUrl,
+                  model: "Proteus",
+                  upscaleFactor: 2,
+                })
+              ).videoUrl
+            : seedanceResult.videoUrl;
+
+      // Re-host on our own Blob so the URL is stable + downloadable.
+      const filename = `scene-${String(scene.order).padStart(3, "0")}-${nanoid(6)}.mp4`;
+      const stored = await storeFromUrl({
+        url: finalVideoUrl,
+        kind: "videos",
+        projectId,
+        filename,
+      });
+
+      await markSceneAnimated(scene.id, { videoUrl: stored.url });
+    };
 
     await runWithConcurrency(targets, concurrency, async (scene) => {
       const motion = motionByOrder.get(scene.order);
@@ -789,51 +1020,194 @@ export async function animateAllScenes(
         return;
       }
       try {
-        await markSceneAnimating(scene.id, motion);
-
-        // Seedance: image → video at the project's aspect (9:16 for reels,
-        // upload-derived for before-after). Fresh seed per call so the same
-        // motion prompt + still doesn't keep landing on the same camera move.
-        const seedanceResult = await generateVideo({
-          imageUrl: scene.imageUrl as string,
-          motionPrompt: motion,
-          durationSec: scene.durationSec || 3,
-          resolution: "720p",
-          aspectRatio: animateAspect,
-          seed: freshSeed(),
-        });
-
-        // Topaz: 720p → 1440p with Proteus.
-        const upscaled = await upscaleVideo({
-          videoUrl: seedanceResult.videoUrl,
-          model: "Proteus",
-          upscaleFactor: 2,
-        });
-
-        // Re-host on our own Blob so the URL is stable + downloadable.
-        const filename = `scene-${String(scene.order).padStart(3, "0")}-${nanoid(6)}.mp4`;
-        const stored = await storeFromUrl({
-          url: upscaled.videoUrl,
-          kind: "videos",
-          projectId,
-          filename,
-        });
-
-        await markSceneAnimated(scene.id, { videoUrl: stored.url });
+        await animateOne(scene, motion);
         animated++;
       } catch (err) {
         const msg = err instanceof Error ? err.message : "unknown error";
         await markSceneAnimateFailed(scene.id, msg);
+        failedScenes.push(scene);
         failed++;
       }
     });
+
+    // One automatic retry pass over the failed subset. Observed in prod
+    // smoke: animate can race the just-stored still on Blob and seedance
+    // 422s on a URL that's readable moments later — a single retry absorbs
+    // that class of transient without operator intervention.
+    if (failedScenes.length > 0) {
+      await runWithConcurrency(failedScenes, concurrency, async (scene) => {
+        const motion = motionByOrder.get(scene.order);
+        if (!motion) return;
+        try {
+          await animateOne(scene, motion);
+          animated++;
+          failed--;
+        } catch {
+          // Already marked failed on the first pass; leave it for the
+          // operator's next Animate click (recoverAnimateFailedScenes
+          // makes those scenes candidates again).
+        }
+      });
+    }
 
     await updateProjectStatus(projectId, "ready");
     return { animated, failed, skipped };
   } catch (err) {
     await updateProjectStatus(projectId, "ready");
     throw err;
+  } finally {
+    clearInterval(heartbeat);
   }
+}
+
+/** Fixed motion direction for the before-after morph clip (first frame =
+ *  operator's before photo, last frame = the generated after). Affirmative
+ *  only, locked camera — the transformation IS the motion. */
+const BEFORE_AFTER_MORPH_MOTION =
+  "Locked-off static camera. The room transforms smoothly and continuously from its current state into the redesigned space: furniture, finishes, materials, and lighting morph in place while the architecture, walls, windows, and camera stay perfectly fixed. Gradual, seamless, satisfying transformation.";
+
+// ── Stitch: assembled final video (fal ffmpeg compose) ──────────────────────
+
+export type StitchResult = {
+  finalVideoUrl: string;
+};
+
+/** How long the "before" still holds on screen before the morph clip plays,
+ *  in ms. Long enough to register the original space, short enough that the
+ *  transformation stays the star. */
+const BEFORE_HOLD_MS = 2500;
+
+/** Default hold per still in the style-explorer long-form slideshow. Long
+ *  enough to read the room and register the style, short enough that a
+ *  10-style video stays in the 1-2 minute band YouTube retention likes. */
+const STYLE_EXPLORER_PER_STILL_SEC = 7;
+
+/**
+ * Stitch a project's assets into ONE ready-to-post video — the CapCut
+ * replacement. Reel: clips concatenated in scene order. Before-after: the
+ * operator's before still holds for 2.5s, then the morph clip plays.
+ * Style-explorer: every still (Original first, then each style) holds for a
+ * uniform `perStillSec` — a stills+music YouTube long-form; with uniform
+ * timing the description's chapter timestamps are just i × perStillSec.
+ *
+ * Audio: each seedance clip carries its own synced ambient audio, and those
+ * tracks differ segment to segment. With no music, the native audio
+ * concatenates through (hard cuts between ambiences); stills-only timelines
+ * are silent. Passing `musicUrl` lays ONE audio bed across the whole
+ * timeline and REPLACES the per-clip ambient entirely (compose does not
+ * mix) — the uniform-audio option, and effectively required for the
+ * style-explorer YouTube upload.
+ */
+export async function stitchFinalVideo(
+  projectId: string,
+  opts: {
+    musicUrl?: string;
+    perStillSec?: number;
+    /** Style-explorer only: loop the full still sequence until the video
+     *  reaches at least this many minutes (whole cycles only). The ambient/
+     *  slideshow-channel play: 8+ minutes unlocks YouTube mid-roll ads and
+     *  stacks watch time. Chapters in the description describe cycle one. */
+    targetMinutes?: number;
+    /** Duration of the music file in seconds (read client-side at upload).
+     *  When the timeline outruns the song, the music keyframe is tiled so
+     *  the bed loops instead of going silent. */
+    musicDurationSec?: number;
+  } = {}
+): Promise<StitchResult> {
+  const found = await getProjectWithScenes(projectId);
+  if (!found) throw new Error(`Project ${projectId} not found`);
+  const { project, scenes } = found;
+
+  if (
+    project.format !== "reel" &&
+    project.format !== "before-after" &&
+    project.format !== "style-explorer"
+  ) {
+    throw new Error("Stitch is only available for reel, before-after, and style-explorer projects.");
+  }
+
+  const ordered = [...scenes].sort((a, b) => a.order - b.order);
+  const keyframes: ComposeKeyframe[] = [];
+  let t = 0;
+
+  if (project.format === "style-explorer") {
+    const renderable = ordered.filter(
+      (s) => !!s.imageUrl && (s.status === "generated" || s.status === "approved")
+    );
+    if (renderable.length < ordered.length || renderable.length === 0) {
+      const missing = ordered.length - renderable.length;
+      throw new Error(
+        `Cannot stitch: ${missing || "all"} style${missing === 1 ? "" : "s"} not generated yet.`
+      );
+    }
+    const perStillMs = clamp(opts.perStillSec ?? STYLE_EXPLORER_PER_STILL_SEC, 3, 15) * 1000;
+    const cycleMs = renderable.length * perStillMs;
+    // Whole cycles only, so the video always ends on the last style. At
+    // least one cycle; capped at 20 minutes as a runaway guard.
+    const targetMs = opts.targetMinutes
+      ? clamp(opts.targetMinutes, 1, 20) * 60_000
+      : cycleMs;
+    const cycles = Math.max(1, Math.ceil(targetMs / cycleMs));
+    for (let c = 0; c < cycles; c++) {
+      for (const s of renderable) {
+        keyframes.push({ timestamp: t, duration: perStillMs, url: s.imageUrl as string });
+        t += perStillMs;
+      }
+    }
+  } else if (project.format === "before-after") {
+    const before = ordered.find((s) => !s.referenceImageUrl);
+    const after = ordered.find((s) => !!s.referenceImageUrl);
+    if (!before?.imageUrl) throw new Error("Missing the before image.");
+    if (!after?.videoUrl) throw new Error("Animate the after scene first — no morph clip yet.");
+    keyframes.push({ timestamp: 0, duration: BEFORE_HOLD_MS, url: before.imageUrl });
+    t = BEFORE_HOLD_MS;
+    const morphMs = (after.durationSec || 9) * 1000;
+    keyframes.push({ timestamp: t, duration: morphMs, url: after.videoUrl });
+    t += morphMs;
+  } else {
+    const missing = ordered.filter((s) => !s.videoUrl);
+    if (ordered.length === 0 || missing.length > 0) {
+      throw new Error(
+        `Cannot stitch: ${missing.length || "all"} scene${missing.length === 1 ? "" : "s"} not animated yet. Run Animate first.`
+      );
+    }
+    for (const s of ordered) {
+      const ms = (s.durationSec || 5) * 1000;
+      keyframes.push({ timestamp: t, duration: ms, url: s.videoUrl as string });
+      t += ms;
+    }
+  }
+
+  const tracks: ComposeTrack[] = [{ id: "video", type: "video", keyframes }];
+  if (opts.musicUrl) {
+    // Tile the song across the timeline when its length is known and shorter
+    // than the video — compose does not loop audio, and a 10-minute ambient
+    // video going silent at minute 3 is a dead upload. The last tile is
+    // trimmed to the timeline end.
+    const songMs = opts.musicDurationSec ? Math.floor(opts.musicDurationSec * 1000) : t;
+    const musicKeyframes: ComposeKeyframe[] = [];
+    for (let start = 0; start < t; start += songMs) {
+      musicKeyframes.push({
+        timestamp: start,
+        duration: Math.min(songMs, t - start),
+        url: opts.musicUrl,
+      });
+    }
+    tracks.push({ id: "music", type: "audio", keyframes: musicKeyframes });
+  }
+
+  const composed = await composeVideo(tracks);
+
+  // Re-host on our own Blob so the deliverable URL is stable + downloadable.
+  const stored = await storeFromUrl({
+    url: composed.videoUrl,
+    kind: "videos",
+    projectId,
+    filename: `final-${nanoid(6)}.mp4`,
+  });
+  await markProjectFinalVideo(projectId, stored.url);
+
+  return { finalVideoUrl: stored.url };
 }
 
 /** Bumped when the bundle/manifest shape changes incompatibly. */

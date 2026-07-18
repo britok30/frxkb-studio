@@ -15,7 +15,7 @@ const SHORTS_HASHTAGS = z.array(z.string().min(1).max(40)).min(1).max(3);
 // is too tight to lock multiple tags.
 const LOCKED_HASHTAGS_BY_WORLD: Record<WorldType, string[]> = {
   interior: ["interiordesign", "interiors"],
-  exterior: ["architecture", "architect", "architectura"],
+  exterior: ["architecture", "architect", "archdaily"],
 };
 
 /** Total hashtag slots on IG/TikTok per lane (locks + variable design tags). */
@@ -219,7 +219,9 @@ const REEL_TOOL_SCHEMA = {
       maxItems: 5,
       items: { type: "string", minLength: 1, maxLength: 40 },
     },
-    shortsTitle: { type: "string", minLength: 8, maxLength: 100 },
+    // Floor matches the 40-80 guidance above (a sub-40-char title is wasting
+    // YouTube search real estate); soft ceiling 80 with headroom to 100.
+    shortsTitle: { type: "string", minLength: 40, maxLength: 100 },
     shortsDescription: { type: "string", minLength: 40, maxLength: 5000 },
     shortsHashtags: {
       type: "array",
@@ -494,9 +496,10 @@ export async function generateYouTubeMetadata(input: YouTubeMetadataInput): Prom
  * Assemble the final, paste-ready YouTube description from GPT-5.5's creative
  * draft + the project's real styles and the operator's real links. Done
  * deterministically (not by GPT-5.5) so chapters match the actual styles and the
- * CTA links are never hallucinated. Chapter start times are left as `__:__`
- * placeholders — the operator fills them from their final CapCut timeline,
- * since we don't control the per-segment durations.
+ * CTA links are never hallucinated. Chapter start times are computed from the
+ * stitch's uniform per-still hold (Original at 00:00, style k at k ×
+ * perStillSec) — matches stitchFinalVideo's default timing; re-stitching with
+ * a custom perStillSec shifts them proportionally.
  */
 export function assembleYouTubeMetadata(opts: {
   draft: YouTubeDraft;
@@ -504,9 +507,18 @@ export function assembleYouTubeMetadata(opts: {
   appName: string;
   instagram: string;
   website: string;
+  /** Seconds each still holds in the stitched long-form. Defaults to the
+   *  stitch default (7s). */
+  perStillSec?: number;
 }): YouTubeMetadata {
   const hashtags = opts.draft.hashtags.map((h) => h.replace(/^#/, ""));
-  const chapterLines = ["00:00 Intro", ...opts.styleNames.map((s) => `__:__ ${s}`)].join("\n");
+  const per = opts.perStillSec ?? 7;
+  const stamp = (sec: number) =>
+    `${String(Math.floor(sec / 60)).padStart(2, "0")}:${String(sec % 60).padStart(2, "0")}`;
+  const chapterLines = [
+    "00:00 Intro",
+    ...opts.styleNames.map((s, i) => `${stamp((i + 1) * per)} ${s}`),
+  ].join("\n");
   const cta = [
     "———",
     `Design your own space with ${opts.appName} 👇`,
@@ -518,7 +530,7 @@ export function assembleYouTubeMetadata(opts: {
     "",
     opts.draft.descriptionBody.trim(),
     "",
-    "⏱ CHAPTERS — set each start time from your final timeline:",
+    "⏱ CHAPTERS:",
     chapterLines,
     "",
     cta,

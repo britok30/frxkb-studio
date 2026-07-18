@@ -24,6 +24,9 @@ export type BundleData = {
   niche: string;
   format: string;
   thumbnailUrl: string;
+  /** Stitched ready-to-post MP4 (when the operator ran Stitch). Packed as
+   *  final.mp4 at the zip root. */
+  finalVideoUrl?: string | null;
   scenes: SceneAsset[];
   metadata: Metadata;
 };
@@ -44,7 +47,9 @@ export async function downloadBundle(
   // We fetch BOTH still and video for animated scenes so the operator has
   // each as a backup.
   const fetchUnits =
-    data.scenes.reduce((n, s) => n + 1 + (s.videoUrl ? 1 : 0), 0) + 1;
+    data.scenes.reduce((n, s) => n + 1 + (s.videoUrl ? 1 : 0), 0) +
+    1 +
+    (data.finalVideoUrl ? 1 : 0);
   let done = 0;
 
   const tick = () => {
@@ -85,6 +90,15 @@ export async function downloadBundle(
       zip.file("thumbnail.jpg", blob);
       tick();
     })(),
+    ...(data.finalVideoUrl
+      ? [
+          (async () => {
+            const blob = await fetchAsBlob(data.finalVideoUrl as string);
+            zip.file("final.mp4", blob);
+            tick();
+          })(),
+        ]
+      : []),
   ]);
 
   const hasAnyVideo = data.scenes.some((s) => s.videoUrl);
@@ -96,6 +110,7 @@ export async function downloadBundle(
     format: data.format,
     generatedAt: new Date().toISOString(),
     thumbnail: "thumbnail.jpg",
+    finalVideo: data.finalVideoUrl ? "final.mp4" : null,
     metadata: data.metadata,
     scenes: data.scenes.map((s) => {
       const padded = String(s.order).padStart(3, "0");

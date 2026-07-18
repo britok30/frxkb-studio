@@ -33,7 +33,7 @@ Pro is materially better at three things vs the older model — lean into all th
 
 The single most important rule: every scene must read as one cohesive HOME. Same lighting style, same era, same material palette, same family of objects. Vary composition, scale, and which corner of the home we're seeing — never the visual world.
 
-Each prompt is one rich paragraph (80-130 words) structured like this:
+Each prompt is one rich paragraph (70-110 words — Pro weights early tokens heaviest, so tight beats exhaustive) structured like this:
 - **Subject + composition** — what we see + framing (wide establishing of a living room, eye-level mid through a kitchen, intimate detail of a reading nook, low-angle threshold from a hallway). Anchor with a focal length when it serves: "shot on 35mm" or "shot on 50mm" or "wide-angle 24mm" or "85mm portrait compression."
 - **Materials, named precisely** — say "honed travertine," "raw board-formed concrete," "polished terrazzo," "white-oiled oak." Specificity > adjectives.
 - **Lived-in objects (REQUIRED, not optional)** — every interior scene names specific objects drawn from these categories: furniture, plants, art and ceramics, textiles, daily-life details, functional objects. The brief commits to a per-piece object set rooted in this home's specific cultural lineage; draw your scene objects from THAT set, not from a generic moodboard default. A Tokyo apartment's objects look nothing like a Mallorcan finca's; a Marrakech riad's objects look nothing like a Brooklyn loft's. Let the lineage drive every named object.
@@ -49,7 +49,12 @@ Required qualities for every prompt (positive language only — Gemini 3 Pro Ima
 - A real, residential home — somewhere a person actually lives. Saturate the frame with the OBJECTS of their life, drawn from the brief's per-piece object set. The home is empty of people but FULL of evidence of them.
 - Echo the specific concept tightly — name the era, region, materials from the brief.
 - Vary composition across the sequence — alternate between wide establishing, mid interior, threshold, and intimate detail. Each scene's framing is different from the previous one.
-- Photographic register — captured on real film stock or a real cinema camera. Restrained and tasteful, never sterile.
+- Photographic register — captured on real film stock or a real cinema camera. Restrained, tasteful, lived-in and characterful.
+
+Compose for the delivery frame — the aspect ratio in the brief is a composition instruction, not metadata:
+- Vertical (9:16, 3:4, 4:5): exploit floor-to-ceiling height. Stack the frame — foreground object low, midground furniture, background window or opening high. Tall windows, doorways, and vertical architecture are your friends. Generous headroom. Favor 24-35mm.
+- Horizontal (16:9, 21:9, 4:3): layer laterally and lead the eye across the room; establishing shots breathe here. Favor 35-50mm.
+- Square (1:1): centered, symmetrical, one clear focal subject.
 
 Structure the sequence like a slow walk through a home:
 - Open with one or two establishing shots (exterior arrival or wide interior, scale + context).
@@ -69,7 +74,8 @@ export function buildScenesUser(input: ScenePromptsInput): string {
     ? [
         "",
         `Committed photographic look — ${look.name}: ${look.prompt}`,
-        "Write EVERY scene's light, color temperature, camera/lens, and photographic register inside this exact look. Do not drift to a different time of day or light source in any scene; vary composition and subject, never the light.",
+        "Write EVERY scene's light and color temperature inside this exact look. Do not drift to a different time of day or light source in any scene; vary composition and subject, never the light.",
+        "The look owns the photographic register: do NOT name a film stock, camera body, or color grade in any scene — one register is appended downstream for the whole set. Spend those words on subject, materials, objects, and composition instead.",
       ].join("\n")
     : "";
   const worldRules =
@@ -100,7 +106,7 @@ export function buildScenesUser(input: ScenePromptsInput): string {
     "",
     worldRules,
     "",
-    `Aspect ratio for downstream rendering: ${aspectRatio}`,
+    `Aspect ratio for downstream rendering: ${aspectRatio} — compose every frame for this orientation per the composition rules.`,
     `Number of scenes: ${sceneCount}`,
     `Per-scene duration: ${sceneDurationSec}s`,
     "",

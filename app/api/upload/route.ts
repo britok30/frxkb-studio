@@ -15,6 +15,15 @@ const TYPE_TO_EXT: Record<string, string> = {
   "image/png": "png",
   "image/webp": "webp",
 };
+/** Audio uploads (music bed for the stitched final video). Skips the sharp/
+ *  aspect pipeline entirely — stored as-is and returned with kind:"audio". */
+const ALLOWED_AUDIO_TYPES: Record<string, string> = {
+  "audio/mpeg": "mp3",
+  "audio/mp4": "m4a",
+  "audio/x-m4a": "m4a",
+  "audio/wav": "wav",
+  "audio/x-wav": "wav",
+};
 
 /**
  * Operator-uploaded "before" image for a before-after project. Validates type
@@ -41,15 +50,35 @@ export async function POST(req: Request): Promise<Response> {
     if (!file) {
       return NextResponse.json({ error: "Missing 'file' field" }, { status: 400 });
     }
-    if (!ALLOWED_TYPES.has(file.type)) {
-      return NextResponse.json(
-        { error: `Unsupported file type: ${file.type}. Use JPEG, PNG, or WebP.` },
-        { status: 400 }
-      );
-    }
     if (file.size > MAX_BYTES) {
       return NextResponse.json(
         { error: `File too large (${Math.round(file.size / 1024 / 1024)}MB). Max ${MAX_BYTES / 1024 / 1024}MB.` },
+        { status: 400 }
+      );
+    }
+
+    // Audio branch: store as-is, no dimension/aspect pipeline.
+    if (ALLOWED_AUDIO_TYPES[file.type]) {
+      const audioBuffer = Buffer.from(await file.arrayBuffer());
+      try {
+        const op = currentOperator();
+        const stored = await storeOperatorUpload({
+          operatorEmail: op.email,
+          buffer: audioBuffer,
+          ext: ALLOWED_AUDIO_TYPES[file.type],
+          contentType: file.type,
+        });
+        return NextResponse.json({ url: stored.url, kind: "audio" });
+      } catch (err) {
+        const message = err instanceof Error ? err.message : "unknown error";
+        console.error("[api/upload] audio blob upload failed:", err);
+        return NextResponse.json({ error: message }, { status: 500 });
+      }
+    }
+
+    if (!ALLOWED_TYPES.has(file.type)) {
+      return NextResponse.json(
+        { error: `Unsupported file type: ${file.type}. Use JPEG, PNG, WebP, or MP3/M4A/WAV for music.` },
         { status: 400 }
       );
     }

@@ -1,7 +1,9 @@
 import { describe, it, expect } from "vitest";
 import {
   FAL_NANO_BANANA_PER_IMAGE,
-  FAL_SEEDANCE_FAST_PER_SECOND_720P,
+  FAL_NANO_BANANA_PER_IMAGE_4K,
+  FAL_NANO_BANANA_EDIT_PER_IMAGE,
+  FAL_SEEDANCE_PER_SECOND,
   FAL_TOPAZ_PER_SECOND_GT_1080P,
   GPT_5_5_INPUT_PER_MTOK,
   GPT_5_5_OUTPUT_PER_MTOK,
@@ -33,10 +35,20 @@ describe("vendor price constants", () => {
 });
 
 describe("estimateImageBatch", () => {
-  it("every scene is text-to-image (no anchor, no /edit savings — reel/carousel only)", () => {
+  it("anchor is text-to-image, every other scene is an /edit against it", () => {
     expect(estimateImageBatch(1)).toBeCloseTo(FAL_NANO_BANANA_PER_IMAGE, 6);
-    expect(estimateImageBatch(3)).toBeCloseTo(3 * FAL_NANO_BANANA_PER_IMAGE, 6);
-    expect(estimateImageBatch(10)).toBeCloseTo(10 * FAL_NANO_BANANA_PER_IMAGE, 6);
+    expect(estimateImageBatch(3)).toBeCloseTo(
+      FAL_NANO_BANANA_PER_IMAGE + 2 * FAL_NANO_BANANA_EDIT_PER_IMAGE,
+      6
+    );
+    expect(estimateImageBatch(10)).toBeCloseTo(
+      FAL_NANO_BANANA_PER_IMAGE + 9 * FAL_NANO_BANANA_EDIT_PER_IMAGE,
+      6
+    );
+  });
+
+  it("hero quality renders everything at 4K", () => {
+    expect(estimateImageBatch(3, "hero")).toBeCloseTo(3 * FAL_NANO_BANANA_PER_IMAGE_4K, 6);
   });
 
   it("returns 0 for zero or negative count", () => {
@@ -66,25 +78,25 @@ describe("estimateSceneGen", () => {
   });
 });
 
-describe("estimateProjectTotal (Pro pricing — $0.225/img at 2K)", () => {
-  it("reel with 3 scenes is roughly $0.70-$0.90 (3 × text-to-image, no thumbnail)", () => {
+describe("estimateProjectTotal (Pro pricing — anchor t2i + /edit chain)", () => {
+  it("reel with 3 scenes is roughly $0.55-$0.75 (1 t2i + 2 edits)", () => {
     const total = estimateProjectTotal("reel", 3);
-    expect(total).toBeGreaterThan(0.7);
-    expect(total).toBeLessThan(0.9);
+    expect(total).toBeGreaterThan(0.55);
+    expect(total).toBeLessThan(0.75);
   });
 
-  it("carousel with 10 slides is roughly $2.30-$2.55 (10 × text-to-image, no thumbnail)", () => {
+  it("carousel with 10 slides is roughly $1.60-$1.80 (1 t2i + 9 edits)", () => {
     const total = estimateProjectTotal("carousel", 10);
-    expect(total).toBeGreaterThan(2.3);
-    expect(total).toBeLessThan(2.55);
+    expect(total).toBeGreaterThan(1.6);
+    expect(total).toBeLessThan(1.8);
   });
 
   it("scales with scene count — 20 carousel slides costs more than 10", () => {
     const ten = estimateProjectTotal("carousel", 10);
     const twenty = estimateProjectTotal("carousel", 20);
     expect(twenty).toBeGreaterThan(ten);
-    // 10 extra slides × $0.225 (text-to-image) = $2.25 + small GPT-5.5 bump.
-    expect(twenty - ten).toBeGreaterThan(2.2);
+    // 10 extra slides × $0.15 (/edit) = $1.50 + small GPT-5.5 bump.
+    expect(twenty - ten).toBeGreaterThan(1.45);
   });
 
   it("decomposes cleanly: total = scripting + images + finalize", () => {
@@ -116,9 +128,12 @@ describe("estimateConceptGen + estimateMetadataGen", () => {
 });
 
 describe("video pipeline pricing", () => {
-  it("seedance fast at 720p is $0.2419/sec", () => {
-    expect(FAL_SEEDANCE_FAST_PER_SECOND_720P).toBe(0.2419);
-    expect(estimateSeedance(3)).toBeCloseTo(3 * 0.2419, 6);
+  it("seedance standard is token-billed by pixels — 720p matches the $0.3024/s flat rate, 1080p is the default", () => {
+    expect(FAL_SEEDANCE_PER_SECOND["720p"]).toBe(0.3024);
+    expect(FAL_SEEDANCE_PER_SECOND["1080p"]).toBe(0.6804);
+    expect(FAL_SEEDANCE_PER_SECOND["4k"]).toBe(2.7216);
+    expect(estimateSeedance(3)).toBeCloseTo(3 * 0.6804, 6);
+    expect(estimateSeedance(3, "720p")).toBeCloseTo(3 * 0.3024, 6);
     expect(estimateSeedance(0)).toBe(0);
   });
 
@@ -138,18 +153,22 @@ describe("video pipeline pricing", () => {
     expect(estimateTopazUpscale(10, "gt-1080p", false)).toBeCloseTo(0.8, 6);
   });
 
-  it("animate batch for a 3×5s reel is in the $5.80-$6.30 range (Apollo 60fps interp included)", () => {
+  it("animate batch for a 3×5s reel at standard quality is ~$10.20-$10.50 (native 1080p, no upscale)", () => {
     const total = estimateAnimateBatch(3, 5);
-    expect(total).toBeGreaterThan(5.8);
-    expect(total).toBeLessThan(6.3);
+    expect(total).toBeGreaterThan(10.1);
+    expect(total).toBeLessThan(10.5);
+  });
+
+  it("hero quality adds the Topaz 4K60 pass on top", () => {
+    const standard = estimateAnimateBatch(3, 5, "standard");
+    const hero = estimateAnimateBatch(3, 5, "hero");
+    expect(hero - standard).toBeCloseTo(15 * FAL_TOPAZ_PER_SECOND_GT_1080P * 2, 6);
   });
 
   it("animate batch scales linearly with total seconds", () => {
     const baseline = estimateAnimateBatch(3, 5); // 15s
     const doubled = estimateAnimateBatch(6, 5); // 30s
-    // Roughly 2× the per-sec (seedance + topaz w/ interp) costs, plus a smaller GPT-5.5 bump.
-    const perSecCost =
-      FAL_SEEDANCE_FAST_PER_SECOND_720P + FAL_TOPAZ_PER_SECOND_GT_1080P * 2;
+    const perSecCost = FAL_SEEDANCE_PER_SECOND["1080p"];
     expect(doubled - baseline).toBeGreaterThan(15 * perSecCost * 0.95);
   });
 });

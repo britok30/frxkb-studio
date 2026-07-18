@@ -3,7 +3,18 @@
 // `lib/projects.ts` orchestration tests + manual smoke against Neon.
 
 import { and, asc, desc, eq, inArray, lt, ne, or, sql } from "drizzle-orm";
-import { getDb, projects, scenes, type NewProject, type NewScene, type Project, type Scene } from "@/lib/db";
+import {
+  getDb,
+  projects,
+  scenes,
+  sceneVersions,
+  type NewProject,
+  type NewScene,
+  type NewSceneVersion,
+  type Project,
+  type Scene,
+  type SceneVersion,
+} from "@/lib/db";
 
 /** A run that hasn't heartbeat-ed in this long is considered crashed and reclaimable. */
 export const STALE_LOCK_MS = 10 * 60 * 1000;
@@ -156,6 +167,18 @@ export async function selectSceneById(id: string): Promise<Scene | null> {
   return rows[0] ?? null;
 }
 
+/** Batch-approve every "generated" scene in a project (the "Approve all
+ *  ready" action). Approved/rejected/pending scenes are untouched. Returns
+ *  the number of scenes flipped. */
+export async function approveAllGeneratedScenes(projectId: string): Promise<number> {
+  const rows = await getDb()
+    .update(scenes)
+    .set({ status: "approved", updatedAt: new Date() })
+    .where(and(eq(scenes.projectId, projectId), eq(scenes.status, "generated")))
+    .returning();
+  return rows.length;
+}
+
 export async function markSceneApproved(id: string): Promise<void> {
   await getDb()
     .update(scenes)
@@ -192,6 +215,9 @@ export async function markSceneGenerated(
   values: {
     imageUrl: string;
     falRequestId: string;
+    /** The seed the render actually used — persisted for reproducibility and
+     *  so regens/consistency work can reason about it. Omit to preserve. */
+    seed?: number;
     /** When true, also nulls videoUrl + motionPrompt — used during regenerate
      *  flows so a refreshed still doesn't keep its now-stale video preview.
      *  Operator will need to re-run Animate to get a video that matches. */
@@ -210,6 +236,9 @@ export async function markSceneGenerated(
     error: null,
     updatedAt: new Date(),
   };
+  if (values.seed !== undefined) {
+    set.seed = values.seed;
+  }
   if (values.invalidateAnimation) {
     set.videoUrl = null;
     set.motionPrompt = null;
@@ -218,6 +247,85 @@ export async function markSceneGenerated(
     set.referenceImageUrl = values.referenceImageUrl;
   }
   await getDb().update(scenes).set(set).where(eq(scenes.id, id));
+}
+
+/** Snapshot a scene's outgoing render into the variant history right before a
+ *  regen overwrites it. No-ops when the scene has no image yet. */
+export async function insertSceneVersion(values: NewSceneVersion): Promise<void> {
+  await getDb().insert(sceneVersions).values(values);
+}
+
+/** All non-active takes for a scene, newest first. */
+export async function selectSceneVersions(sceneId: string): Promise<SceneVersion[]> {
+  return await getDb()
+    .select()
+    .from(sceneVersions)
+    .where(eq(sceneVersions.sceneId, sceneId))
+    .orderBy(desc(sceneVersions.createdAt));
+}
+
+export async function selectSceneVersionById(id: string): Promise<SceneVersion | null> {
+  const rows = await getDb()
+    .select()
+    .from(sceneVersions)
+    .where(eq(sceneVersions.id, id))
+    .limit(1);
+  return rows[0] ?? null;
+}
+
+export async function deleteSceneVersion(id: string): Promise<void> {
+  await getDb().delete(sceneVersions).where(eq(sceneVersions.id, id));
+}
+
+/** Restore a historical take as a scene's active image. Any existing video
+ *  is invalidated — it was animated from the outgoing image. */
+export async function setSceneActiveImage(
+  id: string,
+  values: { imageUrl: string; seed?: number | null }
+): Promise<void> {
+  await getDb()
+    .update(scenes)
+    .set({
+      imageUrl: values.imageUrl,
+      ...(values.seed !== undefined ? { seed: values.seed } : {}),
+      status: "generated",
+      videoUrl: null,
+      motionPrompt: null,
+      error: null,
+      updatedAt: new Date(),
+    })
+    .where(eq(scenes.id, id));
+}
+
+/** Freeze the anchor render as the reference for every OTHER scene in a
+ *  reel/carousel project that doesn't already carry one. Called right after
+ *  the anchor scene generates so scenes 2+ chain off it via /edit. */
+export async function setProjectSceneReferences(
+  projectId: string,
+  anchorSceneId: string,
+  referenceImageUrl: string
+): Promise<void> {
+  await getDb()
+    .update(scenes)
+    .set({ referenceImageUrl, updatedAt: new Date() })
+    .where(
+      and(
+        eq(scenes.projectId, projectId),
+        ne(scenes.id, anchorSceneId),
+        sql`${scenes.referenceImageUrl} IS NULL`
+      )
+    );
+}
+
+/** Persist the stitched final video URL. Re-stitching overwrites. */
+export async function markProjectFinalVideo(
+  id: string,
+  finalVideoUrl: string
+): Promise<void> {
+  await getDb()
+    .update(projects)
+    .set({ finalVideoUrl, updatedAt: new Date() })
+    .where(eq(projects.id, id));
 }
 
 export async function markProjectFinalized(

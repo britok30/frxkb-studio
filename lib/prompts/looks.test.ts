@@ -59,13 +59,20 @@ describe("applyLookToPrompt", () => {
     expect(applyLookToPrompt(base, null)).toBe(base);
   });
 
-  it("appends the look block after the original prompt with a conflict-resolution clause", () => {
+  it("appends the look block after the original prompt as pure photographic language", () => {
     const look = getLook("golden-hour")!;
     const out = applyLookToPrompt(base, look);
     expect(out.startsWith(base)).toBe(true);
-    expect(out).toContain(`Committed photographic look — ${look.name}`);
     expect(out).toContain(look.prompt);
-    // The look must win over lighting language written into the scene prompt.
-    expect(out).toMatch(/this look wins/i);
+    // No adjudication prose — an image model renders tokens, it doesn't
+    // resolve conflicts, so "this look wins"-style meta-instruction would
+    // only inject the conflicting tokens it names.
+    expect(out).not.toMatch(/this look wins|different time of day/i);
+  });
+
+  it("keeps render-engine / tag-soup tokens out of every look prompt (they prime CGI-plastic output)", () => {
+    for (const l of LOOKS) {
+      expect(l.prompt).not.toMatch(/\b(8k|4k|denoised|render|archviz|v-?ray|corona style|ultra detailed|masterpiece)\b/i);
+    }
   });
 });

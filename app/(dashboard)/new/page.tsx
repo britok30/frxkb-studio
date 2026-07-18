@@ -88,6 +88,18 @@ export default function NewProjectPage() {
   const initialFormatParam = searchParams.get("format");
   const initialFormat: Format = isFormat(initialFormatParam) ? initialFormatParam : "reel";
   const initialStep: 1 | 2 | 3 = isFormat(initialFormatParam) ? 2 : 1;
+  // "Duplicate as template" deep-links carry the source project's recipe.
+  // Server-side validation is authoritative — a bad param just gets ignored
+  // or rejected at submit.
+  const initialNiche = searchParams.get("niche") ?? "";
+  const initialLookParam = searchParams.get("look");
+  const initialQuality: "standard" | "hero" =
+    searchParams.get("quality") === "hero" ? "hero" : "standard";
+  const initialWorldParam = searchParams.get("world");
+  const initialWorld: WorldType | null =
+    initialWorldParam === "interior" || initialWorldParam === "exterior"
+      ? initialWorldParam
+      : null;
 
   const [step, setStep] = useState<1 | 2 | 3>(initialStep);
   const [direction, setDirection] = useState<1 | -1>(1);
@@ -98,8 +110,9 @@ export default function NewProjectPage() {
   // Null while the request is in flight.
   const [allowedWorldTypes, setAllowedWorldTypes] = useState<WorldType[] | null>(null);
   // No default — operator must explicitly pick a side, EXCEPT when their
-  // operator config only allows one (we auto-select to skip the friction).
-  const [worldType, setWorldType] = useState<WorldType | null>(null);
+  // operator config only allows one (we auto-select to skip the friction)
+  // or a duplicate-as-template link carried one in.
+  const [worldType, setWorldType] = useState<WorldType | null>(initialWorld);
   // Program axis (style-explorer only). Same single-lane auto-select trick.
   const [allowedPropertyTypes, setAllowedPropertyTypes] = useState<PropertyType[]>([
     "residential",
@@ -129,11 +142,14 @@ export default function NewProjectPage() {
       }
     })();
   }, []);
-  const [niche, setNiche] = useState("");
+  const [niche, setNiche] = useState(initialNiche);
   const [operatorNotes, setOperatorNotes] = useState("");
   // Committed photographic look (reel/carousel only). Null = "let GPT-5.5
   // choose the light per concept" — the pre-looks behavior.
-  const [lookId, setLookId] = useState<string | null>(null);
+  const [lookId, setLookId] = useState<string | null>(initialLookParam);
+  // Render-quality tier (reel/carousel). standard = 2K stills + 1080p video;
+  // hero = 4K stills + Topaz 4K60 video for YouTube/portfolio use.
+  const [quality, setQuality] = useState<"standard" | "hero">(initialQuality);
   const [showCustomize, setShowCustomize] = useState(false);
   const [sceneCount, setSceneCount] = useState(FORMAT_PRESETS[initialFormat].sceneCount);
   const [sceneDurationSec, setSceneDurationSec] = useState(
@@ -263,6 +279,7 @@ export default function NewProjectPage() {
           sceneDurationSec,
           operatorNotes: operatorNotes.trim() || undefined,
           lookId: lookId ?? undefined,
+          quality,
         }),
       });
       if (!res.ok) {
@@ -431,6 +448,7 @@ export default function NewProjectPage() {
                       value={lookId}
                       onChange={setLookId}
                     />
+                    <QualityToggle value={quality} onChange={setQuality} format={format} />
                   </>
                 )
               )}
@@ -561,6 +579,15 @@ export default function NewProjectPage() {
                     <ReviewRow
                       label="Look"
                       value={getLook(lookId)?.name ?? "GPT-5.5's choice"}
+                      onEdit={() => go(2)}
+                    />
+                    <ReviewRow
+                      label="Quality"
+                      value={
+                        quality === "hero"
+                          ? "Hero — 4K stills, 4K60 video"
+                          : "Standard — 2K stills, 1080p video"
+                      }
                       onEdit={() => go(2)}
                     />
                     <ReviewRow
@@ -1069,6 +1096,63 @@ function LookPicker({
             tagline={l.tagline}
             swatch={l.swatch}
           />
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function QualityToggle({
+  value,
+  onChange,
+  format,
+}: {
+  value: "standard" | "hero";
+  onChange: (q: "standard" | "hero") => void;
+  format: Format;
+}) {
+  const tiers = [
+    {
+      id: "standard" as const,
+      name: "Standard",
+      detail:
+        format === "reel"
+          ? "2K stills · native 1080p video — the Reels delivery ceiling"
+          : "2K stills — crisp on every feed",
+    },
+    {
+      id: "hero" as const,
+      name: "Hero",
+      detail:
+        format === "reel"
+          ? "4K stills · Topaz 4K60 video — for YouTube and portfolio cuts"
+          : "4K stills — zoom-proof carousels, ~2× image cost",
+    },
+  ];
+  return (
+    <div className="flex flex-col gap-2">
+      <div className="flex items-baseline justify-between gap-4">
+        <span className="text-[10px] uppercase tracking-[0.22em] text-muted-foreground">
+          Quality
+        </span>
+      </div>
+      <div className="grid grid-cols-2 gap-3">
+        {tiers.map((t) => (
+          <motion.button
+            key={t.id}
+            type="button"
+            onClick={() => onChange(t.id)}
+            whileTap={{ scale: 0.98 }}
+            transition={{ duration: 0.16, ease }}
+            className={`text-left rounded-xl border px-3 py-2.5 flex flex-col gap-0.5 transition-colors ${
+              value === t.id ? "border-foreground bg-foreground/[0.03]" : "hover:border-foreground/30"
+            }`}
+          >
+            <span className="text-xs font-semibold tracking-tight">{t.name}</span>
+            <span className="text-[10px] text-muted-foreground tracking-tight leading-snug">
+              {t.detail}
+            </span>
+          </motion.button>
         ))}
       </div>
     </div>

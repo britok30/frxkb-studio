@@ -34,7 +34,7 @@ export type StylesResponse = z.infer<typeof StylesResponseSchema>;
  * most) and ends mid-sentence so the style's restyle text continues it.
  */
 export const ARCHITECTURE_LOCK =
-  "This is the SAME space, only restyled — keep it the exact same photograph. Match the base image's camera EXACTLY: identical camera position, angle, height, lens and focal length, framing, crop, and perspective/vanishing point — do not move, rotate, zoom, tilt, or re-crop the camera. Keep the room's footprint, wall positions, ceiling height, and the exact size and placement of every window, door, and structural opening unchanged. Change ONLY the furnishings, finishes, materials, colour palette, textiles, decor, art, plants, and lighting. Restyle it as follows: ";
+  "This is the SAME space, only restyled — keep it the exact same photograph. Reproduce the base image's camera EXACTLY, as a locked tripod shot: identical camera position, angle, height, lens and focal length, framing, crop, and perspective/vanishing point. Keep the room's footprint, wall positions, ceiling height, and the exact size and placement of every window, door, and structural opening unchanged. Change ONLY the furnishings, finishes, materials, colour palette, textiles, decor, art, plants, and lighting. Restyle it as follows: ";
 
 export type StyleInput = {
   /** Public Blob URL of the uploaded base. Sent to GPT-5.5 as a vision block. */
@@ -215,7 +215,7 @@ export function buildBaseImagePrompt(
   return [
     description.trim(),
     "",
-    `${vantage} (${program}). Show it clearly and NEUTRALLY so it can be restyled afterwards: even, soft natural daylight; eye-level, straight-on composition; the architecture, layout, windows/openings, ceiling, and proportions all clearly legible. Lightly and tastefully furnished in a plain contemporary way — a clean starting point, NOT a strong style. No people, no on-screen text, no signage, no watermark.`,
+    `${vantage} (${program}). Show it clearly and NEUTRALLY so it can be restyled afterwards: even, soft natural daylight; eye-level, straight-on composition; the architecture, layout, windows/openings, ceiling, and proportions all clearly legible. The space is empty or very minimally furnished — bare floors, walls, ceiling, and openings fully visible, with at most a few plain built-in elements — so each restyle can furnish it freely. An empty, quiet, photographic frame of pure architecture.`,
   ].join("\n");
 }
 

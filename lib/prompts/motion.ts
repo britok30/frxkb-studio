@@ -4,8 +4,9 @@ import type { PromptableConcept } from "./types";
 
 export const MotionPromptSchema = z.object({
   order: z.number().int().min(1),
-  /** Short directive for seedance describing camera + subject motion. */
-  motion: z.string().min(20).max(280),
+  /** Short directive for seedance describing camera + subject motion.
+   *  Cap is 360 chars — a valid 50-word sentence regularly runs past 280. */
+  motion: z.string().min(20).max(360),
 });
 export type MotionPrompt = z.infer<typeof MotionPromptSchema>;
 
@@ -28,12 +29,17 @@ Seedance 2.0 has no negative_prompt field — every word in the prompt becomes a
 **Camera move vocabulary — pick exactly ONE per clip from this allowlist:**
 - slow dolly in
 - slow dolly out
+- slow push-in through an opening (a doorway, archway, or window — the reveal move; use on threshold shots)
+- slow orbit left / slow orbit right (a gentle arc around the subject — best on exteriors and object-centered detail shots)
+- gentle rack focus (focus glides from a foreground detail to the room beyond — use when the still has clear foreground/background layers)
 - gentle pan left
 - gentle pan right
 - slow tilt up
 - slow tilt down
 - locked-off static (the camera holds; only environmental motion happens)
 - subtle handheld (very gentle — almost imperceptible drift)
+
+Match the move to the shot: orbits flatter exteriors and single-subject details, push-through-reveals belong on thresholds, rack focus needs layered depth, dollies and statics work anywhere.
 
 Use rhythmic adjectives only — slow, gentle, subtle, gradual, smooth. No technical specs (no fps, no f-stops, no shutter values).
 
@@ -81,7 +87,7 @@ const MOTION_TOOL_SCHEMA = {
         type: "object",
         properties: {
           order: { type: "integer", minimum: 1 },
-          motion: { type: "string", minLength: 20, maxLength: 280 },
+          motion: { type: "string", minLength: 20, maxLength: 360 },
         },
         required: ["order", "motion"],
         additionalProperties: false,

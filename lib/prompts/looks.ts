@@ -69,7 +69,7 @@ export const LOOKS: Look[] = [
     tagline: "Shadowless wrap light, true color",
     worlds: ["interior", "exterior"],
     prompt:
-      "Soft overcast daylight floods the space like a giant softbox — gentle, shadowless, wrapping light that renders every material's true saturated color. Ambient daylight only, every lamp off. High dynamic range, crisp neutral grade, editorial interiors-magazine photography.",
+      "Soft overcast daylight floods the space like a giant softbox — gentle, shadowless, wrapping light that renders every material's true saturated color, the space lit entirely by ambient daylight from the sky. High dynamic range, crisp neutral grade, editorial interiors-magazine photography.",
     swatch: "linear-gradient(135deg, #dfe4e8 0%, #b9c2c9 55%, #8b969e 100%)",
   },
   {
@@ -114,7 +114,7 @@ export const LOOKS: Look[] = [
     tagline: "Soft GI, pristine archviz light",
     worlds: ["interior"],
     prompt:
-      "Pristine archviz render in the Corona style: soft natural global illumination pouring through the openings, immaculate physically-based materials, bright Scandinavian daylight, clean white balance, flawless denoised 8k clarity.",
+      "Bright Scandinavian daylight pouring through the openings and bouncing softly off every white surface, evenly filling the room with clean natural light; true material color, neutral white balance, crisp micro-contrast with natural shadow falloff. Clean digital medium-format capture, immaculate architectural photography.",
     swatch: "linear-gradient(135deg, #f7f8f7 0%, #dde4e6 55%, #b9c6ca 100%)",
   },
   {
@@ -123,7 +123,7 @@ export const LOOKS: Look[] = [
     tagline: "Accurate bounce, dramatic sun patch",
     worlds: ["interior", "exterior"],
     prompt:
-      "High-end V-Ray archviz showcase: physically accurate light bounce, a dramatic patch of direct sunlight thrown across the floor, glossy accurate reflections, rich contrast, competition-grade rendering polish.",
+      "A dramatic patch of direct sunlight thrown across the floor, warm bounce light filling the shadows with believable falloff, glossy true-to-life reflections in glass and polished stone, rich confident contrast. Polished medium-format architectural photography with deep focus.",
     swatch: "linear-gradient(135deg, #f3e9d2 0%, #d9b98a 55%, #6f7d8c 100%)",
   },
   {
@@ -196,12 +196,13 @@ export function looksForWorld(worldType: WorldType): Look[] {
 /**
  * Deterministically append a look's photographic block to an image prompt
  * bound for fal. Same philosophy as ARCHITECTURE_LOCK: taste-critical
- * direction is never left to per-scene GPT-5.5 wording. The closing sentence
- * resolves conflicts in the look's favor so a scene prompt that named its own
- * time of day (written before the look, or by a legacy project) still lands
- * on the committed light.
+ * direction is never left to per-scene GPT-5.5 wording. The block is pure
+ * affirmative photographic language — nano-banana renders tokens, it doesn't
+ * adjudicate, so conflict-resolution prose ("this look wins") would only
+ * inject the conflicting tokens it names. Late position in the prompt is the
+ * mechanism that lets the look dominate a scene prompt's own lighting words.
  */
 export function applyLookToPrompt(prompt: string, look: Look | null): string {
   if (!look) return prompt;
-  return `${prompt}\n\nCommitted photographic look — ${look.name}: ${look.prompt} Commit fully to this lighting, camera, and grade; where anything above names a different time of day, light source, or mood, this look wins.`;
+  return `${prompt}\n\nPhotographic treatment: ${look.prompt}`;
 }
