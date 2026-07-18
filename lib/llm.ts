@@ -3,8 +3,11 @@ import { currentOperator } from "@/lib/operators";
 
 // GPT-5.5 — OpenAI's flagship as of 2026-04. 1M context, image input,
 // function calling, automatic prompt caching. Pricing: $5/MTok in, $30/MTok out.
-// https://developers.openai.com/api/docs/models/gpt-5.5
-export const LLM_MODEL = "gpt-5.5";
+// GPT-5.6 Sol — the flagship of the 5.6 family (GA 2026-07-09), same
+// $5/$30 per MTok as gpt-5.5 so the upgrade is a straight quality win.
+// Supports vision, tool calling, structured outputs, reasoning effort on
+// the Responses API. https://developers.openai.com/api/docs/models/gpt-5.6-sol
+export const LLM_MODEL = "gpt-5.6-sol";
 
 // We use the Responses API (not Chat Completions): GPT-5.5 rejects function
 // tools + reasoning_effort together on /v1/chat/completions and points to

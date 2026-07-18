@@ -5,8 +5,8 @@ import {
   FAL_NANO_BANANA_EDIT_PER_IMAGE,
   FAL_SEEDANCE_PER_SECOND,
   FAL_TOPAZ_PER_SECOND_GT_1080P,
-  GPT_5_5_INPUT_PER_MTOK,
-  GPT_5_5_OUTPUT_PER_MTOK,
+  LLM_INPUT_PER_MTOK,
+  LLM_OUTPUT_PER_MTOK,
   estimateConceptGen,
   estimateSceneGen,
   estimateMetadataGen,
@@ -28,9 +28,9 @@ describe("vendor price constants", () => {
     expect(FAL_NANO_BANANA_PER_IMAGE).toBe(0.225);
   });
 
-  it("GPT-5.5: $5/MTok in, $30/MTok out", () => {
-    expect(GPT_5_5_INPUT_PER_MTOK).toBe(5);
-    expect(GPT_5_5_OUTPUT_PER_MTOK).toBe(30);
+  it("LLM (GPT-5.6 Sol): $5/MTok in, $30/MTok out", () => {
+    expect(LLM_INPUT_PER_MTOK).toBe(5);
+    expect(LLM_OUTPUT_PER_MTOK).toBe(30);
   });
 });
 

@@ -43,7 +43,7 @@ function toolResponse(obj: unknown, name = "submit") {
 }
 
 describe("generateText", () => {
-  it("returns output_text and targets gpt-5.5 via the Responses API", async () => {
+  it("returns output_text and targets the configured LLM via the Responses API", async () => {
     createMock.mockResolvedValue(textResponse("hello world"));
     const out = await withOperator(britok, () =>
       generateText({ system: "sys", user: "usr" })

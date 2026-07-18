@@ -49,10 +49,11 @@ export const FAL_TOPAZ_FPS_INTERPOLATION_MULTIPLIER = 2;
  *  output. Rounding error next to seedance; surfaced for completeness. */
 export const FAL_COMPOSE_PER_SECOND = 0.0002;
 
-/** OpenAI GPT-5.5 — $5/MTok input, $30/MTok output. (Reasoning tokens bill as
+/** OpenAI GPT-5.6 Sol (lib/llm.ts LLM_MODEL) — $5/MTok input, $30/MTok
+ *  output, same rates as the gpt-5.5 it replaced. (Reasoning tokens bill as
  *  output; we run reasoning_effort=low so the per-call output stays modest.) */
-export const GPT_5_5_INPUT_PER_MTOK = 5;
-export const GPT_5_5_OUTPUT_PER_MTOK = 30;
+export const LLM_INPUT_PER_MTOK = 5;
+export const LLM_OUTPUT_PER_MTOK = 30;
 
 /** OpenAI auto-caches stable prompt prefixes (our long system prompts) with no
  *  cache_control needed; cached input tokens bill at a steep discount. Averaged
@@ -86,9 +87,9 @@ const LLM_OUTPUT_TOKENS = {
 function llmCost(inputTokens: number, outputTokens: number): number {
   const inputCost =
     (inputTokens / 1_000_000) *
-    GPT_5_5_INPUT_PER_MTOK *
+    LLM_INPUT_PER_MTOK *
     LLM_CACHE_INPUT_DISCOUNT_FACTOR;
-  const outputCost = (outputTokens / 1_000_000) * GPT_5_5_OUTPUT_PER_MTOK;
+  const outputCost = (outputTokens / 1_000_000) * LLM_OUTPUT_PER_MTOK;
   return inputCost + outputCost;
 }
 
