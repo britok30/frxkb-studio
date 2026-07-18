@@ -147,3 +147,42 @@ it("trims excess motions and aligns each to its input scene's order", async () =
     ).rejects.toThrow();
   });
 });
+
+describe("camera-move presets", () => {
+  it("catalog ids are unique and every directive uses allowlisted, affirmative language", async () => {
+    const { CAMERA_MOVES, getCameraMove } = await import("./motion");
+    const ids = CAMERA_MOVES.map((m) => m.id);
+    expect(new Set(ids).size).toBe(ids.length);
+    for (const m of CAMERA_MOVES) {
+      expect(m.directive.length).toBeGreaterThan(5);
+      expect(m.directive).not.toMatch(/\bno \b|\bnot\b|\bnever\b/i);
+    }
+    expect(getCameraMove("orbit-left")?.name).toBe("Orbit left");
+    expect(getCameraMove("nope")).toBeNull();
+    expect(getCameraMove(null)).toBeNull();
+  });
+
+  it("buildMotionUser marks locked scenes with the exact directive and states the lock rule", async () => {
+    const { buildMotionUser, getCameraMove } = await import("./motion");
+    const out = buildMotionUser({
+      concept: { workingTitle: "T", hook: "h", vibe: "v", notes: "", objectSet: [] },
+      scenes: [
+        { order: 1, prompt: "Scene one prompt", motionPreset: "orbit-left" },
+        { order: 2, prompt: "Scene two prompt" },
+      ],
+    });
+    expect(out).toContain(`[CAMERA LOCKED: "${getCameraMove("orbit-left")!.directive}"]`);
+    expect(out).toMatch(/lead the motion prompt with that exact directive verbatim/i);
+    expect(out).toContain("2. Scene two prompt");
+    expect(out).not.toContain("2. [CAMERA LOCKED");
+  });
+
+  it("buildMotionUser omits the lock rule when nothing is locked", async () => {
+    const { buildMotionUser } = await import("./motion");
+    const out = buildMotionUser({
+      concept: { workingTitle: "T", hook: "h", vibe: "v", notes: "", objectSet: [] },
+      scenes: [{ order: 1, prompt: "Scene one prompt" }],
+    });
+    expect(out).not.toMatch(/LOCKED/);
+  });
+});

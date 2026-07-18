@@ -11,6 +11,7 @@ import { Badge } from "@/components/ui/badge";
 import { Textarea } from "@/components/ui/textarea";
 import { ease, staggerDelay } from "@/lib/motion";
 import { looksForWorld } from "@/lib/prompts/looks";
+import { CAMERA_MOVES } from "@/lib/prompts/camera-moves";
 
 type SceneStatus = "pending" | "generating" | "generated" | "approved" | "rejected";
 
@@ -36,7 +37,11 @@ export type SceneCardProps = {
      *  recreates in CapCut. */
     styleName?: string | null;
     styleSubtitle?: string | null;
+    /** Operator-locked camera move (CAMERA_MOVES id) for the animate pass. */
+    motionPreset?: string | null;
   };
+  /** Project format — reels get the camera-move picker. */
+  format?: string;
   /** True once Animate has been kicked off on the project — clicking Animate
    *  is an implicit approval of all stills, so Approve/Reject hide from that
    *  point on. Regenerate stays available: a targeted fix invalidates just
@@ -76,6 +81,7 @@ export async function sceneActionRequest(
 export function SceneCard({
   projectId,
   scene,
+  format,
   hideActions = false,
   worldType,
   focused = false,
@@ -107,6 +113,25 @@ export function SceneCard({
       toast.error(`Scene ${scene.order} action failed`, { id: toastId, description: message });
     } finally {
       setBusy(null);
+    }
+  }
+
+  /** Lock (or clear) the camera move for this scene's animate pass. */
+  async function setMotion(motionPreset: string | null) {
+    try {
+      const res = await fetch(`/api/projects/${projectId}/scenes/${scene.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "set-motion", motionPreset }),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.error ?? `HTTP ${res.status}`);
+      }
+      startTransition(() => router.refresh());
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Unknown error";
+      toast.error("Couldn't set camera move", { description: message });
     }
   }
 
@@ -251,6 +276,26 @@ export function SceneCard({
           </div>
           {scene.styleSubtitle && (
             <p className="text-xs text-muted-foreground tracking-tight">{scene.styleSubtitle}</p>
+          )}
+          {/* Camera-move lock (reels, pre-animate): the Higgsfield pattern —
+              pick the move by name instead of trusting GPT's roulette. */}
+          {format === "reel" && !hideActions && (
+            <label className="flex items-center gap-2 pt-1 text-[11px] text-muted-foreground tracking-tight">
+              Camera
+              <select
+                value={scene.motionPreset ?? ""}
+                disabled={!!busy || isGenerating}
+                onChange={(e) => void setMotion(e.target.value || null)}
+                className="h-7 flex-1 rounded-md border bg-transparent px-1.5 text-[11px] text-foreground focus:border-foreground outline-none disabled:opacity-50"
+              >
+                <option value="">Auto (GPT picks)</option>
+                {CAMERA_MOVES.map((m) => (
+                  <option key={m.id} value={m.id} title={m.hint}>
+                    {m.name}
+                  </option>
+                ))}
+              </select>
+            </label>
           )}
         </CardHeader>
         <CardContent className="text-xs text-muted-foreground line-clamp-4 leading-relaxed pt-0">

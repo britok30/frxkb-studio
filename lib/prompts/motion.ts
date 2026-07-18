@@ -15,10 +15,17 @@ export const MotionPromptsResponseSchema = z.object({
 });
 export type MotionPromptsResponse = z.infer<typeof MotionPromptsResponseSchema>;
 
+// Camera-move preset catalog lives in ./camera-moves (client-safe — the
+// scene-card picker imports it directly; this module pulls in lib/llm which
+// can't ship to the browser). Re-exported here for server-side callers.
+export { CAMERA_MOVES, getCameraMove, type CameraMove } from "./camera-moves";
+import { getCameraMove } from "./camera-moves";
+
 export type MotionPromptsInput = {
   concept: PromptableConcept;
-  /** The same scene array that was used to generate stills. */
-  scenes: { order: number; prompt: string }[];
+  /** The same scene array that was used to generate stills. motionPreset,
+   *  when present, is a CAMERA_MOVES id the operator locked for that scene. */
+  scenes: { order: number; prompt: string; motionPreset?: string | null }[];
 };
 
 export function buildMotionSystem(): string {
@@ -64,13 +71,25 @@ Return one motion description per scene, in scene order, numbered to match.`;
 
 export function buildMotionUser(input: MotionPromptsInput): string {
   const { concept, scenes } = input;
+  const anyLocked = scenes.some((s) => getCameraMove(s.motionPreset));
   return [
     `Concept: ${concept.workingTitle}`,
     `Vibe: ${concept.vibe}`,
     "",
     `Scenes (${scenes.length}). For each, write the motion direction that animates the still it describes.`,
+    ...(anyLocked
+      ? [
+          "",
+          "Some scenes carry an operator-LOCKED camera move, marked below. For those scenes, lead the motion prompt with that exact directive verbatim — your only creative territory is the subject/environmental motion after it. The no-consecutive-repeats rule does not override a lock.",
+        ]
+      : []),
     "",
-    ...scenes.map((s) => `${s.order}. ${s.prompt}`),
+    ...scenes.map((s) => {
+      const locked = getCameraMove(s.motionPreset);
+      return locked
+        ? `${s.order}. [CAMERA LOCKED: "${locked.directive}"] ${s.prompt}`
+        : `${s.order}. ${s.prompt}`;
+    }),
     "",
     `Output one motion per scene, numbered 1 through ${scenes.length}, in the same order. Each motion must serve THAT specific image and feel different from neighbors so the reel doesn't read as one note.`,
   ].join("\n");

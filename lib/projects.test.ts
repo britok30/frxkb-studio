@@ -20,6 +20,7 @@ const dbMocks = vi.hoisted(() => ({
   heartbeatGenerationLock: vi.fn(),
   insertSceneVersion: vi.fn(),
   setProjectSceneReferences: vi.fn(),
+  setSceneMotionPreset: vi.fn(),
   markProjectFinalVideo: vi.fn(),
 }));
 
@@ -87,6 +88,15 @@ const composeMocks = vi.hoisted(() => ({
   composeVideo: vi.fn(),
 }));
 vi.mock("@/lib/compose", () => ({ composeVideo: composeMocks.composeVideo }));
+
+const spendMocks = vi.hoisted(() => ({
+  recordSpend: vi.fn(),
+  assertWithinDailyBudget: vi.fn(),
+}));
+vi.mock("@/lib/spend", () => ({
+  recordSpend: spendMocks.recordSpend,
+  assertWithinDailyBudget: spendMocks.assertWithinDailyBudget,
+}));
 
 import {
   applySceneAction,
@@ -162,6 +172,8 @@ beforeEach(() => {
     thumbnailUrl: null,
     requestId: "req_compose",
   });
+  spendMocks.recordSpend.mockReset().mockResolvedValue(undefined);
+  spendMocks.assertWithinDailyBudget.mockReset().mockResolvedValue(undefined);
 });
 
 describe("createProject", () => {
@@ -1607,5 +1619,120 @@ describe("stitchFinalVideo — long-form looping + music tiling", () => {
     threeStills();
     await stitchFinalVideo("p_1", { perStillSec: 7 });
     expect(composeMocks.composeVideo.mock.calls[0][0][0].keyframes).toHaveLength(3);
+  });
+});
+
+describe("spend ledger + budget gate", () => {
+  beforeEach(() => {
+    dbMocks.selectProjectById.mockResolvedValue({ id: "p_1", format: "reel", worldType: "interior", status: "scripting", quality: "standard" });
+    dbMocks.selectScenesByProject.mockResolvedValue([
+      fakeScene({ id: "s_1", order: 1 }),
+      fakeScene({ id: "s_2", order: 2 }),
+    ]);
+    falMocks.generateImage.mockResolvedValue({ images: [{ url: "https://fal.media/x.jpg" }], requestId: "r" });
+    falMocks.editImage.mockResolvedValue({ images: [{ url: "https://fal.media/e.jpg" }], requestId: "r2" });
+    storageMocks.storeFromUrl.mockResolvedValue({ url: "https://blob/x.jpg", pathname: "x" });
+  });
+
+  it("gates the image batch on the daily budget BEFORE any fal call, releasing the lock on rejection", async () => {
+    spendMocks.assertWithinDailyBudget.mockRejectedValue(new Error("Daily budget reached"));
+
+    await expect(generateAllImages("p_1")).rejects.toThrow(/Daily budget/);
+    expect(falMocks.generateImage).not.toHaveBeenCalled();
+    expect(falMocks.editImage).not.toHaveBeenCalled();
+    expect(dbMocks.updateProjectStatus).toHaveBeenCalledWith("p_1", "scripting");
+  });
+
+  it("records one ledger event per successful render, typed t2i vs edit", async () => {
+    await generateAllImages("p_1");
+
+    const kinds = spendMocks.recordSpend.mock.calls.map((c) => c[0].kind).sort();
+    expect(kinds).toEqual(["image", "image-edit"]); // anchor t2i + chained edit
+    for (const call of spendMocks.recordSpend.mock.calls) {
+      expect(call[0].projectId).toBe("p_1");
+      expect(call[0].amountUsd).toBeGreaterThan(0);
+    }
+  });
+});
+
+describe("moodboard references", () => {
+  it("createProject threads refs into the vision concept call and persists them", async () => {
+    claudeMocks.generateConcept.mockResolvedValue(concept);
+    claudeMocks.generateScenePrompts.mockResolvedValue({
+      scenes: [{ order: 1, prompt: "A".repeat(220), durationSec: 5 }],
+    });
+
+    await createProject({
+      niche: "wabi-sabi retreat",
+      format: "reel",
+      worldType: "interior",
+      referenceImageUrls: ["https://blob/ref1.jpg", "https://blob/ref2.jpg"],
+    });
+
+    expect(claudeMocks.generateConcept).toHaveBeenCalledWith(
+      expect.objectContaining({
+        referenceImageUrls: ["https://blob/ref1.jpg", "https://blob/ref2.jpg"],
+      })
+    );
+    expect(dbMocks.insertProject).toHaveBeenCalledWith(
+      expect.objectContaining({
+        referenceImageUrls: ["https://blob/ref1.jpg", "https://blob/ref2.jpg"],
+      })
+    );
+  });
+
+  it("generateAllImages conditions every render on the moodboard — anchor via /edit(refs), siblings via /edit(anchor + refs)", async () => {
+    dbMocks.selectProjectById.mockResolvedValue({
+      id: "p_1",
+      format: "reel",
+      worldType: "interior",
+      status: "scripting",
+      quality: "standard",
+      referenceImageUrls: ["https://blob/ref1.jpg", "https://blob/ref2.jpg"],
+    });
+    dbMocks.selectScenesByProject.mockResolvedValue([
+      fakeScene({ id: "s_1", order: 1 }),
+      fakeScene({ id: "s_2", order: 2 }),
+    ]);
+    falMocks.editImage.mockResolvedValue({ images: [{ url: "https://fal.media/e.jpg" }], requestId: "r" });
+    storageMocks.storeFromUrl.mockResolvedValue({ url: "https://blob/stored.jpg", pathname: "x" });
+
+    await generateAllImages("p_1");
+
+    // No text-to-image at all — the moodboard turns even the anchor into an edit.
+    expect(falMocks.generateImage).not.toHaveBeenCalled();
+    const [anchorCall, siblingCall] = falMocks.editImage.mock.calls;
+    expect(anchorCall[0].imageUrls).toEqual(["https://blob/ref1.jpg", "https://blob/ref2.jpg"]);
+    expect(anchorCall[0].prompt).toMatch(/moodboard/i);
+    // Sibling: anchor leads (world lock), moodboard follows.
+    expect(siblingCall[0].imageUrls).toEqual([
+      "https://blob/stored.jpg",
+      "https://blob/ref1.jpg",
+      "https://blob/ref2.jpg",
+    ]);
+    expect(siblingCall[0].prompt).toMatch(/first attached image is the anchor/i);
+  });
+});
+
+describe("applySceneAction set-motion", () => {
+  beforeEach(() => {
+    dbMocks.selectSceneById.mockResolvedValue(fakeScene({ id: "s_1" }));
+  });
+
+  it("locks a valid camera move on the scene", async () => {
+    await applySceneAction("p_1", "s_1", "set-motion", { motionPreset: "orbit-left" });
+    expect(dbMocks.setSceneMotionPreset).toHaveBeenCalledWith("s_1", "orbit-left");
+  });
+
+  it("clears the lock with null", async () => {
+    await applySceneAction("p_1", "s_1", "set-motion", { motionPreset: null });
+    expect(dbMocks.setSceneMotionPreset).toHaveBeenCalledWith("s_1", null);
+  });
+
+  it("rejects unknown camera moves", async () => {
+    await expect(
+      applySceneAction("p_1", "s_1", "set-motion", { motionPreset: "warp-drive" })
+    ).rejects.toThrow(/Unknown camera move/);
+    expect(dbMocks.setSceneMotionPreset).not.toHaveBeenCalled();
   });
 });

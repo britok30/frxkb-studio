@@ -20,9 +20,23 @@ import { editImage, generateImage, type Resolution } from "@/lib/fal";
 import { composeVideo, type ComposeKeyframe, type ComposeTrack } from "@/lib/compose";
 import { generateVideo } from "@/lib/seedance";
 import { upscaleVideo } from "@/lib/topaz";
-import { generateMotionPrompts } from "@/lib/prompts/motion";
+import { generateMotionPrompts, getCameraMove } from "@/lib/prompts/motion";
 import { storeFromUrl } from "@/lib/storage";
 import { runWithConcurrency } from "@/lib/concurrency";
+import { assertWithinDailyBudget, recordSpend } from "@/lib/spend";
+import {
+  estimateAnimateBatch,
+  estimateConceptGen,
+  estimateImageBatch,
+  estimateMetadataGen,
+  estimateSceneGen,
+  estimateTopazUpscale,
+  FAL_COMPOSE_PER_SECOND,
+  FAL_NANO_BANANA_EDIT_PER_IMAGE,
+  FAL_NANO_BANANA_PER_IMAGE,
+  FAL_NANO_BANANA_PER_IMAGE_4K,
+  FAL_SEEDANCE_PER_SECOND,
+} from "@/lib/pricing";
 import { currentOperator, pickAppLink } from "@/lib/operators";
 import { findSimilarProjects, type DuplicateMatch } from "@/lib/world-dedupe";
 import {
@@ -52,6 +66,7 @@ import {
   selectSceneById,
   selectScenesByProject,
   setProjectSceneReferences,
+  setSceneMotionPreset,
   tryAcquireFinalizationLock,
   tryAcquireGenerationLock,
   updateProjectStatus,
@@ -73,6 +88,11 @@ export type CreateProjectInput = {
   /** Render-quality tier. standard (default) = 2K stills + native 1080p
    *  video. hero = 4K stills + Topaz 4K60 video pass. */
   quality?: "standard" | "hero";
+  /** Moodboard / photo references (public Blob URLs, ≤5). When present:
+   *  GPT-5.5 sees them while writing the brief, and every scene renders via
+   *  /edit conditioned on them so materials, palette, and mood match the
+   *  refs while the prompt supplies the room. */
+  referenceImageUrls?: string[];
 };
 
 export type ProjectWithScenes = { project: Project; scenes: Scene[] };
@@ -131,6 +151,10 @@ export async function createProject(input: CreateProjectInput): Promise<CreatePr
   const targetDurationSec = sceneCount * sceneDurationSec;
 
   const projectId = nanoid(12);
+  // Cap refs at nano-banana's practical conditioning sweet spot. 14 is the
+  // hard API limit but each chained scene also passes the anchor, and past
+  // ~5 refs the per-ref influence dilutes anyway.
+  const referenceImageUrls = (input.referenceImageUrls ?? []).slice(0, 5);
 
   // Run BOTH GPT-5.5 calls before any DB writes. If either fails we leave no
   // orphan project row to clean up.
@@ -140,6 +164,7 @@ export async function createProject(input: CreateProjectInput): Promise<CreatePr
     worldType: input.worldType,
     targetDurationSec: targetDurationSec || undefined,
     operatorNotes: input.operatorNotes,
+    referenceImageUrls: referenceImageUrls.length > 0 ? referenceImageUrls : undefined,
   });
 
   // Soft-fail dedupe: if it errors for any reason, skip and create the project
@@ -174,6 +199,7 @@ export async function createProject(input: CreateProjectInput): Promise<CreatePr
     status: "scripting",
     lookId: look?.id ?? null,
     quality: input.quality ?? "standard",
+    referenceImageUrls: referenceImageUrls.length > 0 ? referenceImageUrls : null,
     targetDurationSec: targetDurationSec || null,
     concept: {
       workingTitle: concept.workingTitle,
@@ -196,6 +222,15 @@ export async function createProject(input: CreateProjectInput): Promise<CreatePr
   }));
 
   const insertedScenes = await insertScenes(sceneRows);
+
+  // LLM spend for scripting (concept + scene prompts) — estimate-based, the
+  // closest bookkeeping we have for token billing.
+  await recordSpend({
+    projectId,
+    kind: "llm",
+    amountUsd: estimateConceptGen() + estimateSceneGen(sceneCount),
+    meta: { stage: "scripting", sceneCount },
+  });
 
   return { project, scenes: insertedScenes, similarProjects };
 }
@@ -503,6 +538,10 @@ export async function generateAllImages(
       opts.force ? true : s.status === "pending" || s.status === "rejected"
     );
 
+    // Budget gate BEFORE any fal spend — a 120-scene batch at hero quality
+    // is real money, and the lock alone only prevents duplicates, not size.
+    await assertWithinDailyBudget(estimateImageBatch(targets.length, project.quality));
+
     let generated = 0;
     let failed = 0;
     const skipped = allScenes.length - targets.length;
@@ -511,15 +550,29 @@ export async function generateAllImages(
     // project has none — style-explorer and before-after never set one).
     const look = getLook(project.lookId);
     const resolution: Resolution = project.quality === "hero" ? "4K" : "2K";
+    // Operator moodboard/photo refs (reel/carousel). Every render is
+    // conditioned on them; the deterministic suffix tells nano the refs are
+    // material/palette/mood guidance while the prompt supplies the room.
+    const moodboardRefs = project.referenceImageUrls ?? [];
 
     const renderScene = async (scene: Scene, referenceUrl: string | null) => {
       await markSceneGenerating(scene.id);
-      const promptForFal = applyLookToPrompt(lockedScenePrompt(project, scene), look);
+      // Ref order matters — nano weights earlier images more, so the anchor
+      // (world lock) leads and the moodboard follows.
+      const conditioningUrls = [
+        ...(referenceUrl ? [referenceUrl] : []),
+        ...moodboardRefs,
+      ].slice(0, 14);
+      const promptForFal = applyMoodboardGuidance(
+        applyLookToPrompt(lockedScenePrompt(project, scene), look),
+        moodboardRefs.length,
+        !!referenceUrl
+      );
       const seed = freshSeed();
-      const result = referenceUrl
+      const result = conditioningUrls.length > 0
         ? await editImage({
             prompt: promptForFal,
-            imageUrls: [referenceUrl],
+            imageUrls: conditioningUrls,
             aspectRatio,
             resolution,
             seed,
@@ -560,6 +613,12 @@ export async function generateAllImages(
         invalidateAnimation: !!scene.imageUrl,
         // referenceImageUrl for chained scenes is frozen separately via
         // setProjectSceneReferences; omitted here means "preserve".
+      });
+      await recordSpend({
+        projectId,
+        kind: conditioningUrls.length > 0 ? "image-edit" : "image",
+        amountUsd: imageSpendUsd(conditioningUrls.length > 0, project.quality),
+        meta: { sceneOrder: scene.order, resolution, refs: conditioningUrls.length },
       });
       return stored.url;
     };
@@ -640,7 +699,7 @@ export async function generateAllImages(
   }
 }
 
-export type SceneAction = "approve" | "reject" | "regenerate";
+export type SceneAction = "approve" | "reject" | "regenerate" | "set-motion";
 
 /** Optional per-call design direction layered on top of the stored prompt for
  *  a single regeneration. Only meaningful when action === "regenerate".
@@ -651,6 +710,9 @@ export type SceneActionOptions = {
    *  committed look (or adds one where the project has none) for this call
    *  only. The stored prompt and the project's lookId are never mutated. */
   lookId?: LookId;
+  /** set-motion only: a CAMERA_MOVES id to lock for this scene, or null to
+   *  clear the lock (GPT picks again). */
+  motionPreset?: string | null;
 };
 
 export async function applySceneAction(
@@ -675,6 +737,14 @@ export async function applySceneAction(
     case "regenerate":
       await regenerateScene(projectId, scene, options);
       break;
+    case "set-motion": {
+      const preset = options.motionPreset ?? null;
+      if (preset && !getCameraMove(preset)) {
+        throw new Error(`Unknown camera move "${preset}".`);
+      }
+      await setSceneMotionPreset(sceneId, preset);
+      break;
+    }
   }
 
   const refreshed = await selectSceneById(sceneId);
@@ -701,6 +771,26 @@ function lockedScenePrompt(project: Project, scene: Scene): string {
   return scene.prompt;
 }
 
+/**
+ * Deterministic guidance appended when a render is conditioned on operator
+ * moodboard refs — nano needs to be told the refs are a STYLE guide, not the
+ * room to reproduce, or it drifts toward copying a reference's layout.
+ * When an anchor image also rides along (chained scenes), it's named first
+ * so the world lock and the moodboard don't fight.
+ */
+function applyMoodboardGuidance(
+  prompt: string,
+  moodboardCount: number,
+  hasAnchor: boolean
+): string {
+  if (moodboardCount === 0) return prompt;
+  const refsNoun = moodboardCount === 1 ? "reference image" : "reference images";
+  if (hasAnchor) {
+    return `${prompt}\n\nThe first attached image is the anchor — the same home this scene lives in; keep its architecture, materials, and palette. The remaining ${refsNoun} are the operator's moodboard: draw material finishes, color story, and mood from them. The room and composition come from the text above.`;
+  }
+  return `${prompt}\n\nThe attached ${refsNoun} are the operator's moodboard: draw the material palette, color story, textures, and mood from them. The room, layout, and composition come from the text above — build that room in this moodboard's world.`;
+}
+
 /** Layer the operator's design direction on top of the stored scene prompt
  *  for ONE fal call. The stored prompt is never mutated — each regen can
  *  carry a fresh direction. Empty / whitespace-only directions are ignored
@@ -724,28 +814,37 @@ async function regenerateScene(
   // generate at 1:1 even if the upload was 16:9.
   const aspectRatio =
     project.aspectRatio ?? defaultsForFormat(project.format).aspectRatio;
-  // Layer order: stored prompt → look block → operator direction. The look
-  // override (one call only) beats the project's committed look; the
-  // operator's free-text direction comes last so it beats both.
+  // Layer order: stored prompt → look block → moodboard guidance → operator
+  // direction. The look override (one call only) beats the project's
+  // committed look; the operator's free-text direction comes last so it
+  // beats everything.
   const look = getLook(options.lookId ?? project.lookId);
+  const moodboardRefs = project.referenceImageUrls ?? [];
   const promptForFal = augmentPromptWithDirection(
-    applyLookToPrompt(lockedScenePrompt(project, scene), look),
+    applyMoodboardGuidance(
+      applyLookToPrompt(lockedScenePrompt(project, scene), look),
+      moodboardRefs.length,
+      !!scene.referenceImageUrl
+    ),
     options.designDirection
   );
 
   await markSceneGenerating(scene.id);
   try {
-    // Scenes without a stored reference regenerate via text-to-image (the
-    // anchor scene). Scenes WITH a reference re-use that frozen reference
-    // through /edit — the anchor for chained reel/carousel scenes, the
-    // operator's upload for before-after, the base for style-explorer.
+    // Conditioning order mirrors generateAllImages: the frozen reference
+    // (anchor / upload / base) leads, the moodboard refs follow. A scene
+    // with neither regenerates via text-to-image.
     const resolution: Resolution = project.quality === "hero" ? "4K" : "2K";
     const seed = freshSeed();
-    const useReference = scene.referenceImageUrl;
+    const conditioningUrls = [
+      ...(scene.referenceImageUrl ? [scene.referenceImageUrl] : []),
+      ...moodboardRefs,
+    ].slice(0, 14);
+    const useReference = conditioningUrls.length > 0;
     const result = useReference
       ? await editImage({
           prompt: promptForFal,
-          imageUrls: [useReference],
+          imageUrls: conditioningUrls,
           aspectRatio,
           resolution,
           seed,
@@ -791,6 +890,12 @@ async function regenerateScene(
       // old image) shouldn't ship in the bundle.
       invalidateAnimation: true,
       // Preserve the existing referenceImageUrl — omitted means no change.
+    });
+    await recordSpend({
+      projectId,
+      kind: useReference ? "image-edit" : "image",
+      amountUsd: imageSpendUsd(!!useReference, project.quality),
+      meta: { sceneOrder: scene.order, regen: true },
     });
   } catch (err) {
     const msg = err instanceof Error ? err.message : "unknown error";
@@ -939,6 +1044,16 @@ export async function animateAllScenes(
       return { animated: 0, failed: 0, skipped };
     }
 
+    // Budget gate BEFORE the motion GPT call and any seedance spend — the
+    // animate batch is the most expensive step in the studio.
+    await assertWithinDailyBudget(
+      estimateAnimateBatch(
+        targets.length,
+        targets[0]?.durationSec || 5,
+        project.quality === "hero" ? "hero" : "standard"
+      )
+    );
+
     // Before-after renders a true first→last morph (before frame → after
     // frame via seedance's end_image_url), so the motion direction is a
     // fixed transformation prompt — no GPT call needed. Every other format
@@ -953,7 +1068,11 @@ export async function animateAllScenes(
           (
             await generateMotionPrompts({
               concept: { ...project.concept, objectSet: project.concept.objectSet ?? [] },
-              scenes: targets.map((s) => ({ order: s.order, prompt: s.prompt })),
+              scenes: targets.map((s) => ({
+                order: s.order,
+                prompt: s.prompt,
+                motionPreset: s.motionPreset,
+              })),
             })
           ).motions.map((m) => [m.order, m.motion])
         );
@@ -1009,6 +1128,23 @@ export async function animateAllScenes(
       });
 
       await markSceneAnimated(scene.id, { videoUrl: stored.url });
+      // Ledger: seedance bills the clamped 4-15s duration at 1080p; hero
+      // quality adds the Topaz 4K60 pass on top.
+      const billedSec = Math.min(15, Math.max(4, scene.durationSec || 5));
+      await recordSpend({
+        projectId,
+        kind: "video",
+        amountUsd: billedSec * FAL_SEEDANCE_PER_SECOND["1080p"],
+        meta: { sceneOrder: scene.order, durationSec: billedSec },
+      });
+      if (project.quality === "hero") {
+        await recordSpend({
+          projectId,
+          kind: "upscale",
+          amountUsd: estimateTopazUpscale(billedSec, "gt-1080p"),
+          meta: { sceneOrder: scene.order },
+        });
+      }
     };
 
     await runWithConcurrency(targets, concurrency, async (scene) => {
@@ -1197,6 +1333,12 @@ export async function stitchFinalVideo(
   }
 
   const composed = await composeVideo(tracks);
+  await recordSpend({
+    projectId,
+    kind: "compose",
+    amountUsd: (t / 1000) * FAL_COMPOSE_PER_SECOND,
+    meta: { format: project.format, outputSec: Math.round(t / 1000) },
+  });
 
   // Re-host on our own Blob so the deliverable URL is stable + downloadable.
   const stored = await storeFromUrl({
@@ -1350,6 +1492,12 @@ export async function finalizeProject(projectId: string): Promise<FinalizeResult
     // before-after). See listProjectsWithCovers + buildExportData. Saves the
     // fal call entirely + removes a class of "wrong thumbnail" bugs.
     await markProjectFinalized(projectId, { metadata });
+    await recordSpend({
+      projectId,
+      kind: "llm",
+      amountUsd: estimateMetadataGen(),
+      meta: { stage: "finalize" },
+    });
 
     return { metadata };
   } catch (err) {
@@ -1485,4 +1633,10 @@ function capitalize(s: string): string {
  */
 function freshSeed(): number {
   return Math.floor(Math.random() * 2_147_483_647);
+}
+
+/** What one nano-banana still actually costs at the project's quality tier. */
+function imageSpendUsd(isEdit: boolean, quality: string | null | undefined): number {
+  if (quality === "hero") return FAL_NANO_BANANA_PER_IMAGE_4K;
+  return isEdit ? FAL_NANO_BANANA_EDIT_PER_IMAGE : FAL_NANO_BANANA_PER_IMAGE;
 }

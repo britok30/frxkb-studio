@@ -21,6 +21,10 @@ const CreateBody = z.object({
   /** Render-quality tier: standard (2K stills, 1080p video) or hero
    *  (4K stills, Topaz 4K60 video). */
   quality: z.enum(["standard", "hero"]).optional(),
+  /** Moodboard / photo references (Blob URLs from /api/upload, ≤5). Steer
+   *  materials/palette/mood for every render; also shown to GPT-5.5 while
+   *  it writes the brief. */
+  referenceImageUrls: z.array(z.string().url()).max(5).optional(),
 });
 
 export async function GET() {

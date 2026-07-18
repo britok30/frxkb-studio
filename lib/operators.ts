@@ -38,6 +38,11 @@ export type Operator = {
    *  Instagram handle (no @) and marketing site. Public, not secrets, so
    *  hardcoded like `handle`. */
   socials: { instagram: string; website: string };
+  /** Hard daily spend cap in USD, enforced by assertWithinDailyBudget before
+   *  every batch (generate / animate / stitch). 0 or undefined disables the
+   *  gate. Raise deliberately, per operator — this is the backstop against a
+   *  runaway 120-scene animate. */
+  dailyBudgetUsd?: number;
 };
 
 /** Resolve an operator config from an allowlisted email. Returns null if the
@@ -70,6 +75,7 @@ export function getOperator(email: string | null | undefined): Operator | null {
       // ArchitectGPT spans homes and commercial buildings alike.
       propertyTypes: ["residential", "commercial"],
       socials: { instagram: "architectgpt", website: "https://www.architectgpt.io" },
+      dailyBudgetUsd: 50,
     };
   }
 
@@ -95,6 +101,7 @@ export function getOperator(email: string | null | undefined): Operator | null {
       // InteriorGPT covers both residential and commercial interiors.
       propertyTypes: ["residential", "commercial"],
       socials: { instagram: "interiordesigngpt", website: "https://www.aiinterior.design" },
+      dailyBudgetUsd: 50,
     };
   }
 

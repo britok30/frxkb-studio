@@ -395,6 +395,19 @@ export async function recoverAnimateFailedScenes(projectId: string): Promise<num
   return rows.length;
 }
 
+/** Lock (or clear) the operator-picked camera move for a scene. Cleared by
+ *  passing null. Also clears any stale motionPrompt so the next animate
+ *  writes a fresh direction that honors the lock. */
+export async function setSceneMotionPreset(
+  id: string,
+  motionPreset: string | null
+): Promise<void> {
+  await getDb()
+    .update(scenes)
+    .set({ motionPreset, motionPrompt: null, updatedAt: new Date() })
+    .where(eq(scenes.id, id));
+}
+
 /** Mark a scene's video pipeline as in flight. Status stays "approved"/"generated"
  *  — videoUrl being null vs set is the source of truth for "is animated yet." */
 export async function markSceneAnimating(id: string, motionPrompt: string): Promise<void> {

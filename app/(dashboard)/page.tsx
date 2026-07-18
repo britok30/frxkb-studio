@@ -1,5 +1,9 @@
 import Link from "next/link";
+import { auth } from "@/auth";
+import { getOperator } from "@/lib/operators";
 import { listProjectsForDashboard } from "@/lib/projects";
+import { sumSpendSince, sumSpendToday } from "@/lib/spend";
+import { formatCost } from "@/lib/pricing";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import type { Project } from "@/lib/db";
 import { ProjectCard } from "./project-card";
@@ -16,6 +20,26 @@ export default async function ProjectsPage() {
     loadError = err instanceof Error ? err.message : "Failed to load projects";
   }
 
+  // Operator spend readout — actuals from the ledger, not estimates. Soft-
+  // fails to null so a ledger hiccup never blocks the dashboard.
+  let spend: { today: number; month: number; budget: number | null } | null = null;
+  try {
+    const session = await auth();
+    const operator = getOperator(session?.user?.email);
+    if (operator) {
+      const monthStart = new Date();
+      monthStart.setUTCDate(1);
+      monthStart.setUTCHours(0, 0, 0, 0);
+      const [today, month] = await Promise.all([
+        sumSpendToday(operator.email),
+        sumSpendSince(operator.email, monthStart),
+      ]);
+      spend = { today, month, budget: operator.dailyBudgetUsd ?? null };
+    }
+  } catch {
+    spend = null;
+  }
+
   return (
     <div className="mx-auto max-w-6xl w-full px-6 pt-16 pb-20 flex flex-col gap-16">
       <header className="flex flex-col gap-4 max-w-2xl">
@@ -30,6 +54,13 @@ export default async function ProjectsPage() {
         <p className="text-base text-muted-foreground tracking-tight max-w-md leading-relaxed">
           Concepts, scenes, and exports — for the chillest end of the design feed.
         </p>
+        {spend && (
+          <p className="text-xs text-muted-foreground tracking-tight tabular-nums">
+            Spend: {formatCost(spend.today)} today
+            {spend.budget ? ` of ${formatCost(spend.budget)}/day` : ""} ·{" "}
+            {formatCost(spend.month)} this month
+          </p>
+        )}
       </header>
 
       {/* Feature shortcuts — one card per thing the studio can produce. */}

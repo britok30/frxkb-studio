@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import { AspectRatioSchema } from "@/lib/prompts/types";
 import { withSessionOperator } from "@/lib/route-helpers";
+import { assertWithinDailyBudget, BudgetExceededError } from "@/lib/spend";
 import { currentOperator } from "@/lib/operators";
 import { inngest } from "@/inngest/client";
 
@@ -48,6 +49,17 @@ export async function POST(
   return withSessionOperator(async () => {
     try {
       const op = currentOperator();
+      // Fast budget check at enqueue time so the operator sees the cap
+      // immediately instead of a silently-failing background job. The
+      // estimate-aware gate runs again inside the batch itself.
+      try {
+        await assertWithinDailyBudget(0);
+      } catch (budgetErr) {
+        if (budgetErr instanceof BudgetExceededError) {
+          return NextResponse.json({ error: budgetErr.message }, { status: 402 });
+        }
+        throw budgetErr;
+      }
       await inngest.send({
         name: "project/generate.requested",
         data: {

@@ -1,4 +1,4 @@
-import { pgTable, text, integer, timestamp, jsonb, index } from "drizzle-orm/pg-core";
+import { pgTable, text, integer, real, timestamp, jsonb, index } from "drizzle-orm/pg-core";
 import { relations } from "drizzle-orm";
 import type { Metadata } from "@/lib/prompts/metadata";
 
@@ -37,6 +37,11 @@ export const projects = pgTable(
      *  prompt at generation time via applyLookToPrompt. Nullable: legacy
      *  projects and "let GPT-5.5 decide" projects have no look. */
     lookId: text("look_id"),
+    /** Moodboard / photo references uploaded at creation (reel/carousel,
+     *  1-5 Blob URLs). When present, every scene renders via /edit
+     *  conditioned on them — the refs steer materials, palette, and mood
+     *  while the prompt supplies the room. Null = text-born project. */
+    referenceImageUrls: jsonb("reference_image_urls").$type<string[]>(),
     /** Render-quality tier. standard = 2K stills + native 1080p video (the
      *  Reels delivery ceiling). hero = 4K stills + Topaz 4K60 video pass —
      *  for YouTube/portfolio work where viewers zoom or the platform serves
@@ -116,6 +121,11 @@ export const scenes = pgTable(
     /** The motion description GPT-5.5 generated for the seedance pass. Stored
      *  for transparency + so re-animation uses the same direction. */
     motionPrompt: text("motion_prompt"),
+    /** Operator-locked camera move (an id from CAMERA_MOVES in
+     *  lib/prompts/motion.ts). When set, the motion prompt for this scene
+     *  must lead with this exact move; GPT only writes the subject motion.
+     *  Null = GPT picks the move. */
+    motionPreset: text("motion_preset"),
     falRequestId: text("fal_request_id"),
     error: text("error"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
@@ -148,6 +158,31 @@ export const sceneVersions = pgTable(
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [index("scene_versions_scene_idx").on(t.sceneId, t.createdAt)]
+);
+
+/** Actual-spend ledger. One row per billable vendor call (fal image/video/
+ *  upscale/compose, LLM calls), written fire-and-forget at the call site
+ *  with the USD amount computed from the verified rates in lib/pricing.ts.
+ *  Powers the per-project spend readout, the operator daily/monthly totals,
+ *  and the daily budget gate. */
+export const spendEvents = pgTable(
+  "spend_events",
+  {
+    id: text("id").primaryKey(),
+    /** Nullable: some spend (e.g. niche suggestions) isn't tied to a project. */
+    projectId: text("project_id").references(() => projects.id, { onDelete: "set null" }),
+    operatorEmail: text("operator_email").notNull(),
+    kind: text("kind", {
+      enum: ["image", "image-edit", "video", "upscale", "compose", "llm"],
+    }).notNull(),
+    amountUsd: real("amount_usd").notNull(),
+    meta: jsonb("meta").$type<Record<string, unknown>>(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    index("spend_events_operator_created_idx").on(t.operatorEmail, t.createdAt),
+    index("spend_events_project_idx").on(t.projectId),
+  ]
 );
 
 export const assets = pgTable(
@@ -209,5 +244,7 @@ export type Scene = typeof scenes.$inferSelect;
 export type NewScene = typeof scenes.$inferInsert;
 export type SceneVersion = typeof sceneVersions.$inferSelect;
 export type NewSceneVersion = typeof sceneVersions.$inferInsert;
+export type SpendEvent = typeof spendEvents.$inferSelect;
+export type NewSpendEvent = typeof spendEvents.$inferInsert;
 export type Asset = typeof assets.$inferSelect;
 export type Export = typeof exports_.$inferSelect;

@@ -14,6 +14,11 @@ export type ConceptInput = {
   worldType: WorldType;
   targetDurationSec?: number;
   operatorNotes?: string;
+  /** Operator-uploaded moodboard / photo references (public Blob URLs, ≤5).
+   *  Sent to GPT-5.5 as vision blocks so the brief is grounded in the actual
+   *  materials, palette, and mood of the refs — the same images later
+   *  condition every nano-banana /edit call. */
+  referenceImageUrls?: string[];
 };
 
 export function buildConceptSystem(): string {
@@ -74,6 +79,12 @@ export function buildConceptUser(input: ConceptInput): string {
   }
   if (input.operatorNotes && input.operatorNotes.trim()) {
     lines.push(`Operator notes: ${input.operatorNotes.trim()}`);
+  }
+  if (input.referenceImageUrls && input.referenceImageUrls.length > 0) {
+    lines.push(
+      "",
+      `Reference images: the operator attached ${input.referenceImageUrls.length} moodboard/reference image${input.referenceImageUrls.length === 1 ? "" : "s"} (visible in this message). Ground the brief in what you SEE: name the actual materials, palette, light, and mood present in the references. The material palette and objectSet must be compatible with these images — the same references will visually condition every downstream render.`
+    );
   }
   lines.push(
     "",
@@ -210,6 +221,7 @@ export async function generateConcept(input: ConceptInput): Promise<ConceptBrief
   const raw = await generateJSON<unknown>({
     system: buildConceptSystem(),
     user: buildConceptUser(input),
+    images: input.referenceImageUrls,
     schema: CONCEPT_TOOL_SCHEMA as unknown as Record<string, unknown>,
     toolName: "submit_concept",
     // Bumped 1500 → 1800 to absorb the new objectSet field (8-15 items) on

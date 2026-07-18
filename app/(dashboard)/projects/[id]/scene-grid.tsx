@@ -18,11 +18,13 @@ type SceneRow = SceneCardProps["scene"];
 export function SceneGrid({
   projectId,
   scenes,
+  format,
   hideActions,
   worldType,
 }: {
   projectId: string;
   scenes: SceneRow[];
+  format?: string;
   hideActions: boolean;
   worldType?: "interior" | "exterior";
 }) {
@@ -112,6 +114,7 @@ export function SceneGrid({
           key={s.id}
           projectId={projectId}
           scene={s}
+          format={format}
           hideActions={hideActions}
           worldType={worldType}
           focused={focusedIndex === i}

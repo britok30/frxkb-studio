@@ -14,6 +14,7 @@ import { BatchActions } from "./batch-actions";
 import { JobNotifier } from "./job-notifier";
 import { StitchPanel } from "./stitch-panel";
 import { estimateBatchImages, estimateImageBatch, formatCost } from "@/lib/pricing";
+import { sumProjectSpend } from "@/lib/spend";
 
 export const dynamic = "force-dynamic";
 
@@ -40,6 +41,13 @@ export default async function ProjectPage({ params }: { params: Promise<{ id: st
   if (!data) notFound();
 
   const { project, scenes } = data;
+  // Actual recorded spend for this project (soft-fails to null).
+  let projectSpend: number | null = null;
+  try {
+    projectSpend = await sumProjectSpend(project.id);
+  } catch {
+    projectSpend = null;
+  }
   const concept = project.concept;
   const counts = countByStatus(scenes);
   const exportData = buildExportData(project, scenes);
@@ -82,6 +90,14 @@ export default async function ProjectPage({ params }: { params: Promise<{ id: st
               <>
                 <span aria-hidden>·</span>
                 <span>Hero 4K</span>
+              </>
+            )}
+            {projectSpend !== null && projectSpend > 0 && (
+              <>
+                <span aria-hidden>·</span>
+                <span className="tabular-nums" title="Actual recorded spend on this project">
+                  {formatCost(projectSpend)} spent
+                </span>
               </>
             )}
             <span aria-hidden>·</span>
@@ -243,7 +259,9 @@ export default async function ProjectPage({ params }: { params: Promise<{ id: st
             error: s.error,
             styleName: s.styleName,
             styleSubtitle: s.styleSubtitle,
+            motionPreset: s.motionPreset,
           }))}
+          format={project.format}
           hideActions={animateStarted}
           worldType={project.worldType}
         />

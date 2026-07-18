@@ -9,7 +9,7 @@ export const dynamic = "force-dynamic";
 export const maxDuration = 120;
 
 const PatchBody = z.object({
-  action: z.enum(["approve", "reject", "regenerate"]),
+  action: z.enum(["approve", "reject", "regenerate", "set-motion"]),
   /** Optional design direction layered onto the stored scene prompt for one
    *  regen. Capped at 500 chars — enough for "tighter on the kitchen counter,
    *  shift to morning light, add more plants" without bloating the fal call. */
@@ -17,6 +17,9 @@ const PatchBody = z.object({
   /** Optional look override for one regen — swaps the project's committed
    *  look (lib/prompts/looks.ts) for this call only. */
   lookId: LookIdSchema.optional(),
+  /** set-motion only: a CAMERA_MOVES id to lock for this scene, or null to
+   *  clear the lock. */
+  motionPreset: z.string().max(40).nullable().optional(),
 });
 
 export async function PATCH(
@@ -48,6 +51,7 @@ export async function PATCH(
       const scene = await applySceneAction(id, sceneId, parsed.data.action, {
         designDirection: parsed.data.designDirection,
         lookId: parsed.data.lookId,
+        motionPreset: parsed.data.motionPreset,
       });
       return NextResponse.json({ scene });
     } catch (err) {

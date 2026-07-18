@@ -150,6 +150,10 @@ export default function NewProjectPage() {
   // Render-quality tier (reel/carousel). standard = 2K stills + 1080p video;
   // hero = 4K stills + Topaz 4K60 video for YouTube/portfolio use.
   const [quality, setQuality] = useState<"standard" | "hero">(initialQuality);
+  // Moodboard / photo references (reel/carousel, ≤5). Steer materials,
+  // palette, and mood for every render; GPT-5.5 also sees them while
+  // writing the brief.
+  const [referenceImageUrls, setReferenceImageUrls] = useState<string[]>([]);
   const [showCustomize, setShowCustomize] = useState(false);
   const [sceneCount, setSceneCount] = useState(FORMAT_PRESETS[initialFormat].sceneCount);
   const [sceneDurationSec, setSceneDurationSec] = useState(
@@ -280,6 +284,7 @@ export default function NewProjectPage() {
           operatorNotes: operatorNotes.trim() || undefined,
           lookId: lookId ?? undefined,
           quality,
+          referenceImageUrls: referenceImageUrls.length > 0 ? referenceImageUrls : undefined,
         }),
       });
       if (!res.ok) {
@@ -449,6 +454,10 @@ export default function NewProjectPage() {
                       onChange={setLookId}
                     />
                     <QualityToggle value={quality} onChange={setQuality} format={format} />
+                    <MoodboardPicker
+                      urls={referenceImageUrls}
+                      onChange={setReferenceImageUrls}
+                    />
                   </>
                 )
               )}
@@ -590,6 +599,13 @@ export default function NewProjectPage() {
                       }
                       onEdit={() => go(2)}
                     />
+                    {referenceImageUrls.length > 0 && (
+                      <ReviewRow
+                        label="Moodboard"
+                        value={`${referenceImageUrls.length} reference image${referenceImageUrls.length === 1 ? "" : "s"}`}
+                        onEdit={() => go(2)}
+                      />
+                    )}
                     <ReviewRow
                       label={format === "carousel" ? "Slides" : "Scenes"}
                       value={`${sceneCount}${format === "carousel" ? "" : ` × ${sceneDurationSec}s`}`}
@@ -1155,6 +1171,97 @@ function QualityToggle({
           </motion.button>
         ))}
       </div>
+    </div>
+  );
+}
+
+/** Moodboard / photo references (≤5). Uploaded through /api/upload; the
+ *  returned Blob URLs condition every render via nano-banana /edit and are
+ *  shown to GPT-5.5 while it writes the brief. */
+function MoodboardPicker({
+  urls,
+  onChange,
+}: {
+  urls: string[];
+  onChange: (urls: string[]) => void;
+}) {
+  const [uploading, setUploading] = useState(false);
+  const inputRef = useRef<HTMLInputElement | null>(null);
+
+  async function upload(files: FileList) {
+    const room = 5 - urls.length;
+    const picked = Array.from(files).slice(0, room);
+    if (picked.length === 0) return;
+    setUploading(true);
+    try {
+      const uploaded: string[] = [];
+      for (const file of picked) {
+        const form = new FormData();
+        form.append("file", file);
+        const res = await fetch("/api/upload", { method: "POST", body: form });
+        if (!res.ok) {
+          const err = await res.json().catch(() => ({}));
+          throw new Error(err.error ?? `HTTP ${res.status}`);
+        }
+        const data = (await res.json()) as { url: string };
+        uploaded.push(data.url);
+      }
+      onChange([...urls, ...uploaded]);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Unknown error";
+      toast.error("Reference upload failed", { description: message });
+    } finally {
+      setUploading(false);
+    }
+  }
+
+  return (
+    <div className="flex flex-col gap-2">
+      <div className="flex items-baseline justify-between gap-4">
+        <span className="text-[10px] uppercase tracking-[0.22em] text-muted-foreground">
+          Moodboard (optional)
+        </span>
+        <span className="text-[11px] text-muted-foreground tracking-tight">
+          1–5 photos or refs — materials, palette, and mood follow them
+        </span>
+      </div>
+      <div className="flex flex-wrap gap-2">
+        {urls.map((url, i) => (
+          <div key={url} className="relative size-20 rounded-md overflow-hidden border group/ref">
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img src={url} alt={`Reference ${i + 1}`} className="w-full h-full object-cover" />
+            <button
+              type="button"
+              aria-label="Remove reference"
+              onClick={() => onChange(urls.filter((u) => u !== url))}
+              className="absolute inset-0 hidden group-hover/ref:flex items-center justify-center bg-black/50 text-white text-xs"
+            >
+              Remove
+            </button>
+          </div>
+        ))}
+        {urls.length < 5 && (
+          <button
+            type="button"
+            onClick={() => inputRef.current?.click()}
+            disabled={uploading}
+            className="size-20 rounded-md border border-dashed text-xs text-muted-foreground hover:text-foreground hover:border-foreground/40 transition-colors disabled:opacity-50"
+          >
+            {uploading ? "…" : "+ Add"}
+          </button>
+        )}
+      </div>
+      <input
+        ref={inputRef}
+        type="file"
+        accept="image/jpeg,image/png,image/webp"
+        multiple
+        className="hidden"
+        onChange={(e) => {
+          if (e.target.files) void upload(e.target.files);
+          e.target.value = "";
+        }}
+      />
     </div>
   );
 }
