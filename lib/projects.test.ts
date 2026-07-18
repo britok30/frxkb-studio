@@ -1864,3 +1864,67 @@ describe("stitchFinalVideo — Shotstack backend (transitions)", () => {
     expect(morph.start).toBe(2.5);
   });
 });
+
+describe("finalize auto-stitch", () => {
+  function finalizableReel(withVideos: boolean) {
+    dbMocks.selectProjectById.mockResolvedValue({
+      id: "p_1",
+      format: "reel",
+      worldType: "interior",
+      status: "ready",
+      quality: "standard",
+      finalVideoUrl: null,
+      niche: "n",
+      concept: { workingTitle: "T", hook: "h", vibe: "v", notes: "", objectSet: [] },
+    });
+    dbMocks.selectScenesByProject.mockResolvedValue([
+      {
+        ...fakeScene({ id: "s_1", order: 1, status: "generated" }),
+        imageUrl: "https://blob/1.jpg",
+        videoUrl: withVideos ? "https://blob/v1.mp4" : null,
+      },
+      {
+        ...fakeScene({ id: "s_2", order: 2, status: "generated" }),
+        imageUrl: "https://blob/2.jpg",
+        videoUrl: withVideos ? "https://blob/v2.mp4" : null,
+      },
+    ]);
+    claudeMocks.generateMetadata.mockResolvedValue({
+      kind: "reel",
+      tiktokCaption: "c", tiktokHashtags: ["a"],
+      instagramCaption: "c", instagramHashtags: ["a"],
+      shortsTitle: "A modern Kyoto apartment tour in golden light for design lovers",
+      shortsDescription: "d".repeat(60), shortsHashtags: ["a"],
+      pinnedComment: "p",
+    });
+    storageMocks.storeFromUrl.mockResolvedValue({ url: "https://blob/final.mp4", pathname: "x" });
+  }
+
+  it("finalizing a fully-animated reel also stitches the final video (default settings, no music)", async () => {
+    finalizableReel(true);
+
+    await finalizeProject("p_1");
+
+    expect(composeMocks.composeVideo).toHaveBeenCalledTimes(1);
+    expect(dbMocks.markProjectFinalVideo).toHaveBeenCalledWith("p_1", "https://blob/final.mp4");
+  });
+
+  it("skips auto-stitch when clips aren't animated yet, and finalize still succeeds", async () => {
+    finalizableReel(false);
+
+    const out = await finalizeProject("p_1");
+
+    expect(out.metadata).toBeTruthy();
+    expect(composeMocks.composeVideo).not.toHaveBeenCalled();
+  });
+
+  it("a stitch failure never un-finalizes the project", async () => {
+    finalizableReel(true);
+    composeMocks.composeVideo.mockRejectedValue(new Error("compose down"));
+
+    const out = await finalizeProject("p_1");
+
+    expect(out.metadata).toBeTruthy();
+    expect(dbMocks.markProjectFinalized).toHaveBeenCalled();
+  });
+});

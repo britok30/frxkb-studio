@@ -126,12 +126,12 @@ export function StitchPanel({
               <CardTitle className="text-base">Final video</CardTitle>
               <CardDescription>
                 {format === "before-after"
-                  ? "Before still (2.5s) → transformation morph, as one ready-to-post MP4. Native ambient audio by default; add music to replace it with one uniform bed."
+                  ? "Before still (2.5s) → transformation morph, as one ready-to-post MP4. Stitched automatically when you finalize; re-stitch here to swap in a music bed."
                   : isSlideshow
                     ? "The YouTube long-form, ready to upload: every still held in sequence, looped to your target length, music tiled underneath. Add music — the video is silent without it. Chapters land every " +
                       perStillSec +
                       "s of cycle one."
-                    : "All clips stitched in order into one ready-to-post MP4. Native ambient audio by default; add music to replace it with one uniform bed."}
+                    : "All clips as one ready-to-post MP4 with crossfades. Stitched automatically when you finalize (native ambient audio); re-stitch here to swap in a music bed."}
               </CardDescription>
             </div>
             {finalVideoUrl && <Badge>Stitched</Badge>}

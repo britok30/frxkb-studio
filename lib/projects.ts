@@ -1662,6 +1662,32 @@ export async function finalizeProject(projectId: string): Promise<FinalizeResult
       meta: { stage: "finalize" },
     });
 
+    // Finalize means "package the deliverable" — so when every clip exists
+    // and no final video has been stitched yet, stitch one automatically
+    // (native ambient audio, default settings). The stitch panel remains
+    // for re-stitching with a music bed or different knobs. Soft-fail: a
+    // stitch hiccup must never un-finalize a project.
+    // Style-explorer is excluded on purpose — a stills slideshow without a
+    // music upload is a silent video, so that stitch stays operator-driven.
+    if (
+      (project.format === "reel" || project.format === "before-after") &&
+      !project.finalVideoUrl
+    ) {
+      const animatable =
+        project.format === "before-after"
+          ? renderable.filter((s) => !!s.referenceImageUrl)
+          : renderable;
+      const allAnimated =
+        animatable.length > 0 && animatable.every((s) => !!s.videoUrl);
+      if (allAnimated) {
+        try {
+          await stitchFinalVideo(projectId);
+        } catch (err) {
+          console.warn("[finalize] auto-stitch failed (project stays finalized):", err);
+        }
+      }
+    }
+
     return { metadata };
   } catch (err) {
     await updateProjectStatus(projectId, "ready");
