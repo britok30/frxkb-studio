@@ -21,20 +21,25 @@ type Palette = {
   hasSun: boolean;
   cloudCoverage: number;    // 0..1 — higher = more cloud
   cloudSpeed: number;       // arbitrary
+  /** Vertical stretch of the cloud noise — higher = long horizontal stratus
+   *  streaks (sunset), lower = puffier billows (twilight). */
+  cloudStreak: number;
 };
 
 const SUNSET: Palette = {
-  skyTop: "#1c0a2c",       // deep aubergine
-  skyMid: "#c84b6e",       // hot pink
-  skyHorizon: "#ffb27a",   // warm peach
-  cloudHighlight: "#ffe0c2", // cream
-  cloudShadow: "#5e2a4a",  // plum
-  sunColor: "#ffd9a8",
-  sunPos: [0.5, 0.32],
-  sunRadius: 0.06,
+  skyTop: "#160a26",       // deep aubergine, a touch deeper for contrast
+  skyMid: "#c8496b",       // hot pink
+  skyHorizon: "#ffb076",   // warm peach
+  cloudHighlight: "#ffe3c4", // cream
+  cloudShadow: "#4e2542",  // plum
+  sunColor: "#ffd9a2",
+  // Low and off-center — golden-hour composition, not a bullseye.
+  sunPos: [0.63, 0.24],
+  sunRadius: 0.052,
   hasSun: true,
-  cloudCoverage: 0.85,
+  cloudCoverage: 0.82,
   cloudSpeed: 0.06,
+  cloudStreak: 2.6,
 };
 
 const TWILIGHT: Palette = {
@@ -49,6 +54,7 @@ const TWILIGHT: Palette = {
   hasSun: false,
   cloudCoverage: 0.9,
   cloudSpeed: 0.04,
+  cloudStreak: 1.0, // multiplier of the base 1.8 — keeps twilight exactly as it was
 };
 
 const PRESETS: Record<"sunset" | "twilight", Palette> = {
@@ -87,6 +93,7 @@ const fragmentShader = /* glsl */ `
   uniform float uHasSun;
   uniform float uCoverage;
   uniform float uCloudSpeed;
+  uniform float uCloudStreak;
 
   // ── Hash + noise + FBM ─────────────────────────────────────────────────────
   float hash(vec2 p) {
@@ -133,24 +140,28 @@ const fragmentShader = /* glsl */ `
     // 1) Base sky gradient.
     vec3 col = threeStopGradient(uv.y);
 
-    // 2) Sun disc + halo (sunset only).
+    // 2) Sun — layered like a photograph: hot core, tight bloom, wide warm
+    //    scatter, and an atmospherically FLATTENED glow near the horizon
+    //    (light smears sideways through thick air at low sun angles).
+    vec2 sunUv = vec2((uv.x - uSunPos.x) * uAspect, uv.y - uSunPos.y);
+    float dSun = length(sunUv);
     if (uHasSun > 0.5) {
-      // Aspect-correct distance so the sun is round, not stretched.
-      vec2 sunUv = vec2((uv.x - uSunPos.x) * uAspect, uv.y - uSunPos.y);
-      float d = length(sunUv);
-      float core = smoothstep(uSunRadius, uSunRadius * 0.55, d);
-      float halo = smoothstep(uSunRadius * 6.0, uSunRadius * 1.4, d) * 0.55;
-      // The horizon lights up around the sun.
-      float horizonGlow = exp(-d * 6.0) * 0.45;
-      col += uSunColor * core;
-      col = mix(col, uSunColor, halo * 0.4);
-      col += uSunColor * horizonGlow * smoothstep(0.45, 0.0, uv.y);
+      float core  = smoothstep(uSunRadius, uSunRadius * 0.5, dSun);
+      float bloom = exp(-dSun * 16.0) * 0.8;
+      float scatter = exp(-dSun * 4.2) * 0.2;
+      // Horizontal smear: stronger where |dy| is small — the low-sun squash.
+      float smear = exp(-abs(sunUv.y) * 9.0) * exp(-abs(sunUv.x) * 2.2) * 0.26;
+      col += uSunColor * (core + bloom);
+      col += uSunColor * scatter * vec3(1.0, 0.82, 0.72);   // scatter warms to pink
+      col += uSunColor * smear * smoothstep(0.5, 0.0, uv.y); // hug the horizon
     }
 
-    // 3) Clouds — single FBM (was two blended). Cuts shader cost in half with
-    // negligible visual difference because the rotated-octave FBM already gives
-    // organic variety. Time-translates the noise space to drift horizontally.
-    vec2 cloudUv = vec2(uv.x * 2.6 * uAspect + uTime * uCloudSpeed, uv.y * 1.8);
+    // 3) Clouds — FBM stretched horizontally by uCloudStreak so sunset skies
+    //    read as long stratus bands, not cauliflower. Time drifts them.
+    vec2 cloudUv = vec2(
+      uv.x * 2.6 * uAspect + uTime * uCloudSpeed,
+      uv.y * (1.8 * uCloudStreak)
+    );
     float cloud = fbm(cloudUv);
     float lo = mix(0.65, 0.30, uCoverage); // coverage 0 → strict, 1 → permissive
     float hi = mix(0.85, 0.55, uCoverage);
@@ -162,11 +173,20 @@ const fragmentShader = /* glsl */ `
     // Cloud color: highlight at the bottom (lit by horizon/sun), shadow at top.
     vec3 cloudCol = mix(uCloudShadow, uCloudHighlight, smoothstep(0.10, 0.55, uv.y));
 
-    // For sunset, kiss the cloud edges with a hint of sun color where the sun
-    // is overhead-ish in screen space.
     if (uHasSun > 0.5) {
-      float sunInfluence = exp(-distance(uv, uSunPos) * 2.5) * 0.55;
+      // Ambient warmth falls off with distance from the sun.
+      float sunInfluence = exp(-distance(uv, uSunPos) * 2.4) * 0.5;
       cloudCol += uSunColor * sunInfluence;
+
+      // RIM LIGHT — the silver lining. Sample the cloud field a step toward
+      // the sun: where density drops in that direction, this edge faces the
+      // light, so it catches a hot rim. This is what sells "backlit clouds".
+      vec2 toSun = normalize(vec2(uSunPos.x - uv.x, uSunPos.y - uv.y) + 1e-5);
+      float cloudTowardSun = fbm(cloudUv + toSun * 0.14);
+      cloudTowardSun = smoothstep(lo, hi, cloudTowardSun);
+      float rim = clamp(cloud - cloudTowardSun, 0.0, 1.0);
+      float rimFalloff = exp(-distance(uv, uSunPos) * 2.0);
+      cloudCol += uSunColor * rim * rimFalloff * 1.6;
     }
 
     col = mix(col, cloudCol, cloud * cloudBand);
@@ -179,7 +199,13 @@ const fragmentShader = /* glsl */ `
     float vig = smoothstep(1.55, 0.45, distance(uv, vec2(0.5, 0.45)));
     col *= 0.82 + vig * 0.18;
 
-    // 6) Subtle film grain — keeps the gradient from looking like cheap CSS.
+    // 6) Filmic finish: gentle shoulder so the sun bloom rolls off instead of
+    //    clipping, plus a whisper of saturation lift.
+    col = col / (1.0 + max(col - 1.0, 0.0) * 0.6);
+    float luma = dot(col, vec3(0.299, 0.587, 0.114));
+    col = mix(vec3(luma), col, 1.06);
+
+    // 7) Subtle film grain — keeps the gradient from looking like cheap CSS.
     float g = (hash(uv * 1500.0 + uTime) - 0.5) * 0.022;
     col += g;
 
@@ -208,6 +234,7 @@ function SkyMesh({ preset }: { preset: keyof typeof PRESETS }) {
       uHasSun: { value: palette.hasSun ? 1 : 0 },
       uCoverage: { value: palette.cloudCoverage },
       uCloudSpeed: { value: palette.cloudSpeed },
+      uCloudStreak: { value: palette.cloudStreak },
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [preset]);
