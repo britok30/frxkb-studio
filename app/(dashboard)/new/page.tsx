@@ -494,13 +494,15 @@ export default function NewProjectPage() {
                         {/* Reel is locked at 3 × 5s — that's the format's
                             shape, not a knob to tune. Carousel still exposes
                             slide count since it varies legitimately. */}
+                        {/* Instagram caps carousels at 20 slides — no point
+                            rendering slides that can't be posted. */}
                         {format === "carousel" && (
                           <NumberField
                             label="Slides"
                             value={sceneCount}
                             onChange={setSceneCount}
-                            min={1}
-                            max={120}
+                            min={2}
+                            max={20}
                           />
                         )}
 
