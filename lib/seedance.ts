@@ -73,19 +73,36 @@ export async function generateVideo(input: SeedanceInput): Promise<SeedanceOutpu
   // Seedance 2.0 accepts duration "auto" or 4–15s as a string. Anything below
   // 4 gets bumped to 4 so the API doesn't reject it.
   const apiDuration = String(Math.min(15, Math.max(4, durationSec)));
-  const result = await client.subscribe("bytedance/seedance-2.0/image-to-video", {
-    input: {
-      prompt: motionPrompt,
-      image_url: imageUrl,
-      ...(endImageUrl ? { end_image_url: endImageUrl } : {}),
-      duration: apiDuration,
-      resolution,
-      aspect_ratio: aspectRatio,
-      generate_audio: true,
-      ...(seed !== undefined ? { seed } : {}),
-    },
-    logs: false,
-  });
+  let result;
+  try {
+    result = await client.subscribe("bytedance/seedance-2.0/image-to-video", {
+      input: {
+        prompt: motionPrompt,
+        image_url: imageUrl,
+        ...(endImageUrl ? { end_image_url: endImageUrl } : {}),
+        duration: apiDuration,
+        resolution,
+        aspect_ratio: aspectRatio,
+        generate_audio: true,
+        ...(seed !== undefined ? { seed } : {}),
+      },
+      logs: false,
+    });
+  } catch (err) {
+    // Surface fal's validation detail — a bare "Unprocessable Entity" hides
+    // actionable causes like content_policy_violation ("image may contain
+    // likenesses of real people" — e.g. a rendered celebrity album cover).
+    const body = (err as { body?: { detail?: Array<{ msg?: string }> | string } }).body;
+    const detail = Array.isArray(body?.detail)
+      ? body.detail.map((d) => d.msg).filter(Boolean).join("; ")
+      : typeof body?.detail === "string"
+        ? body.detail
+        : null;
+    if (detail) {
+      throw new Error(`seedance rejected the request: ${detail}`);
+    }
+    throw err;
+  }
 
   const data = result.data as { video: { url: string } };
   if (!data?.video?.url) throw new Error("seedance returned no video url");

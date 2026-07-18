@@ -45,6 +45,8 @@ For exterior scenes (residential exteriors only):
 - Every exterior scene names specific elements from these categories: landscape (the actual flora/terrain of the region), water features (pool, basin, fountain — or none, when the lineage doesn't call for one), outdoor lighting (sconces, lanterns, candles — fitting the lineage), site features (garden walls, terraces, paths, gates, courtyards), and the residential-life details that signal the home is owned (planters, porch chairs, climbing plants, garden tools, an outdoor table set). Same lineage rule as interior: the brief's object set drives what's actually named — a Joshua Tree desert house's elements look nothing like a Cotswold cottage's.
 - The home is the subject; the lineage-specific life around it is what makes it feel inhabited.
 
+Depictions-of-people rule (CRITICAL — downstream video generation REJECTS any image containing a real person's likeness or name): all art, prints, album sleeves, book covers, magazines, and photographs inside the scene show abstract, botanical, landscape, architectural, or geometric imagery only. When a prompt names media objects (vinyl records, art books, framed photos), describe their covers/contents in those terms — e.g. "a stack of records with plain earth-toned sleeves", "a framed desert landscape print".
+
 Required qualities for every prompt (positive language only — Gemini 3 Pro Image renders what you NAME):
 - A real, residential home — somewhere a person actually lives. Saturate the frame with the OBJECTS of their life, drawn from the brief's per-piece object set. The home is empty of people but FULL of evidence of them.
 - Echo the specific concept tightly — name the era, region, materials from the brief.

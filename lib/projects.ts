@@ -689,8 +689,13 @@ export async function generateAllImages(
           await renderScene(scene, referenceFor(scene));
           generated++;
           failed--;
-        } catch {
-          // Already marked failed on the first pass; leave it rejected.
+        } catch (err) {
+          // Re-mark the failure: renderScene's markSceneGenerating flipped
+          // the scene back to "generating" and cleared the error, so doing
+          // nothing here strands it as an orphan. Marking failed restores
+          // the rejected status + visible error.
+          const msg = err instanceof Error ? err.message : "unknown error";
+          await markSceneFailed(scene.id, msg);
         }
       });
     }
@@ -1185,10 +1190,13 @@ export async function animateAllScenes(
           await animateOne(scene, motion);
           animated++;
           failed--;
-        } catch {
-          // Already marked failed on the first pass; leave it for the
-          // operator's next Animate click (recoverAnimateFailedScenes
-          // makes those scenes candidates again).
+        } catch (err) {
+          // Re-mark the failure: animateOne's markSceneAnimating cleared the
+          // first pass's error and re-set motionPrompt, so doing nothing here
+          // leaves a zombie scene that looks in-flight with no error. Marking
+          // failed again restores the visible error + the recover path.
+          const msg = err instanceof Error ? err.message : "unknown error";
+          await markSceneAnimateFailed(scene.id, msg);
         }
       });
     }
