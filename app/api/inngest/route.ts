@@ -3,11 +3,12 @@ import { inngest } from "@/inngest/client";
 import { functions } from "@/inngest/functions";
 
 export const runtime = "nodejs";
-// Inngest invokes this endpoint to drive each function step. Steps inside
-// generate/animate can run minutes — give the route headroom; Vercel still
-// caps at 300s on Pro per HTTP request, but Inngest splits long work across
-// multiple step invocations so each individual call here stays bounded.
-export const maxDuration = 300;
+// Inngest invokes this endpoint to drive each function step. Animate runs
+// per-scene steps so each invocation carries at most one seedance clip
+// (+Topaz on hero) — but a single hero clip can still take several minutes,
+// so take the full Fluid-compute ceiling. Generate remains one step; its
+// batch is bounded by fal image latency (seconds per image).
+export const maxDuration = 800;
 
 export const { GET, POST, PUT } = serve({
   client: inngest,

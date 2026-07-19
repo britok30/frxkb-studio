@@ -1,5 +1,12 @@
 import { inngest } from "./client";
-import { animateAllScenes, generateAllImages, ProjectBusyError } from "@/lib/projects";
+import {
+  animatePlannedScene,
+  finishAnimate,
+  generateAllImages,
+  planAnimate,
+  ProjectBusyError,
+  type AnimatePlan,
+} from "@/lib/projects";
 import { getOperator, withOperator } from "@/lib/operators";
 import type { AspectRatio } from "@/lib/prompts/types";
 
@@ -67,30 +74,55 @@ export async function handleGenerate(
 }
 
 /**
- * Pure orchestration handler for `project/animate.requested`. Same shape as
- * handleGenerate. See note on per-scene retry granularity below.
+ * Pure orchestration handler for `project/animate.requested` — PER-SCENE
+ * steps. One "plan" step (lock + validation + motion prompts), then each
+ * scene animates in its own step so no single serverless invocation carries
+ * the whole batch (a 3×1080p batch outlives Vercel's maxDuration — observed
+ * in prod 2026-07-19), then a "finish" step settles status. Step memoization
+ * means retries never re-render completed scenes.
  */
 export async function handleAnimate(
   { event }: { event: AnimateEvent },
   step: StepRunner
 ) {
-  const { projectId, operatorEmail, ...opts } = event.data;
+  const { projectId, operatorEmail, force } = event.data;
   const operator = getOperator(operatorEmail);
   if (!operator) {
     throw new Error(
       `Operator not configured for ${operatorEmail}. Check FAL_KEY_* and OPENAI_KEY_* env vars on the deployment.`
     );
   }
-  return await step.run("animate-scenes", async () => {
+
+  const plan = await step.run("plan", async () => {
     try {
-      return await withOperator(operator, () => animateAllScenes(projectId, opts));
+      return await withOperator(operator, () => planAnimate(projectId, { force }));
     } catch (err) {
-      if (err instanceof ProjectBusyError) {
-        return { animated: 0, failed: 0, skipped: 0, busy: true };
-      }
+      if (err instanceof ProjectBusyError) return { busy: true as const };
       throw err;
     }
   });
+
+  if ("busy" in plan) {
+    return { animated: 0, failed: 0, skipped: 0, busy: true };
+  }
+  const typedPlan = plan as AnimatePlan;
+  if (typedPlan.targets.length === 0) {
+    return { animated: 0, failed: 0, skipped: typedPlan.skipped };
+  }
+
+  // Parallel per-scene steps — Inngest runs each as its own invocation.
+  const results = await Promise.all(
+    typedPlan.targets.map((target) =>
+      step.run(`scene-${target.order}`, () =>
+        withOperator(operator, () => animatePlannedScene(typedPlan, target))
+      )
+    )
+  );
+
+  await step.run("finish", () => withOperator(operator, () => finishAnimate(projectId)));
+
+  const animated = results.filter((r) => r.ok).length;
+  return { animated, failed: results.length - animated, skipped: typedPlan.skipped };
 }
 
 /**
@@ -121,13 +153,7 @@ export const generateProject = inngest.createFunction(
 );
 
 /**
- * Background animator (reel-only).
- *
- * Per-scene retry granularity is intentionally NOT here yet — the existing
- * orchestrator catches per-scene failures and marks rows accordingly. If we
- * ever want step-level retry per scene (e.g. seedance succeeds for #3 but
- * topaz fails for #4 — only retry #4's topaz), refactor animateAllScenes to
- * expose per-scene work and wrap each in its own step.run.
+ * Background animator (reel + before-after) — per-scene step granularity.
  */
 export const animateProject = inngest.createFunction(
   {

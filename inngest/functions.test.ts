@@ -11,6 +11,9 @@ const hoisted = vi.hoisted(() => {
   return {
     generateAllImages: vi.fn(),
     animateAllScenes: vi.fn(),
+    planAnimate: vi.fn(),
+    animatePlannedScene: vi.fn(),
+    finishAnimate: vi.fn(),
     ProjectBusyError: FakeProjectBusyError,
     getOperator: vi.fn(),
     withOperator: vi.fn(),
@@ -20,6 +23,9 @@ const hoisted = vi.hoisted(() => {
 vi.mock("@/lib/projects", () => ({
   generateAllImages: hoisted.generateAllImages,
   animateAllScenes: hoisted.animateAllScenes,
+  planAnimate: hoisted.planAnimate,
+  animatePlannedScene: hoisted.animatePlannedScene,
+  finishAnimate: hoisted.finishAnimate,
   ProjectBusyError: hoisted.ProjectBusyError,
 }));
 
@@ -57,6 +63,9 @@ const passthroughStep = {
 beforeEach(() => {
   hoisted.generateAllImages.mockReset();
   hoisted.animateAllScenes.mockReset();
+  hoisted.planAnimate.mockReset();
+  hoisted.animatePlannedScene.mockReset();
+  hoisted.finishAnimate.mockReset().mockResolvedValue(undefined);
   hoisted.getOperator.mockReset();
   hoisted.withOperator.mockReset();
   // Default: passthrough — call the fn immediately. Tests can override.
@@ -140,30 +149,49 @@ describe("handleGenerate", () => {
 });
 
 describe("handleAnimate", () => {
-  it("runs animateAllScenes inside withOperator", async () => {
+  const plan = {
+    projectId: "p_1",
+    quality: "standard" as const,
+    aspectRatio: "9:16" as const,
+    isMorph: false,
+    skipped: 0,
+    targets: [
+      { sceneId: "s_1", order: 1, imageUrl: "u1", referenceImageUrl: null, durationSec: 5, motion: "m1" },
+      { sceneId: "s_2", order: 2, imageUrl: "u2", referenceImageUrl: "a", durationSec: 5, motion: "m2" },
+    ],
+  };
+
+  it("plans, animates each scene in its own step, then finishes — per-scene results roll up", async () => {
     hoisted.getOperator.mockReturnValue(stubOperator);
-    hoisted.animateAllScenes.mockResolvedValue({ animated: 5, failed: 0, skipped: 0 });
+    hoisted.planAnimate.mockResolvedValue(plan);
+    hoisted.animatePlannedScene
+      .mockResolvedValueOnce({ ok: true })
+      .mockResolvedValueOnce({ ok: false });
 
     const result = await handleAnimate(
-      {
-        event: {
-          data: {
-            projectId: "p_1",
-            operatorEmail: "britok30@gmail.com",
-            force: false,
-            concurrency: 2,
-          },
-        },
-      },
+      { event: { data: { projectId: "p_1", operatorEmail: "britok30@gmail.com", force: false } } },
       passthroughStep
     );
 
-    expect(hoisted.withOperator).toHaveBeenCalledWith(stubOperator, expect.any(Function));
-    expect(hoisted.animateAllScenes).toHaveBeenCalledWith("p_1", {
-      force: false,
-      concurrency: 2,
-    });
-    expect(result).toEqual({ animated: 5, failed: 0, skipped: 0 });
+    expect(hoisted.planAnimate).toHaveBeenCalledWith("p_1", { force: false });
+    expect(hoisted.animatePlannedScene).toHaveBeenCalledTimes(2);
+    expect(hoisted.animatePlannedScene).toHaveBeenCalledWith(plan, plan.targets[0]);
+    expect(hoisted.finishAnimate).toHaveBeenCalledWith("p_1");
+    expect(result).toEqual({ animated: 1, failed: 1, skipped: 0 });
+  });
+
+  it("returns early (no scene steps, no finish) when the plan has no targets", async () => {
+    hoisted.getOperator.mockReturnValue(stubOperator);
+    hoisted.planAnimate.mockResolvedValue({ ...plan, skipped: 3, targets: [] });
+
+    const result = await handleAnimate(
+      { event: { data: { projectId: "p_1", operatorEmail: "britok30@gmail.com" } } },
+      passthroughStep
+    );
+
+    expect(result).toEqual({ animated: 0, failed: 0, skipped: 3 });
+    expect(hoisted.animatePlannedScene).not.toHaveBeenCalled();
+    expect(hoisted.finishAnimate).not.toHaveBeenCalled();
   });
 
   it("throws when operator email isn't configured", async () => {
@@ -177,9 +205,9 @@ describe("handleAnimate", () => {
     ).rejects.toThrow(/Operator not configured/i);
   });
 
-  it("translates ProjectBusyError into a busy summary", async () => {
+  it("translates ProjectBusyError from planning into a busy summary", async () => {
     hoisted.getOperator.mockReturnValue(stubOperator);
-    hoisted.animateAllScenes.mockRejectedValue(new FakeProjectBusyError("p_1"));
+    hoisted.planAnimate.mockRejectedValue(new FakeProjectBusyError("p_1"));
 
     const result = await handleAnimate(
       { event: { data: { projectId: "p_1", operatorEmail: "britok30@gmail.com" } } },
@@ -189,9 +217,9 @@ describe("handleAnimate", () => {
     expect(result).toEqual({ animated: 0, failed: 0, skipped: 0, busy: true });
   });
 
-  it("rethrows non-busy errors", async () => {
+  it("rethrows non-busy planning errors", async () => {
     hoisted.getOperator.mockReturnValue(stubOperator);
-    hoisted.animateAllScenes.mockRejectedValue(new Error("seedance crashed"));
+    hoisted.planAnimate.mockRejectedValue(new Error("seedance crashed"));
 
     await expect(
       handleAnimate(

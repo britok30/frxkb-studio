@@ -1211,6 +1211,201 @@ export async function animateAllScenes(
   }
 }
 
+// ── Stepwise animate (Inngest per-scene steps) ──────────────────────────────
+//
+// animateAllScenes runs the whole batch in ONE process — fine locally and in
+// tests, fatal on Vercel where the invocation dies at maxDuration (observed
+// in prod 2026-07-19: scene 1 rendered, 2-3 stranded mid-flight). The
+// stepwise trio below is the same pipeline sliced so Inngest can run each
+// scene as its own bounded, memoized step: plan → scene × N → finish.
+
+export type AnimatePlanTarget = {
+  sceneId: string;
+  order: number;
+  imageUrl: string;
+  referenceImageUrl: string | null;
+  durationSec: number;
+  motion: string;
+};
+
+export type AnimatePlan = {
+  projectId: string;
+  quality: "standard" | "hero";
+  aspectRatio: AspectRatio;
+  isMorph: boolean;
+  skipped: number;
+  targets: AnimatePlanTarget[];
+};
+
+/**
+ * Step 1: acquire the lock, recover strays, validate, budget-gate, and
+ * write the motion prompts. Returns a fully serializable plan; throws
+ * ProjectBusyError (caller maps to a benign busy result) or validation
+ * errors (status restored to ready first).
+ */
+export async function planAnimate(
+  projectId: string,
+  opts: { force?: boolean } = {}
+): Promise<AnimatePlan> {
+  const project = await selectProjectById(projectId);
+  if (!project) throw new Error(`Project ${projectId} not found`);
+  if (project.format !== "reel" && project.format !== "before-after") {
+    throw new Error("Animate is only available for reel and before-after projects.");
+  }
+  if (!project.concept) throw new Error("Project has no concept brief — animate after concept exists.");
+
+  const aspectRatio: AspectRatio =
+    project.aspectRatio ?? defaultsForFormat(project.format).aspectRatio;
+
+  const acquired = await tryAcquireGenerationLock(projectId);
+  if (!acquired) throw new ProjectBusyError(projectId);
+
+  await recoverAnimateFailedScenes(projectId);
+  await resetOrphanedScenes(projectId);
+
+  try {
+    const allScenes = await selectScenesByProject(projectId);
+    const candidates = allScenes.filter(
+      (s) => !!s.imageUrl && (s.status === "generated" || s.status === "approved")
+    );
+    if (candidates.length === 0) {
+      throw new Error("No generated scenes to animate. Generate stills first.");
+    }
+    if (candidates.length < allScenes.length) {
+      const missing = allScenes.length - candidates.length;
+      throw new Error(
+        `Cannot animate: ${missing} scene${missing === 1 ? "" : "s"} not yet generated. Generate or reject them first.`
+      );
+    }
+
+    const animatable =
+      project.format === "before-after"
+        ? candidates.filter((s) => !!s.referenceImageUrl)
+        : candidates;
+    const targetsRaw = animatable.filter((s) => (opts.force ? true : !s.videoUrl));
+    const skipped = candidates.length - targetsRaw.length;
+    const quality: "standard" | "hero" = project.quality === "hero" ? "hero" : "standard";
+    const isMorph = project.format === "before-after";
+
+    if (targetsRaw.length === 0) {
+      await updateProjectStatus(projectId, "ready");
+      return { projectId, quality, aspectRatio, isMorph, skipped, targets: [] };
+    }
+
+    await assertWithinDailyBudget(
+      estimateAnimateBatch(targetsRaw.length, targetsRaw[0]?.durationSec || 5, quality)
+    );
+
+    const motionByOrder = isMorph
+      ? new Map(targetsRaw.map((s) => [s.order, BEFORE_AFTER_MORPH_MOTION]))
+      : new Map(
+          (
+            await generateMotionPrompts({
+              concept: { ...project.concept, objectSet: project.concept.objectSet ?? [] },
+              scenes: targetsRaw.map((s) => ({
+                order: s.order,
+                prompt: s.prompt,
+                motionPreset: s.motionPreset,
+              })),
+            })
+          ).motions.map((m) => [m.order, m.motion])
+        );
+
+    const targets: AnimatePlanTarget[] = targetsRaw
+      .filter((s) => motionByOrder.has(s.order))
+      .map((s) => ({
+        sceneId: s.id,
+        order: s.order,
+        imageUrl: s.imageUrl as string,
+        referenceImageUrl: s.referenceImageUrl,
+        durationSec: s.durationSec || 5,
+        motion: motionByOrder.get(s.order) as string,
+      }));
+
+    return { projectId, quality, aspectRatio, isMorph, skipped, targets };
+  } catch (err) {
+    await updateProjectStatus(projectId, "ready");
+    throw err;
+  }
+}
+
+/**
+ * Step 2 (× N, parallel): animate ONE planned scene. Two attempts inside
+ * (transient seedance 422s from Blob propagation are real); a final failure
+ * marks the scene and returns ok:false rather than throwing, so the step
+ * completes and the batch keeps its per-scene independence.
+ */
+export async function animatePlannedScene(
+  plan: Pick<AnimatePlan, "projectId" | "quality" | "aspectRatio" | "isMorph">,
+  target: AnimatePlanTarget
+): Promise<{ ok: boolean }> {
+  const attempt = async () => {
+    await heartbeatGenerationLock(plan.projectId);
+    await markSceneAnimating(target.sceneId, target.motion);
+    const seedanceResult = await generateVideo({
+      imageUrl: plan.isMorph ? (target.referenceImageUrl as string) : target.imageUrl,
+      endImageUrl: plan.isMorph ? target.imageUrl : undefined,
+      motionPrompt: target.motion,
+      durationSec: target.durationSec,
+      resolution: "1080p",
+      aspectRatio: plan.aspectRatio,
+      seed: freshSeed(),
+    });
+    const finalVideoUrl =
+      plan.quality === "hero"
+        ? (
+            await upscaleVideo({
+              videoUrl: seedanceResult.videoUrl,
+              model: "Proteus",
+              upscaleFactor: 2,
+            })
+          ).videoUrl
+        : seedanceResult.videoUrl;
+    const filename = `scene-${String(target.order).padStart(3, "0")}-${nanoid(6)}.mp4`;
+    const stored = await storeFromUrl({
+      url: finalVideoUrl,
+      kind: "videos",
+      projectId: plan.projectId,
+      filename,
+    });
+    await markSceneAnimated(target.sceneId, { videoUrl: stored.url });
+    const billedSec = Math.min(15, Math.max(4, target.durationSec));
+    await recordSpend({
+      projectId: plan.projectId,
+      kind: "video",
+      amountUsd: billedSec * FAL_SEEDANCE_PER_SECOND["1080p"],
+      meta: { sceneOrder: target.order, durationSec: billedSec },
+    });
+    if (plan.quality === "hero") {
+      await recordSpend({
+        projectId: plan.projectId,
+        kind: "upscale",
+        amountUsd: estimateTopazUpscale(billedSec, "gt-1080p"),
+        meta: { sceneOrder: target.order },
+      });
+    }
+  };
+
+  try {
+    await attempt();
+    return { ok: true };
+  } catch {
+    try {
+      await attempt();
+      return { ok: true };
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "unknown error";
+      await markSceneAnimateFailed(target.sceneId, msg);
+      return { ok: false };
+    }
+  }
+}
+
+/** Step 3: release the lock by settling status. */
+export async function finishAnimate(projectId: string): Promise<void> {
+  await updateProjectStatus(projectId, "ready");
+}
+
 /** Fixed motion direction for the before-after morph clip (first frame =
  *  operator's before photo, last frame = the generated after). Affirmative
  *  only, locked camera — the transformation IS the motion. */
