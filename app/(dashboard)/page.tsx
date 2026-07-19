@@ -92,7 +92,7 @@ export default async function ProjectsPage() {
             href="/new?format=style-explorer"
             kicker="YouTube long-form"
             title="Style explorer"
-            hint="Describe a space, review the rendered base, then GPT-5.5 restyles that exact space into ~10 recognisable styles. SEO metadata + card copy included."
+            hint="Describe a space, review the rendered base, then GPT-5.6 restyles that exact space into ~10 recognisable styles. SEO metadata + card copy included."
             cost="~$1.75"
             aspectClass="aspect-video"
           />

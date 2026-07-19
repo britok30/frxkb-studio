@@ -60,7 +60,7 @@ const FORMAT_PRESETS: Record<
   "style-explorer": {
     label: "Style explorer",
     kicker: "YouTube long-form",
-    hint: "Describe a space, render a base, then GPT-5.5 restyles that exact space into ~10 recognisable design styles. SEO metadata + card copy included.",
+    hint: "Describe a space, render a base, then GPT-5.6 restyles that exact space into ~10 recognisable design styles. SEO metadata + card copy included.",
     sceneCount: 10, // number of styles
     sceneDurationSec: 0, // static stills
     aspectClass: "aspect-video", // 16:9 for YouTube
@@ -144,14 +144,14 @@ export default function NewProjectPage() {
   }, []);
   const [niche, setNiche] = useState(initialNiche);
   const [operatorNotes, setOperatorNotes] = useState("");
-  // Committed photographic look (reel/carousel only). Null = "let GPT-5.5
+  // Committed photographic look (reel/carousel only). Null = "let GPT-5.6
   // choose the light per concept" — the pre-looks behavior.
   const [lookId, setLookId] = useState<string | null>(initialLookParam);
   // Render-quality tier (reel/carousel). standard = 2K stills + 1080p video;
   // hero = 4K stills + Topaz 4K60 video for YouTube/portfolio use.
   const [quality, setQuality] = useState<"standard" | "hero">(initialQuality);
   // Moodboard / photo references (reel/carousel, ≤5). Steer materials,
-  // palette, and mood for every render; GPT-5.5 also sees them while
+  // palette, and mood for every render; GPT-5.6 also sees them while
   // writing the brief.
   const [referenceImageUrls, setReferenceImageUrls] = useState<string[]>([]);
   const [showCustomize, setShowCustomize] = useState(false);
@@ -382,7 +382,7 @@ export default function NewProjectPage() {
                   format === "before-after"
                     ? "Upload a real photo of an interior or exterior. Describe what should change. The studio generates the after, animates it, and bundles a transformation triptych."
                     : format === "style-explorer"
-                      ? "Pick the program and vantage, describe the space, and render a base image. Review it here — then GPT-5.5 reimagines that exact space in distinct, recognisable design styles."
+                      ? "Pick the program and vantage, describe the space, and render a base image. Review it here — then GPT-5.6 reimagines that exact space in distinct, recognisable design styles."
                       : "Describe a home a designer would screenshot — a place with strong identity, a quality of light, materials and the kind of objects (plants, art, books) that fill it. Or have the studio suggest one."
                 }
               />
@@ -476,7 +476,7 @@ export default function NewProjectPage() {
                     ›
                   </span>
                   {format === "reel"
-                    ? "Add notes for GPT-5.5"
+                    ? "Add notes for GPT-5.6"
                     : `Customize (${sceneCount} slides)`}
                 </button>
                 )}
@@ -508,7 +508,7 @@ export default function NewProjectPage() {
 
                         <label className="flex flex-col gap-1.5">
                           <span className="text-xs text-muted-foreground tracking-tight">
-                            Notes for GPT-5.5 (optional)
+                            Notes for GPT-5.6 (optional)
                           </span>
                           <textarea
                             value={operatorNotes}
@@ -540,7 +540,7 @@ export default function NewProjectPage() {
               <StepHeader
                 eyebrow="Step 3 of 3"
                 title="Ready to script."
-                hint="GPT-5.5 writes a concept brief, then a scene-by-scene shotlist. Takes about 30 seconds. You'll review before any images get generated."
+                hint="GPT-5.6 writes a concept brief, then a scene-by-scene shotlist. Takes about 30 seconds. You'll review before any images get generated."
               />
 
               <div className="rounded-xl border divide-y">
@@ -589,7 +589,7 @@ export default function NewProjectPage() {
                     <ReviewRow label="Niche" value={niche.trim()} onEdit={() => go(2)} />
                     <ReviewRow
                       label="Look"
-                      value={getLook(lookId)?.name ?? "GPT-5.5's choice"}
+                      value={getLook(lookId)?.name ?? "GPT-5.6's choice"}
                       onEdit={() => go(2)}
                     />
                     <ReviewRow
@@ -1102,7 +1102,7 @@ function LookPicker({
           selected={value === null}
           onSelect={() => onChange(null)}
           name="No look"
-          tagline="GPT-5.5 picks the light per concept"
+          tagline="GPT-5.6 picks the light per concept"
           swatch="linear-gradient(135deg, #d8d8d8 0%, #a8a8a8 50%, #6f6f6f 100%)"
         />
         {looks.map((l: Look) => (
@@ -1179,7 +1179,7 @@ function QualityToggle({
 
 /** Moodboard / photo references (≤5). Uploaded through /api/upload; the
  *  returned Blob URLs condition every render via nano-banana /edit and are
- *  shown to GPT-5.5 while it writes the brief. */
+ *  shown to GPT-5.6 while it writes the brief. */
 function MoodboardPicker({
   urls,
   onChange,
@@ -1558,7 +1558,7 @@ function StyleExplorerStep({
         />
         <label className="flex flex-col gap-1.5">
           <span className="text-xs text-muted-foreground tracking-tight">
-            Notes for GPT-5.5 (optional)
+            Notes for GPT-5.6 (optional)
           </span>
           <textarea
             value={notes}
@@ -1602,11 +1602,11 @@ function WorldChooser({
   const writeNicheRef = useRef<string>("");
   // Tracks the in-flight suggest request so we can cancel it when the
   // operator switches modes or kicks off a new request. Without this,
-  // a stale GPT-5.5 response overwrites the input the user has since cleared.
+  // a stale GPT-5.6 response overwrites the input the user has since cleared.
   const inflightController = useRef<AbortController | null>(null);
-  // Niches GPT-5.5 has proposed and the operator has rejected. Persisted to
+  // Niches GPT-5.6 has proposed and the operator has rejected. Persisted to
   // localStorage so the avoid-list is non-empty even on a fresh session's
-  // first click — otherwise GPT-5.5 gets identical input every time and keeps
+  // first click — otherwise GPT-5.6 gets identical input every time and keeps
   // proposing the same "obvious gap" answer. Capped at 30.
   const REJECTED_KEY = "frxkb-rejected-niches";
   const REJECTED_CAP = 30;
@@ -1642,7 +1642,7 @@ function WorldChooser({
   }
 
   const suggestRequest = useCallback(async () => {
-    // Whatever GPT-5.5 proposed last is now considered rejected — record it
+    // Whatever GPT-5.6 proposed last is now considered rejected — record it
     // before we ask for another. Persisted to localStorage so it survives
     // page refresh / new sessions.
     if (aiNicheRef.current) rememberRejection(aiNicheRef.current);
@@ -1699,7 +1699,7 @@ function WorldChooser({
     }
   }, [format, worldType, onNiche]);
 
-  // Switch handler: preserve text on each side. Never auto-fires GPT-5.5 —
+  // Switch handler: preserve text on each side. Never auto-fires GPT-5.6 —
   // suggestion only happens when the operator clicks the button.
   function switchMode(next: Mode) {
     if (next === mode) return;
@@ -1815,7 +1815,7 @@ function WorldChooser({
             className="flex items-center justify-between gap-4 rounded-xl border border-dashed p-4"
           >
             <span className="text-xs text-muted-foreground tracking-tight max-w-md leading-relaxed">
-              GPT-5.5 looks at past worlds and the ones you&apos;ve skipped, then
+              GPT-5.6 looks at past worlds and the ones you&apos;ve skipped, then
               proposes a fresh save-worthy one.
             </span>
             <motion.button
