@@ -2,6 +2,7 @@
 
 import { useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
+import { upload } from "@vercel/blob/client";
 import { motion } from "motion/react";
 import { toast } from "sonner";
 import { Clapperboard, Download, Music } from "lucide-react";
@@ -70,15 +71,13 @@ export function StitchPanel({
     setUploadingMusic(true);
     const toastId = toast.loading(`Uploading ${file.name}…`);
     try {
-      const form = new FormData();
-      form.append("file", file);
-      const res = await fetch("/api/upload", { method: "POST", body: form });
-      if (!res.ok) {
-        const err = await res.json().catch(() => ({}));
-        throw new Error(err.error ?? `HTTP ${res.status}`);
-      }
-      const data = (await res.json()) as { url: string };
-      setMusicUrl(data.url);
+      // Client-direct to Blob — routing the bytes through a serverless
+      // function hits Vercel's 4.5MB body cap (a normal MP3 is 7-10MB).
+      const blob = await upload(`music/${file.name}`, file, {
+        access: "public",
+        handleUploadUrl: "/api/upload/music",
+      });
+      setMusicUrl(blob.url);
       setMusicName(file.name);
       setMusicDurationSec(await readAudioDuration(file));
       toast.success("Music ready — it will replace the clips' ambient audio", { id: toastId });
