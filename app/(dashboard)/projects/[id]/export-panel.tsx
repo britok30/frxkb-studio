@@ -180,23 +180,38 @@ function YouTubeMetadataView({
   );
 }
 
+/** Caption with its hashtags appended — one copy grabs the whole paste. */
+function withTags(caption: string, tags: string[]): string {
+  if (tags.length === 0) return caption;
+  return `${caption}\n\n${tags.map((t) => `#${t}`).join(" ")}`;
+}
+
 function ReelMetadataView({ metadata }: { metadata: Extract<Metadata, { kind: "reel" }> }) {
   return (
     <div className="flex flex-col gap-6">
       <PlatformSection title="TikTok">
-        <CopyField label="Caption" value={metadata.tiktokCaption} multiline />
-        <ChipList label="Hashtags" items={metadata.tiktokHashtags.map((h) => `#${h}`)} />
+        <CopyField
+          label="Caption + hashtags"
+          value={withTags(metadata.tiktokCaption, metadata.tiktokHashtags)}
+          multiline
+        />
       </PlatformSection>
       <Separator />
       <PlatformSection title="Instagram Reels">
-        <CopyField label="Caption" value={metadata.instagramCaption} multiline />
-        <ChipList label="Hashtags" items={metadata.instagramHashtags.map((h) => `#${h}`)} />
+        <CopyField
+          label="Caption + hashtags"
+          value={withTags(metadata.instagramCaption, metadata.instagramHashtags)}
+          multiline
+        />
       </PlatformSection>
       <Separator />
       <PlatformSection title="YouTube Shorts">
         <CopyField label="Title" value={metadata.shortsTitle} />
-        <CopyField label="Description" value={metadata.shortsDescription} multiline />
-        <ChipList label="Hashtags" items={metadata.shortsHashtags.map((h) => `#${h}`)} />
+        <CopyField
+          label="Description + hashtags"
+          value={withTags(metadata.shortsDescription, metadata.shortsHashtags)}
+          multiline
+        />
       </PlatformSection>
       <Separator />
       <CopyField label="Pinned comment (reusable across all)" value={metadata.pinnedComment} multiline />
@@ -208,8 +223,11 @@ function CarouselMetadataView({ metadata }: { metadata: Extract<Metadata, { kind
   return (
     <div className="flex flex-col gap-4">
       <PlatformSection title="Instagram carousel">
-        <CopyField label="Caption" value={metadata.instagramCaption} multiline />
-        <ChipList label="Hashtags" items={metadata.instagramHashtags.map((h) => `#${h}`)} />
+        <CopyField
+          label="Caption + hashtags"
+          value={withTags(metadata.instagramCaption, metadata.instagramHashtags)}
+          multiline
+        />
       </PlatformSection>
     </div>
   );
