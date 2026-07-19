@@ -3,6 +3,7 @@
 import { useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { upload } from "@vercel/blob/client";
+import { saveAs } from "file-saver";
 import { motion } from "motion/react";
 import { toast } from "sonner";
 import { Clapperboard, Download, Music } from "lucide-react";
@@ -41,6 +42,25 @@ export function StitchPanel({
   const [musicUrl, setMusicUrl] = useState<string | null>(null);
   const [musicName, setMusicName] = useState<string | null>(null);
   const [uploadingMusic, setUploadingMusic] = useState(false);
+  const [downloading, setDownloading] = useState(false);
+
+  /** Fetch-then-save: the `download` attribute is ignored on cross-origin
+   *  URLs (Blob lives on another origin), which opens the video in a tab
+   *  instead of saving it. */
+  async function downloadFinal() {
+    if (!finalVideoUrl || downloading) return;
+    setDownloading(true);
+    try {
+      const res = await fetch(finalVideoUrl);
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      saveAs(await res.blob(), "final.mp4");
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Unknown error";
+      toast.error("Download failed", { description: message });
+    } finally {
+      setDownloading(false);
+    }
+  }
   const [musicDurationSec, setMusicDurationSec] = useState<number | null>(null);
   const [perStillSec, setPerStillSec] = useState(7);
   const [targetMinutes, setTargetMinutes] = useState(10);
@@ -160,13 +180,15 @@ export function StitchPanel({
                 className="w-full rounded-md border bg-muted/40"
                 style={{ aspectRatio: aspect.replace(":", " / ") }}
               />
-              <a
-                href={finalVideoUrl}
-                download
-                className="text-xs text-muted-foreground hover:text-foreground tracking-tight inline-flex items-center gap-1.5"
+              <button
+                type="button"
+                onClick={() => void downloadFinal()}
+                disabled={downloading}
+                className="text-xs text-muted-foreground hover:text-foreground tracking-tight inline-flex items-center gap-1.5 disabled:opacity-50"
               >
-                <Download className="size-3.5" /> Download final.mp4
-              </a>
+                <Download className="size-3.5" />
+                {downloading ? "Downloading…" : "Download final.mp4"}
+              </button>
             </div>
           )}
           <div className="flex flex-wrap items-center gap-3">
