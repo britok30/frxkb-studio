@@ -1106,11 +1106,14 @@ export async function animateAllScenes(
         // first frame and the generated AFTER render is the last frame, so
         // the clip shows the room actually transforming instead of ambient
         // motion on the after still.
+        // Reels render one extra second of footage per clip: the stitch's
+        // 1s crossfades consume overlap, and without the pad a 3×5s reel
+        // lands at 13s instead of 15s. Morphs don't crossfade — no pad.
         const seedanceResult = await generateVideo({
           imageUrl: isMorph ? (scene.referenceImageUrl as string) : (scene.imageUrl as string),
           endImageUrl: isMorph ? (scene.imageUrl as string) : undefined,
           motionPrompt: motion,
-          durationSec: scene.durationSec || 5,
+          durationSec: (scene.durationSec || 5) + (isMorph ? 0 : XFADE_SEC),
           resolution: "1080p",
           aspectRatio: animateAspect,
           seed: freshSeed(),
@@ -1342,11 +1345,13 @@ export async function animatePlannedScene(
   const attempt = async () => {
     await heartbeatGenerationLock(plan.projectId);
     await markSceneAnimating(target.sceneId, target.motion);
+    // Crossfade pad — see animateAllScenes: reels render +XFADE_SEC of
+    // footage so the stitched final keeps its full nominal length.
     const seedanceResult = await generateVideo({
       imageUrl: plan.isMorph ? (target.referenceImageUrl as string) : target.imageUrl,
       endImageUrl: plan.isMorph ? target.imageUrl : undefined,
       motionPrompt: target.motion,
-      durationSec: target.durationSec,
+      durationSec: target.durationSec + (plan.isMorph ? 0 : XFADE_SEC),
       resolution: "1080p",
       aspectRatio: plan.aspectRatio,
       seed: freshSeed(),
@@ -1369,7 +1374,7 @@ export async function animatePlannedScene(
       filename,
     });
     await markSceneAnimated(target.sceneId, { videoUrl: stored.url });
-    const billedSec = Math.min(15, Math.max(4, target.durationSec));
+    const billedSec = Math.min(15, Math.max(4, target.durationSec + (plan.isMorph ? 0 : XFADE_SEC)));
     await recordSpend({
       projectId: plan.projectId,
       kind: "video",
@@ -1626,10 +1631,13 @@ function buildShotstackEdit(
       lengthMs = seg.ms + overlap;
       boundary += seg.ms;
     } else if (crossfade) {
-      // Videos have fixed footage: slide the whole clip X earlier instead.
-      startMs = boundary - overlap;
-      lengthMs = seg.ms;
-      boundary = startMs + seg.ms;
+      // Videos carry XFADE_SEC of padded footage (rendered long at animate
+      // time): each clip starts ON its boundary and its pad extends under
+      // the next clip's fade-in, so the final keeps full nominal length.
+      // The last clip trims its pad to end exactly on the boundary.
+      startMs = boundary;
+      lengthMs = seg.ms + (i < segments.length - 1 ? xfadeMs : 0);
+      boundary += seg.ms;
     } else {
       startMs = boundary;
       lengthMs = seg.ms;

@@ -1767,7 +1767,7 @@ describe("stitchFinalVideo — Shotstack backend (transitions)", () => {
     });
   }
 
-  it("reel: true crossfades — one track per clip (later clips on top), 1s overlap, fade-in on incoming", async () => {
+  it("reel: true crossfades — boundary starts, padded footage under each fade-in, full 15s kept", async () => {
     shotstackMocks.isShotstackConfigured.mockReturnValue(true);
     reelReady();
 
@@ -1782,11 +1782,16 @@ describe("stitchFinalVideo — Shotstack backend (transitions)", () => {
     const [top, mid, bottom] = tracks.map((t: { clips: unknown[] }) => t.clips[0]) as Array<{
       start: number; length: number; transition?: { in?: string };
     }>;
+    // Clips start ON their 5s boundaries; non-last clips play their 1s
+    // footage pad under the next clip's fade-in; last trims to the end.
     expect(bottom.start).toBe(0);
+    expect(bottom.length).toBe(6);
     expect(bottom.transition).toBeUndefined();
-    expect(mid.start).toBe(4); // 5s clip, 1s overlap
+    expect(mid.start).toBe(5);
+    expect(mid.length).toBe(6);
     expect(mid.transition).toEqual({ in: "fade" });
-    expect(top.start).toBe(8);
+    expect(top.start).toBe(10);
+    expect(top.length).toBe(5);
     expect(top.transition).toEqual({ in: "fade" });
     expect(edit.output.size).toEqual({ width: 1080, height: 1920 });
   });
@@ -1829,9 +1834,9 @@ describe("stitchFinalVideo — Shotstack backend (transitions)", () => {
     for (const t of edit.timeline.tracks.slice(0, 3)) {
       expect(t.clips[0].asset.volume).toBe(0);
     }
-    // Crossfaded reel: 15s − 2×1s overlap = 13s timeline; 6s song → 6+6+1.
+    // Padded crossfade reel keeps the full 15s; 6s song → 6+6+3.
     const music = edit.timeline.tracks[3].clips;
-    expect(music.map((c: { length: number }) => c.length)).toEqual([6, 6, 1]);
+    expect(music.map((c: { length: number }) => c.length)).toEqual([6, 6, 3]);
     expect(edit.timeline.soundtrack).toBeUndefined();
   });
 
