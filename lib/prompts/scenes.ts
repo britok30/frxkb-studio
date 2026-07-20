@@ -33,6 +33,12 @@ Pro is materially better at three things vs the older model — lean into all th
 
 The single most important rule: every scene must read as one cohesive HOME. Same lighting style, same era, same material palette, same family of objects. Vary composition, scale, and which corner of the home we're seeing — never the visual world.
 
+Cohesion comes from ARCHITECTURE, MATERIALS, and LIGHT — not from carrying the same props into every frame. Hard anti-repetition rules:
+- Any specific movable object (a named blanket, mug, book, planter, basket, lamp) may be named in AT MOST TWO scenes across the whole set — and never in consecutive scenes.
+- Each room owns its own objects. A kitchen's still life is culinary; a bedroom's is nightstand-personal; a reading nook's is books-and-textiles. Never restage one room's object cluster in another room.
+- Each intimate detail shot centers a vignette that has not appeared before — new hero object, new supporting cast. Two detail shots that could swap captions are a failure.
+- Fixed architecture (the concrete walls, the glazing, a built-in hearth) recurs freely — that is what makes it one home.
+
 Each prompt is one rich paragraph (70-110 words — Pro weights early tokens heaviest, so tight beats exhaustive) structured like this:
 - **Subject + composition** — what we see + framing (wide establishing of a living room, eye-level mid through a kitchen, intimate detail of a reading nook, low-angle threshold from a hallway). Anchor with a focal length when it serves: "shot on 35mm" or "shot on 50mm" or "wide-angle 24mm" or "85mm portrait compression."
 - **Materials, named precisely** — say "honed travertine," "raw board-formed concrete," "polished terrazzo," "white-oiled oak." Specificity > adjectives.
@@ -76,7 +82,7 @@ export function buildScenesUser(input: ScenePromptsInput): string {
     ? [
         "",
         `Committed photographic look — ${look.name}: ${look.prompt}`,
-        "Write EVERY scene's light and color temperature inside this exact look. Do not drift to a different time of day or light source in any scene; vary composition and subject, never the light.",
+        "Write EVERY scene's light and color temperature inside this exact look. Do not drift to a different time of day or light source in any scene; vary composition and subject, never the light. DO vary how the light behaves in each frame — raking a wall here, pooling on a floor there, edge-lighting a ceramic, glowing through a doorway — instead of repeating one stock shadow phrase across the set.",
         "The look owns the photographic register: do NOT name a film stock, camera body, or color grade in any scene — one register is appended downstream for the whole set. Spend those words on subject, materials, objects, and composition instead.",
       ].join("\n")
     : "";
@@ -95,7 +101,7 @@ export function buildScenesUser(input: ScenePromptsInput): string {
           "Object set committed in the brief (draw scene objects from this list, not from defaults):",
           ...concept.objectSet.map((o) => `- ${o}`),
           "",
-          "Distribute these across scenes — do NOT name every object in every scene, but EVERY named scene-object must come from this list or be an obvious lineage-sibling. Different scenes spotlight different subsets so the sequence reads as a walk through one coherent home.",
+          "Distribute these across scenes — do NOT name every object in every scene, but EVERY named scene-object must come from this list or be an obvious lineage-sibling. Assign each object to one or two scenes at most (never consecutive), so every frame spotlights a DIFFERENT subset and the sequence reads as a walk through one coherent home rather than the same tableau restaged room to room. When the list runs thin, invent lineage-siblings for variety instead of reusing a spent object.",
         ].join("\n")
       : "";
   return [
