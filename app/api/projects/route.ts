@@ -10,7 +10,10 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 const CreateBody = z.object({
-  niche: z.string().min(2).max(200),
+  /** The world/topic seed. Operators paste anything from two words to a
+   *  full written brief — long pastes are BETTER input for the concept
+   *  stage, so the cap matches operatorNotes. */
+  niche: z.string().min(2).max(2000),
   format: FormatSchema,
   worldType: WorldTypeSchema,
   sceneCount: z.number().int().min(1).max(120).optional(),
@@ -46,8 +49,12 @@ export async function POST(req: Request) {
 
   const parsed = CreateBody.safeParse(body);
   if (!parsed.success) {
+    // Name the failing field in the message — the client toasts `error`
+    // verbatim, and a bare "Invalid input" helps nobody.
+    const first = parsed.error.issues[0];
+    const where = first?.path.join(".") || "input";
     return NextResponse.json(
-      { error: "Invalid input", issues: parsed.error.issues },
+      { error: `Invalid ${where}: ${first?.message ?? "invalid input"}`, issues: parsed.error.issues },
       { status: 400 }
     );
   }
