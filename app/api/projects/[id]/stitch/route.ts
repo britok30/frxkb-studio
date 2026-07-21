@@ -5,8 +5,10 @@ import { withSessionOperator } from "@/lib/route-helpers";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
-// Compose runs in seconds, but leave headroom for long reels + Blob re-host.
-export const maxDuration = 120;
+// Reels compose in seconds, but a style-explorer long-form is another animal:
+// ~90 image segments composed into a 10-20 MINUTE video, then a several-
+// hundred-MB Blob re-host. Platform max (matches /api/inngest).
+export const maxDuration = 800;
 
 const PostBody = z.object({
   /** Optional music bed (public Blob URL from /api/upload). Spans the whole
