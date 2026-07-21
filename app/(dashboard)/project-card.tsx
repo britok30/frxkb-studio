@@ -5,6 +5,7 @@ import { motion } from "motion/react";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { ease, staggerDelay } from "@/lib/motion";
+import { operatorInitials } from "@/lib/operator-labels";
 
 const STATUS_LABEL: Record<string, string> = {
   draft: "Draft",
@@ -33,6 +34,8 @@ export function ProjectCard({
     worldType: string;
     status: string;
     targetDurationSec: number | null;
+    /** Creator attribution (allowlist email). Null on legacy rows. */
+    operatorEmail?: string | null;
     /** Resolved hero image: post-finalize thumbnailUrl, else the after image
      *  (for before-after) or the anchor still. Null when no scene has
      *  rendered yet — we fall back to a placeholder. */
@@ -40,6 +43,7 @@ export function ProjectCard({
   };
   index: number;
 }) {
+  const initials = operatorInitials(project.operatorEmail);
   return (
     <motion.div
       initial={{ opacity: 0, y: 8 }}
@@ -61,6 +65,14 @@ export function ProjectCard({
               />
             ) : (
               <ProjectCoverPlaceholder />
+            )}
+            {initials && (
+              <span
+                title={project.operatorEmail ?? undefined}
+                className="absolute left-2 top-2 flex h-6 w-6 items-center justify-center rounded-full border border-white/40 bg-black/55 text-[9px] font-bold tracking-wide text-white backdrop-blur-sm"
+              >
+                {initials}
+              </span>
             )}
           </div>
 

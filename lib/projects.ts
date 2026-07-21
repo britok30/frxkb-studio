@@ -205,6 +205,7 @@ export async function createProject(input: CreateProjectInput): Promise<CreatePr
     worldType: input.worldType,
     status: "scripting",
     lookId: look?.id ?? null,
+    operatorEmail: op.email,
     quality: input.quality ?? "standard",
     referenceImageUrls: referenceImageUrls.length > 0 ? referenceImageUrls : null,
     targetDurationSec: targetDurationSec || null,
@@ -295,6 +296,7 @@ export async function createBeforeAfterProject(
     worldType: input.worldType,
     aspectRatio: input.aspectRatio,
     status: "scripting",
+    operatorEmail: op.email,
     targetDurationSec: afterDurationSec,
     concept: {
       workingTitle: concept.workingTitle,
@@ -428,6 +430,7 @@ export async function createStyleExplorerProject(
     propertyType: input.propertyType,
     aspectRatio: input.aspectRatio,
     status: "scripting",
+    operatorEmail: op.email,
     targetDurationSec: null,
     concept: {
       workingTitle,

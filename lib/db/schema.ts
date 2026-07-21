@@ -37,6 +37,9 @@ export const projects = pgTable(
      *  prompt at generation time via applyLookToPrompt. Nullable: legacy
      *  projects and "let GPT-5.5 decide" projects have no look. */
     lookId: text("look_id"),
+    /** Which operator created this project (allowlist email). Nullable for
+     *  rows that predate attribution; those backfill from spend_events. */
+    operatorEmail: text("operator_email"),
     /** Moodboard / photo references uploaded at creation (reel/carousel,
      *  1-5 Blob URLs). When present, every scene renders via /edit
      *  conditioned on them — the refs steer materials, palette, and mood
