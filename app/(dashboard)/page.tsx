@@ -3,7 +3,12 @@ import { auth } from "@/auth";
 import { getOperator } from "@/lib/operators";
 import { listProjectsForDashboard } from "@/lib/projects";
 import { sumSpendSince, sumSpendToday } from "@/lib/spend";
-import { formatCost } from "@/lib/pricing";
+import {
+  estimateAnimateBatch,
+  estimateProjectTotal,
+  FAL_NANO_BANANA_PER_IMAGE,
+  formatCost,
+} from "@/lib/pricing";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import type { Project } from "@/lib/db";
 import { ProjectCard } from "./project-card";
@@ -76,8 +81,8 @@ export default async function ProjectsPage() {
             href="/new?format=reel"
             kicker="Instagram · TikTok · YouTube Shorts"
             title="Reel"
-            hint="3 × 5s, each a fresh text-to-image, animated via Seedance + Topaz Proteus 2K + Apollo 60fps."
-            cost="~$6.80"
+            hint="3 × 5s, each a fresh text-to-image, animated at native 1080p via Seedance. Hero quality adds Topaz 4K60."
+            cost={`~${formatCost(estimateProjectTotal("reel", 3) + estimateAnimateBatch(3, 5))}`}
             aspectClass="aspect-[9/16]"
           />
           <FeatureCard
@@ -85,7 +90,7 @@ export default async function ProjectsPage() {
             kicker="Instagram · TikTok"
             title="Before / after"
             hint="Drop a real photo, AI transforms it. After is animated (7s); the upload stays static for a clean cut. Live ArchitectGPT demo."
-            cost="~$3.05"
+            cost={`~${formatCost(estimateProjectTotal("before-after", 2))}`}
             aspectClass="aspect-[9/16]"
           />
           <FeatureCard
@@ -93,7 +98,7 @@ export default async function ProjectsPage() {
             kicker="YouTube long-form"
             title="Style explorer"
             hint="Describe a space, review the rendered base, then GPT-5.6 restyles that exact space into ~10 recognisable styles. SEO metadata + card copy included."
-            cost="~$1.75"
+            cost={`~${formatCost(estimateProjectTotal("style-explorer", 10))}`}
             aspectClass="aspect-video"
           />
           <FeatureCard
@@ -101,7 +106,7 @@ export default async function ProjectsPage() {
             kicker="Instagram"
             title="Carousel"
             hint="10 still slides, no video."
-            cost="~$2.35"
+            cost={`~${formatCost(estimateProjectTotal("carousel", 10))}`}
             aspectClass="aspect-square"
           />
           <FeatureCard
@@ -109,7 +114,7 @@ export default async function ProjectsPage() {
             kicker="Free play"
             title="Scratch image"
             hint="One-off prompt → single nano-banana-pro image."
-            cost="~$0.23"
+            cost={`~${formatCost(FAL_NANO_BANANA_PER_IMAGE)}`}
             aspectClass="aspect-square"
             variant="ghost"
           />
