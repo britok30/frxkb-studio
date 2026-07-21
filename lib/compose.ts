@@ -54,10 +54,24 @@ export function __resetComposeForTests(): void {
 
 export async function composeVideo(tracks: ComposeTrack[]): Promise<ComposeOutput> {
   const client = clientForOperator();
-  const result = await client.subscribe("fal-ai/ffmpeg-api/compose", {
-    input: { tracks },
-    logs: false,
-  });
+  let result;
+  try {
+    result = await client.subscribe("fal-ai/ffmpeg-api/compose", {
+      input: { tracks },
+      logs: false,
+    });
+  } catch (err) {
+    // fal's ValidationError message is a bare "Unprocessable Entity" — the
+    // actionable part (e.g. "Could not download <url>") hides in body.detail.
+    // Observed 2026-07-21: fal's fetcher failing against Vercel Blob URLs
+    // wholesale while Shotstack read the same files fine.
+    const detail = (err as { body?: { detail?: unknown } })?.body?.detail;
+    if (detail) {
+      const msg = err instanceof Error ? err.message : "compose failed";
+      throw new Error(`${msg}: ${JSON.stringify(detail).slice(0, 500)}`);
+    }
+    throw err;
+  }
   const data = result.data as { video_url?: string; thumbnail_url?: string };
   if (!data?.video_url) throw new Error("compose returned no video url");
   return {
