@@ -1780,6 +1780,10 @@ export const MANIFEST_VERSION = 2;
 
 export type FinalizeResult = {
   metadata: Metadata;
+  /** True when every clip exists and no final video is stitched — the ROUTE
+   *  enqueues a background stitch (the vendor render never runs inside a
+   *  request-bound function). */
+  autoStitch?: boolean;
 };
 
 /**
@@ -1923,12 +1927,14 @@ export async function finalizeProject(projectId: string): Promise<FinalizeResult
     });
 
     // Finalize means "package the deliverable" — so when every clip exists
-    // and no final video has been stitched yet, stitch one automatically
-    // (native ambient audio, default settings). The stitch panel remains
-    // for re-stitching with a music bed or different knobs. Soft-fail: a
-    // stitch hiccup must never un-finalize a project.
+    // and no final video has been stitched yet, flag the route to ENQUEUE a
+    // background stitch (native ambient audio, default settings) rather
+    // than rendering inline: vendor renders never run inside request-bound
+    // functions. The stitch panel remains for re-stitching with a music bed
+    // or different knobs.
     // Style-explorer is excluded on purpose — a stills slideshow without a
     // music upload is a silent video, so that stitch stays operator-driven.
+    let autoStitch = false;
     if (
       (project.format === "reel" || project.format === "before-after") &&
       !project.finalVideoUrl
@@ -1937,18 +1943,10 @@ export async function finalizeProject(projectId: string): Promise<FinalizeResult
         project.format === "before-after"
           ? renderable.filter((s) => !!s.referenceImageUrl)
           : renderable;
-      const allAnimated =
-        animatable.length > 0 && animatable.every((s) => !!s.videoUrl);
-      if (allAnimated) {
-        try {
-          await stitchFinalVideo(projectId);
-        } catch (err) {
-          console.warn("[finalize] auto-stitch failed (project stays finalized):", err);
-        }
-      }
+      autoStitch = animatable.length > 0 && animatable.every((s) => !!s.videoUrl);
     }
 
-    return { metadata };
+    return { metadata, autoStitch };
   } catch (err) {
     await updateProjectStatus(projectId, "ready");
     throw err;

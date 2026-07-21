@@ -9,6 +9,8 @@ import { currentOperator } from "@/lib/operators";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
+// Single nano-banana text-to-image (~15-40s at 2K).
+export const maxDuration = 300;
 
 const Body = z.object({
   /** Operator's free-text description of the space to render as the base. */

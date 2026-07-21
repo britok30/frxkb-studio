@@ -8,6 +8,9 @@ import { withSessionOperator } from "@/lib/route-helpers";
 export const runtime = "nodejs";
 // Concept + scene generation can take 20-60s; opt out of static generation.
 export const dynamic = "force-dynamic";
+// Two interactive GPT calls the UI needs synchronously — bounded, but give
+// them real headroom. Anything heavier than LLM text belongs on Inngest.
+export const maxDuration = 300;
 
 const CreateBody = z.object({
   /** The world/topic seed. Operators paste anything from two words to a

@@ -6,6 +6,9 @@ import { storeFromUrl } from "@/lib/storage";
 import { withSessionOperator } from "@/lib/route-helpers";
 
 export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
+// Single nano-banana image — scratchpad.
+export const maxDuration = 300;
 
 // projectId becomes a path segment under public/generated/images — must be
 // constrained to safe characters to prevent path traversal.

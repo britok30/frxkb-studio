@@ -1907,13 +1907,13 @@ describe("finalize auto-stitch", () => {
     storageMocks.storeFromUrl.mockResolvedValue({ url: "https://blob/final.mp4", pathname: "x" });
   }
 
-  it("finalizing a fully-animated reel also stitches the final video (default settings, no music)", async () => {
+  it("finalizing a fully-animated reel flags autoStitch — it never renders inline (the route enqueues Inngest)", async () => {
     finalizableReel(true);
 
-    await finalizeProject("p_1");
+    const out = await finalizeProject("p_1");
 
-    expect(composeMocks.composeVideo).toHaveBeenCalledTimes(1);
-    expect(dbMocks.markProjectFinalVideo).toHaveBeenCalledWith("p_1", "https://blob/final.mp4");
+    expect(out.autoStitch).toBe(true);
+    expect(composeMocks.composeVideo).not.toHaveBeenCalled();
   });
 
   it("skips auto-stitch when clips aren't animated yet, and finalize still succeeds", async () => {
@@ -1922,16 +1922,18 @@ describe("finalize auto-stitch", () => {
     const out = await finalizeProject("p_1");
 
     expect(out.metadata).toBeTruthy();
+    expect(out.autoStitch).toBe(false);
     expect(composeMocks.composeVideo).not.toHaveBeenCalled();
   });
 
-  it("a stitch failure never un-finalizes the project", async () => {
+  it("finalize succeeds regardless of stitch-backend health (render is deferred to Inngest)", async () => {
     finalizableReel(true);
     composeMocks.composeVideo.mockRejectedValue(new Error("compose down"));
 
     const out = await finalizeProject("p_1");
 
     expect(out.metadata).toBeTruthy();
+    expect(out.autoStitch).toBe(true);
     expect(dbMocks.markProjectFinalized).toHaveBeenCalled();
   });
 });

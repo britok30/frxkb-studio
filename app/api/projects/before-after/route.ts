@@ -6,6 +6,8 @@ import { withSessionOperator } from "@/lib/route-helpers";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
+// One GPT concept call — interactive, bounded.
+export const maxDuration = 300;
 
 const Body = z.object({
   /** Public Vercel Blob URL returned by /api/upload. */

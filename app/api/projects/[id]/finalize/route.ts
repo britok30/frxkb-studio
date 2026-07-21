@@ -1,10 +1,13 @@
 import { NextResponse } from "next/server";
 import { finalizeProject, ProjectBusyError } from "@/lib/projects";
+import { updateStitchState } from "@/lib/projects-db";
 import { withSessionOperator } from "@/lib/route-helpers";
+import { currentOperator } from "@/lib/operators";
+import { inngest } from "@/inngest/client";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
-// Metadata + thumbnail call still bounded; no ffmpeg here. Default ~60s is enough.
+// One GPT metadata call; the auto-stitch is ENQUEUED, never rendered here.
 export const maxDuration = 120;
 
 export async function POST(
@@ -17,6 +20,19 @@ export async function POST(
   return withSessionOperator(async () => {
     try {
       const result = await finalizeProject(id);
+      // Auto-stitch rides the same background pipeline as the stitch panel.
+      // Soft-fail: an enqueue hiccup must never un-finalize the project.
+      if (result.autoStitch) {
+        try {
+          await updateStitchState(id, "queued");
+          await inngest.send({
+            name: "project/stitch.requested",
+            data: { projectId: id, operatorEmail: currentOperator().email, opts: {} },
+          });
+        } catch (err) {
+          console.warn("[finalize] auto-stitch enqueue failed (project stays finalized):", err);
+        }
+      }
       return NextResponse.json(result);
     } catch (err) {
       if (err instanceof ProjectBusyError) {
