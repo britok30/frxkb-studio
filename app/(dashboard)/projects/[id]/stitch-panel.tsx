@@ -99,8 +99,21 @@ export function StitchPanel({
       });
       setMusicUrl(blob.url);
       setMusicName(file.name);
-      setMusicDurationSec(await readAudioDuration(file));
-      toast.success("Music ready — it will replace the clips' ambient audio", { id: toastId });
+      const duration = await readAudioDuration(file);
+      setMusicDurationSec(duration);
+      if (duration) {
+        toast.success(
+          `Music ready (${Math.round(duration)}s) — loops under the whole video`,
+          { id: toastId }
+        );
+      } else {
+        // Without a known duration the server can't tile the song — it
+        // plays once and the rest of the video runs silent.
+        toast.warning(
+          "Music uploaded, but its duration couldn't be read — it will play once and NOT loop. Try re-exporting the file as a standard MP3.",
+          { id: toastId }
+        );
+      }
     } catch (err) {
       const message = err instanceof Error ? err.message : "Unknown error";
       toast.error("Music upload failed", { id: toastId, description: message });
