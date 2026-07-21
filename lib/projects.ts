@@ -59,6 +59,7 @@ import {
   listProjectsWithCovers,
   markProjectFinalized,
   markProjectFinalVideo,
+  updateStitchState,
   markSceneAnimated,
   markSceneAnimateFailed,
   markSceneAnimating,
@@ -1452,22 +1453,36 @@ const STYLE_EXPLORER_PER_STILL_SEC = 7;
  * mix) — the uniform-audio option, and effectively required for the
  * style-explorer YouTube upload.
  */
-export async function stitchFinalVideo(
+export type StitchOpts = {
+  musicUrl?: string;
+  perStillSec?: number;
+  /** Style-explorer only: loop the full still sequence until the video
+   *  reaches at least this many minutes (whole cycles only). The ambient/
+   *  slideshow-channel play: 8+ minutes unlocks YouTube mid-roll ads and
+   *  stacks watch time. Chapters in the description describe cycle one. */
+  targetMinutes?: number;
+  /** Duration of the music file in seconds (read client-side at upload).
+   *  When the timeline outruns the song, the music keyframe is tiled so
+   *  the bed loops instead of going silent. */
+  musicDurationSec?: number;
+};
+
+/** Serializable stitch plan passed between Inngest steps. */
+export type StitchPrep = {
+  projectId: string;
+  format: "reel" | "before-after" | "style-explorer";
+  segments: StitchSegment[];
+  totalMs: number;
+  aspect: string;
+  opts: StitchOpts;
+};
+
+/** Stitch step 1 — load, validate, and build the timeline. No vendor calls;
+ *  every validation error surfaces here, before any money moves. */
+export async function prepareStitch(
   projectId: string,
-  opts: {
-    musicUrl?: string;
-    perStillSec?: number;
-    /** Style-explorer only: loop the full still sequence until the video
-     *  reaches at least this many minutes (whole cycles only). The ambient/
-     *  slideshow-channel play: 8+ minutes unlocks YouTube mid-roll ads and
-     *  stacks watch time. Chapters in the description describe cycle one. */
-    targetMinutes?: number;
-    /** Duration of the music file in seconds (read client-side at upload).
-     *  When the timeline outruns the song, the music keyframe is tiled so
-     *  the bed loops instead of going silent. */
-    musicDurationSec?: number;
-  } = {}
-): Promise<StitchResult> {
+  opts: StitchOpts = {}
+): Promise<StitchPrep> {
   const found = await getProjectWithScenes(projectId);
   if (!found) throw new Error(`Project ${projectId} not found`);
   const { project, scenes } = found;
@@ -1533,20 +1548,27 @@ export async function stitchFinalVideo(
         ? (project.aspectRatio ?? "9:16")
         : "9:16";
 
-  // Backend pick: Shotstack (true crossfades + Ken Burns on stills) when a
-  // key is configured; fal ffmpeg compose (hard cuts) otherwise — and as an
-  // automatic fallback if a Shotstack render errors, so stitch never hard-
-  // fails over the fancier backend.
+  await updateStitchState(projectId, "rendering");
+  return { projectId, format: project.format as StitchPrep["format"], segments, totalMs, aspect, opts };
+}
+
+/** Stitch step 2 — the long vendor render. Backend pick: Shotstack (true
+ *  crossfades + Ken Burns on stills) when a key is configured; fal ffmpeg
+ *  compose (hard cuts) otherwise — and as an automatic fallback if a
+ *  Shotstack render errors, so stitch never hard-fails over the fancier
+ *  backend. Returns the vendor-hosted URL. */
+export async function renderStitch(prep: StitchPrep): Promise<string> {
+  const { projectId, format, segments, totalMs, aspect, opts } = prep;
   let renderedUrl: string | null = null;
   if (isShotstackConfigured()) {
     try {
-      const edit = buildShotstackEdit(project.format, segments, aspect, opts);
+      const edit = buildShotstackEdit(format, segments, aspect, opts);
       renderedUrl = (await renderShotstack(edit)).videoUrl;
       await recordSpend({
         projectId,
         kind: "compose",
         amountUsd: (totalMs / 60_000) * SHOTSTACK_PER_MINUTE,
-        meta: { format: project.format, outputSec: Math.round(totalMs / 1000), backend: "shotstack" },
+        meta: { format, outputSec: Math.round(totalMs / 1000), backend: "shotstack" },
       });
     } catch (err) {
       console.warn("[stitch] Shotstack failed; falling back to fal compose:", err);
@@ -1559,11 +1581,18 @@ export async function stitchFinalVideo(
       projectId,
       kind: "compose",
       amountUsd: (totalMs / 1000) * FAL_COMPOSE_PER_SECOND,
-      meta: { format: project.format, outputSec: Math.round(totalMs / 1000), backend: "fal" },
+      meta: { format, outputSec: Math.round(totalMs / 1000), backend: "fal" },
     });
   }
+  return renderedUrl;
+}
 
-  // Re-host on our own Blob so the deliverable URL is stable + downloadable.
+/** Stitch step 3 — re-host on our own Blob (stable, downloadable URL),
+ *  persist, and settle the lifecycle. */
+export async function finishStitch(
+  projectId: string,
+  renderedUrl: string
+): Promise<StitchResult> {
   const stored = await storeFromUrl({
     url: renderedUrl,
     kind: "videos",
@@ -1571,8 +1600,25 @@ export async function stitchFinalVideo(
     filename: `final-${nanoid(6)}.mp4`,
   });
   await markProjectFinalVideo(projectId, stored.url);
-
+  await updateStitchState(projectId, "ready");
   return { finalVideoUrl: stored.url };
+}
+
+/** Record a stitch failure so the polling client stops with a reason. */
+export async function failStitch(projectId: string, message: string): Promise<void> {
+  await updateStitchState(projectId, "failed", message);
+}
+
+/** Sequential composition of the three stitch steps — used by tests and any
+ *  environment without Inngest. Production runs the same helpers as
+ *  individual Inngest steps (inngest/functions.ts). */
+export async function stitchFinalVideo(
+  projectId: string,
+  opts: StitchOpts = {}
+): Promise<StitchResult> {
+  const prep = await prepareStitch(projectId, opts);
+  const renderedUrl = await renderStitch(prep);
+  return await finishStitch(projectId, renderedUrl);
 }
 
 /** One entry on the stitch timeline — backend-neutral. */

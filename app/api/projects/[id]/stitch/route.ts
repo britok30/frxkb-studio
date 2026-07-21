@@ -1,14 +1,16 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
-import { stitchFinalVideo } from "@/lib/projects";
 import { withSessionOperator } from "@/lib/route-helpers";
+import { currentOperator } from "@/lib/operators";
+import { prepareStitch } from "@/lib/projects";
+import { updateStitchState } from "@/lib/projects-db";
+import { inngest } from "@/inngest/client";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
-// Reels compose in seconds, but a style-explorer long-form is another animal:
-// ~90 image segments composed into a 10-20 MINUTE video, then a several-
-// hundred-MB Blob re-host. Platform max (matches /api/inngest).
-export const maxDuration = 800;
+// Enqueue + a validation dry-run only — the render lives in Inngest
+// (stitch-project), free of request-bound duration limits.
+export const maxDuration = 60;
 
 const PostBody = z.object({
   /** Optional music bed (public Blob URL from /api/upload). Spans the whole
@@ -27,6 +29,11 @@ const PostBody = z.object({
   musicDurationSec: z.number().positive().max(3600).optional(),
 });
 
+/**
+ * Enqueue a stitch job. prepareStitch runs here first as a validation
+ * dry-run (cheap, no vendor calls) so "not animated yet"-class errors reach
+ * the operator immediately instead of dying in a background job.
+ */
 export async function POST(
   req: Request,
   ctx: { params: Promise<{ id: string }> }
@@ -52,13 +59,14 @@ export async function POST(
 
   return withSessionOperator(async () => {
     try {
-      const result = await stitchFinalVideo(id, {
-        musicUrl: parsed.data.musicUrl,
-        perStillSec: parsed.data.perStillSec,
-        targetMinutes: parsed.data.targetMinutes,
-        musicDurationSec: parsed.data.musicDurationSec,
+      await prepareStitch(id, parsed.data); // validation dry-run
+      const op = currentOperator();
+      await updateStitchState(id, "queued");
+      await inngest.send({
+        name: "project/stitch.requested",
+        data: { projectId: id, operatorEmail: op.email, opts: parsed.data },
       });
-      return NextResponse.json(result);
+      return NextResponse.json({ enqueued: true }, { status: 202 });
     } catch (err) {
       const message = err instanceof Error ? err.message : "Unknown error";
       if (/not found/i.test(message)) {
@@ -67,7 +75,7 @@ export async function POST(
       if (/only available|not animated|not generated|Missing the before|Animate the after/i.test(message)) {
         return NextResponse.json({ error: message }, { status: 400 });
       }
-      console.error("[api/projects/[id]/stitch] failed:", err);
+      console.error("[api/projects/[id]/stitch] enqueue failed:", err);
       return NextResponse.json({ error: message }, { status: 500 });
     }
   });

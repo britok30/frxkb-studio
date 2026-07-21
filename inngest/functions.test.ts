@@ -14,6 +14,10 @@ const hoisted = vi.hoisted(() => {
     planAnimate: vi.fn(),
     animatePlannedScene: vi.fn(),
     finishAnimate: vi.fn(),
+    prepareStitch: vi.fn(),
+    renderStitch: vi.fn(),
+    finishStitch: vi.fn(),
+    failStitch: vi.fn(),
     ProjectBusyError: FakeProjectBusyError,
     getOperator: vi.fn(),
     withOperator: vi.fn(),
@@ -26,6 +30,10 @@ vi.mock("@/lib/projects", () => ({
   planAnimate: hoisted.planAnimate,
   animatePlannedScene: hoisted.animatePlannedScene,
   finishAnimate: hoisted.finishAnimate,
+  prepareStitch: hoisted.prepareStitch,
+  renderStitch: hoisted.renderStitch,
+  finishStitch: hoisted.finishStitch,
+  failStitch: hoisted.failStitch,
   ProjectBusyError: hoisted.ProjectBusyError,
 }));
 
@@ -42,7 +50,7 @@ vi.mock("./client", () => ({
   },
 }));
 
-import { handleGenerate, handleAnimate } from "./functions";
+import { handleGenerate, handleAnimate, handleStitch } from "./functions";
 
 const FakeProjectBusyError = hoisted.ProjectBusyError;
 
@@ -66,6 +74,10 @@ beforeEach(() => {
   hoisted.planAnimate.mockReset();
   hoisted.animatePlannedScene.mockReset();
   hoisted.finishAnimate.mockReset().mockResolvedValue(undefined);
+  hoisted.prepareStitch.mockReset();
+  hoisted.renderStitch.mockReset();
+  hoisted.finishStitch.mockReset();
+  hoisted.failStitch.mockReset().mockResolvedValue(undefined);
   hoisted.getOperator.mockReset();
   hoisted.withOperator.mockReset();
   // Default: passthrough — call the fn immediately. Tests can override.
@@ -227,5 +239,44 @@ describe("handleAnimate", () => {
         passthroughStep
       )
     ).rejects.toThrow(/seedance crashed/);
+  });
+});
+
+describe("handleStitch", () => {
+  it("runs prepare → render → finish in order inside withOperator and returns the result", async () => {
+    hoisted.getOperator.mockReturnValue(stubOperator);
+    const prep = { projectId: "p_1", format: "style-explorer", segments: [], totalMs: 616000, aspect: "16:9", opts: {} };
+    hoisted.prepareStitch.mockResolvedValue(prep);
+    hoisted.renderStitch.mockResolvedValue("https://fal/out.mp4");
+    hoisted.finishStitch.mockResolvedValue({ finalVideoUrl: "https://blob/final.mp4" });
+
+    const result = await handleStitch(
+      {
+        event: {
+          data: {
+            projectId: "p_1",
+            operatorEmail: "britok30@gmail.com",
+            opts: { perStillSec: 7, targetMinutes: 10 },
+          },
+        },
+      },
+      passthroughStep
+    );
+
+    expect(hoisted.prepareStitch).toHaveBeenCalledWith("p_1", { perStillSec: 7, targetMinutes: 10 });
+    expect(hoisted.renderStitch).toHaveBeenCalledWith(prep);
+    expect(hoisted.finishStitch).toHaveBeenCalledWith("p_1", "https://fal/out.mp4");
+    expect(result).toEqual({ finalVideoUrl: "https://blob/final.mp4" });
+  });
+
+  it("throws when the operator has no configured keys", async () => {
+    hoisted.getOperator.mockReturnValue(null);
+    await expect(
+      handleStitch(
+        { event: { data: { projectId: "p_1", operatorEmail: "nobody@x.com" } } },
+        passthroughStep
+      )
+    ).rejects.toThrow(/Operator not configured/);
+    expect(hoisted.prepareStitch).not.toHaveBeenCalled();
   });
 });

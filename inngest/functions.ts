@@ -1,11 +1,17 @@
 import { inngest } from "./client";
 import {
   animatePlannedScene,
+  failStitch,
   finishAnimate,
+  finishStitch,
   generateAllImages,
   planAnimate,
+  prepareStitch,
   ProjectBusyError,
+  renderStitch,
   type AnimatePlan,
+  type StitchOpts,
+  type StitchPrep,
 } from "@/lib/projects";
 import { getOperator, withOperator } from "@/lib/operators";
 import type { AspectRatio } from "@/lib/prompts/types";
@@ -166,5 +172,69 @@ export const animateProject = inngest.createFunction(
     handleAnimate({ event: event as unknown as AnimateEvent }, step as unknown as StepRunner)
 );
 
+type StitchEvent = {
+  data: {
+    projectId: string;
+    operatorEmail: string;
+    opts?: StitchOpts;
+  };
+};
+
+/**
+ * Pure orchestration handler for `project/stitch.requested` — prepare
+ * (validate + timeline, no spend) → render (the long vendor call) → finish
+ * (Blob re-host + persist). A 10-20 minute style-explorer long-form
+ * composes for several minutes and re-hosts hundreds of MB; that lives
+ * here, not inside a request-bound route.
+ */
+export async function handleStitch(
+  { event }: { event: StitchEvent },
+  step: StepRunner
+) {
+  const { projectId, operatorEmail, opts } = event.data;
+  const operator = getOperator(operatorEmail);
+  if (!operator) {
+    throw new Error(
+      `Operator not configured for ${operatorEmail}. Check FAL_KEY_* and OPENAI_KEY_* env vars on the deployment.`
+    );
+  }
+
+  const prep = (await step.run("prepare", () =>
+    withOperator(operator, () => prepareStitch(projectId, opts))
+  )) as StitchPrep;
+
+  const renderedUrl = (await step.run("render", () =>
+    withOperator(operator, () => renderStitch(prep))
+  )) as string;
+
+  return await step.run("finish", () =>
+    withOperator(operator, () => finishStitch(projectId, renderedUrl))
+  );
+}
+
+/**
+ * Background stitcher. The route enqueues and returns 202; the client polls
+ * the project's stitchStatus. onFailure (all retries exhausted) records the
+ * failure so polling stops with a reason instead of spinning forever.
+ */
+export const stitchProject = inngest.createFunction(
+  {
+    id: "stitch-project",
+    concurrency: { limit: 1, key: "event.data.projectId" },
+    retries: 2,
+    onFailure: async ({ event }) => {
+      // v4 failure payload nests the original event.
+      const original = (event as unknown as { data: { event: StitchEvent } }).data.event;
+      const message =
+        (event as unknown as { data: { error?: { message?: string } } }).data.error?.message ??
+        "Stitch failed after retries.";
+      await failStitch(original.data.projectId, message);
+    },
+    triggers: [{ event: "project/stitch.requested" }],
+  },
+  ({ event, step }) =>
+    handleStitch({ event: event as unknown as StitchEvent }, step as unknown as StepRunner)
+);
+
 /** Every function we want Inngest to discover at /api/inngest. */
-export const functions = [generateProject, animateProject];
+export const functions = [generateProject, animateProject, stitchProject];

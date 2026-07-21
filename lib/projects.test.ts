@@ -22,6 +22,7 @@ const dbMocks = vi.hoisted(() => ({
   setProjectSceneReferences: vi.fn(),
   setSceneMotionPreset: vi.fn(),
   markProjectFinalVideo: vi.fn(),
+  updateStitchState: vi.fn(),
 }));
 
 const claudeMocks = vi.hoisted(() => ({
@@ -178,6 +179,7 @@ beforeEach(() => {
   dbMocks.insertSceneVersion.mockResolvedValue(undefined);
   dbMocks.setProjectSceneReferences.mockResolvedValue(undefined);
   dbMocks.markProjectFinalVideo.mockResolvedValue(undefined);
+  dbMocks.updateStitchState.mockResolvedValue(undefined);
   composeMocks.composeVideo.mockReset().mockResolvedValue({
     videoUrl: "https://fal.media/composed.mp4",
     thumbnailUrl: null,

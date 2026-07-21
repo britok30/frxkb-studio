@@ -40,6 +40,12 @@ export const projects = pgTable(
     /** Which operator created this project (allowlist email). Nullable for
      *  rows that predate attribution; those backfill from spend_events. */
     operatorEmail: text("operator_email"),
+    /** Background-stitch lifecycle (Inngest job). Null = never stitched. */
+    stitchStatus: text("stitch_status", {
+      enum: ["queued", "rendering", "ready", "failed"],
+    }),
+    /** Last stitch failure message, cleared on the next enqueue. */
+    stitchError: text("stitch_error"),
     /** Moodboard / photo references uploaded at creation (reel/carousel,
      *  1-5 Blob URLs). When present, every scene renders via /edit
      *  conditioned on them — the refs steer materials, palette, and mood

@@ -317,6 +317,18 @@ export async function setProjectSceneReferences(
     );
 }
 
+/** Advance the background-stitch lifecycle; failure messages ride along. */
+export async function updateStitchState(
+  id: string,
+  status: "queued" | "rendering" | "ready" | "failed",
+  error?: string | null
+): Promise<void> {
+  await getDb()
+    .update(projects)
+    .set({ stitchStatus: status, stitchError: error ?? null, updatedAt: new Date() })
+    .where(eq(projects.id, id));
+}
+
 /** Persist the stitched final video URL. Re-stitching overwrites. */
 export async function markProjectFinalVideo(
   id: string,

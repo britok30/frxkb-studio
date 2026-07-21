@@ -122,10 +122,33 @@ export function StitchPanel({
     }
   }
 
+  /** Poll the project until the background stitch settles. Long-forms
+   *  compose for several minutes — cap the wait at 20. */
+  async function waitForStitch(): Promise<{ status: string; error: string | null }> {
+    const deadline = Date.now() + 20 * 60_000;
+    while (Date.now() < deadline) {
+      await new Promise((r) => setTimeout(r, 5000));
+      try {
+        const res = await fetch(`/api/projects/${projectId}`, { cache: "no-store" });
+        if (!res.ok) continue;
+        const data = (await res.json()) as {
+          project: { stitchStatus: string | null; stitchError: string | null };
+        };
+        const status = data.project.stitchStatus;
+        if (status === "ready" || status === "failed") {
+          return { status, error: data.project.stitchError };
+        }
+      } catch {
+        // transient poll failure — keep waiting
+      }
+    }
+    return { status: "timeout", error: null };
+  }
+
   async function stitch() {
     if (stitching) return;
     setStitching(true);
-    const toastId = toast.loading("Stitching final video…");
+    const toastId = toast.loading("Stitching in the background — safe to keep working…");
     try {
       const res = await fetch(`/api/projects/${projectId}/stitch`, {
         method: "POST",
@@ -140,8 +163,18 @@ export function StitchPanel({
         const err = await res.json().catch(() => ({}));
         throw new Error(err.error ?? `HTTP ${res.status}`);
       }
-      toast.success("Final video ready", { id: toastId });
-      startTransition(() => router.refresh());
+      const settled = await waitForStitch();
+      if (settled.status === "ready") {
+        toast.success("Final video ready", { id: toastId });
+        startTransition(() => router.refresh());
+      } else if (settled.status === "failed") {
+        throw new Error(settled.error ?? "Stitch failed — check the project and retry.");
+      } else {
+        toast.info(
+          "Still rendering — it will land on this page when done. Refresh in a bit.",
+          { id: toastId }
+        );
+      }
     } catch (err) {
       const message = err instanceof Error ? err.message : "Unknown error";
       toast.error("Couldn't stitch", { id: toastId, description: message });
