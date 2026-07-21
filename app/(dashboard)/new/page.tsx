@@ -8,6 +8,7 @@ import { toast } from "sonner";
 import { ease } from "@/lib/motion";
 import { estimateProjectTotal, estimateSuggestWorld, formatCost } from "@/lib/pricing";
 import { NICHE_POOL, sampleN } from "@/lib/prompts/niche-pool";
+import { uploadImage } from "@/lib/upload-client";
 import { getLook, looksForWorld, type Look } from "@/lib/prompts/looks";
 
 type Format = "reel" | "carousel" | "before-after" | "style-explorer";
@@ -1198,15 +1199,8 @@ function MoodboardPicker({
     try {
       const uploaded: string[] = [];
       for (const file of picked) {
-        const form = new FormData();
-        form.append("file", file);
-        const res = await fetch("/api/upload", { method: "POST", body: form });
-        if (!res.ok) {
-          const err = await res.json().catch(() => ({}));
-          throw new Error(err.error ?? `HTTP ${res.status}`);
-        }
-        const data = (await res.json()) as { url: string };
-        uploaded.push(data.url);
+        const img = await uploadImage(file);
+        uploaded.push(img.url);
       }
       onChange([...urls, ...uploaded]);
     } catch (err) {
@@ -1331,16 +1325,9 @@ function BeforeAfterStep({
     setUploading(true);
     const toastId = toast.loading("Uploading…");
     try {
-      const form = new FormData();
-      form.set("file", file);
-      const res = await fetch("/api/upload", { method: "POST", body: form });
-      if (!res.ok) {
-        const err = await res.json().catch(() => ({}));
-        throw new Error(err.error ?? `HTTP ${res.status}`);
-      }
-      const data = (await res.json()) as { url: string; aspectRatio: AspectRatio };
-      onUploaded(data.url, data.aspectRatio);
-      toast.success(`Uploaded (${data.aspectRatio})`, { id: toastId });
+      const img = await uploadImage(file);
+      onUploaded(img.url, img.aspectRatio);
+      toast.success(`Uploaded (${img.aspectRatio})`, { id: toastId });
     } catch (err) {
       const message = err instanceof Error ? err.message : "Unknown error";
       toast.error("Upload failed", { id: toastId, description: message });
