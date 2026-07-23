@@ -224,6 +224,14 @@ export const exports_ = pgTable("exports", {
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
+/** Tiny key/value store for studio-level settings that need a runtime
+ *  toggle (no redeploy). One row per setting key, JSONB payload. */
+export const appSettings = pgTable("app_settings", {
+  key: text("key").primaryKey(),
+  value: jsonb("value").$type<Record<string, unknown>>().notNull(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
 export const projectsRelations = relations(projects, ({ many }) => ({
   scenes: many(scenes),
   assets: many(assets),

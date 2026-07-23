@@ -11,12 +11,41 @@ import {
 } from "@/lib/pricing";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import type { Project } from "@/lib/db";
+import {
+  ADMIN_EMAIL,
+  getTimeoutSetting,
+  TIMEOUT_TARGET_EMAIL,
+  type TimeoutSetting,
+} from "@/lib/app-settings";
 import { ProjectCard } from "./project-card";
 import { FeatureCard } from "./feature-card";
+import { TimeoutToggle } from "./timeout-toggle";
 
 export const dynamic = "force-dynamic";
 
 export default async function ProjectsPage() {
+  const session = await auth().catch(() => null);
+  const sessionEmail = session?.user?.email ?? null;
+
+  // Kelvin's personal "time-out" toggle. Soft-fails to null (setting hiccups
+  // must never block the dashboard) — which also means the timeout screen
+  // fails open, never accidentally locking anyone out.
+  let timeout: TimeoutSetting | null = null;
+  try {
+    timeout = await getTimeoutSetting();
+  } catch {
+    timeout = null;
+  }
+  if (timeout?.enabled && sessionEmail === TIMEOUT_TARGET_EMAIL) {
+    return (
+      <div className="flex min-h-[70vh] items-center justify-center px-6">
+        <p className="text-center text-2xl font-bold tracking-tight max-w-xl">
+          {timeout.message || "You're in time-out."}
+        </p>
+      </div>
+    );
+  }
+
   let projects: Array<Project & { coverUrl: string | null }> = [];
   let loadError: string | null = null;
   try {
@@ -29,8 +58,7 @@ export default async function ProjectsPage() {
   // fails to null so a ledger hiccup never blocks the dashboard.
   let spend: { today: number; month: number; budget: number | null } | null = null;
   try {
-    const session = await auth();
-    const operator = getOperator(session?.user?.email);
+    const operator = getOperator(sessionEmail);
     if (operator) {
       const monthStart = new Date();
       monthStart.setUTCDate(1);
@@ -152,6 +180,21 @@ export default async function ProjectsPage() {
           ) : (
             <ProjectsEmptyState />
           )}
+        </section>
+      )}
+
+      {/* Admin-only personal settings — rendered for Kelvin's session only. */}
+      {sessionEmail === ADMIN_EMAIL && (
+        <section className="flex flex-col gap-5">
+          <div className="flex items-baseline justify-between gap-4 border-b pb-3">
+            <span className="text-xs uppercase tracking-[0.18em] text-muted-foreground">
+              Personal
+            </span>
+          </div>
+          <TimeoutToggle
+            initialEnabled={timeout?.enabled ?? false}
+            initialMessage={timeout?.message ?? ""}
+          />
         </section>
       )}
     </div>
