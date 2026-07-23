@@ -5,11 +5,16 @@ import { currentOperator } from "@/lib/operators";
 //
 // Timeline-based server-side stitching: tracks (video | audio | image) made of
 // keyframes { timestamp, duration, url } in milliseconds. Semantics verified
-// live 2026-07-17:
-//   - ONE video track only ("Multiple video tracks are not supported") — but
-//     image URLs are valid keyframes INSIDE a video track (still → clip works).
+// live 2026-07-17, corrected 2026-07-23:
+//   - ONE video track only ("Multiple video tracks are not supported") — and
+//     an image track COUNTS as a video track for this rule.
+//   - An image URL inside a `video` track renders ~1 FRAME regardless of its
+//     keyframe duration (NOT a held still). Stills belong on a `type:"image"`
+//     track, which honors durations (with 2+ keyframes; a single-keyframe
+//     image track collapses to one frame).
 //   - Per-clip embedded audio concatenates through when no audio track is set.
-//   - An audio track REPLACES the clips' embedded audio outright (no mixing).
+//   - An audio track REPLACES the clips' embedded audio outright (no mixing),
+//     and audio keyframes are never trimmed to their stated duration.
 // Billed $0.0002 per second of output — rounding error next to seedance.
 
 export type ComposeKeyframe = {

@@ -1802,7 +1802,21 @@ function buildShotstackEdit(
   return edit;
 }
 
-/** Map the neutral timeline to fal compose tracks (hard cuts, tiled music). */
+/** Map the neutral timeline to fal compose tracks (hard cuts, tiled music).
+ *
+ *  Track type matters — live-verified 2026-07-23:
+ *  - An image URL as a keyframe on a `video` track renders ~1 FRAME no
+ *    matter its duration (Fremy's 11-min long-form came out as 0.32s of
+ *    video under 11 min of audio). Stills need a `type:"image"` track,
+ *    which honors keyframe durations.
+ *  - An image track can't coexist with a video track ("Multiple video
+ *    tracks are not supported"), so mixed timelines (before-after's
+ *    still + morph) must stay on a video track and only render correctly
+ *    via Shotstack.
+ *  - Audio keyframes are never trimmed to their duration — the last music
+ *    tile plays out past the video's end and the container runs long by up
+ *    to one song. Cosmetic for ambient long-forms; nothing we can do
+ *    compose-side. */
 function buildFalComposeTracks(
   segments: StitchSegment[],
   totalMs: number,
@@ -1814,7 +1828,10 @@ function buildFalComposeTracks(
     t += seg.ms;
     return kf;
   });
-  const tracks: ComposeTrack[] = [{ id: "video", type: "video", keyframes }];
+  const allStills = segments.every((s) => s.kind === "image");
+  const tracks: ComposeTrack[] = [
+    { id: "video", type: allStills ? "image" : "video", keyframes },
+  ];
   if (opts.musicUrl) {
     // Tile the song across the timeline when its length is known and shorter
     // than the video — compose does not loop audio, and a 10-minute ambient

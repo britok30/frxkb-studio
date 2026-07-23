@@ -1538,6 +1538,9 @@ describe("stitchFinalVideo — style-explorer slideshow", () => {
     await stitchFinalVideo("p_1", { musicUrl: "https://blob/lofi.mp3", perStillSec: 5 });
 
     const tracks = composeMocks.composeVideo.mock.calls[0][0];
+    // MUST be an image track: stills on a `video` track render ~1 frame each
+    // (the "11-minute video of the base image" bug, live-confirmed 2026-07-23).
+    expect(tracks[0].type).toBe("image");
     expect(tracks[0].keyframes).toEqual([
       { timestamp: 0, duration: 5000, url: "https://blob/base.jpg" },
       { timestamp: 5000, duration: 5000, url: "https://blob/style-a.jpg" },
@@ -1875,6 +1878,9 @@ describe("stitchFinalVideo — Shotstack backend (transitions)", () => {
 
     // fal concats 20 copies of the rendered cycle and lays the tiled bed.
     const tracks = composeMocks.composeVideo.mock.calls[0][0];
+    // Concat inputs are VIDEO clips (the rendered cycle), so the track stays
+    // type:"video" — only all-stills timelines ride an image track.
+    expect(tracks[0].type).toBe("video");
     const video = tracks[0].keyframes;
     expect(video).toHaveLength(20);
     expect(video.every((k: { url: string }) => k.url === "https://shotstack.io/cycle.mp4")).toBe(true);
