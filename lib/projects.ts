@@ -28,7 +28,7 @@ import {
 import { generateVideo } from "@/lib/seedance";
 import { upscaleVideo } from "@/lib/topaz";
 import { generateMotionPrompts, getCameraMove } from "@/lib/prompts/motion";
-import { storeFromUrl } from "@/lib/storage";
+import { ensurePngStill, storeFromUrl } from "@/lib/storage";
 import { runWithConcurrency } from "@/lib/concurrency";
 import { assertWithinDailyBudget, recordSpend } from "@/lib/spend";
 import {
@@ -422,6 +422,15 @@ export async function createStyleExplorerProject(
     input.operatorNotes?.trim() ||
     `${input.propertyType} ${input.worldType} style explorer`;
 
+  // Normalize the base to PNG BEFORE anything persists — a JPEG base among
+  // the PNG style renders silently corrupts fal's slideshow stitch (see
+  // ensurePngStill). No-op when the base is already PNG.
+  const baseImageUrl = await ensurePngStill({
+    url: input.baseImageUrl,
+    projectId,
+    filename: "base.png",
+  });
+
   const project = await insertProject({
     id: projectId,
     title: workingTitle,
@@ -467,7 +476,7 @@ export async function createStyleExplorerProject(
     styleSubtitle: s.styleSubtitle,
     durationSec: 0,
     status: "pending" as const,
-    referenceImageUrl: input.baseImageUrl,
+    referenceImageUrl: baseImageUrl,
   }));
 
   const insertedScenes = await insertScenes([
@@ -480,7 +489,7 @@ export async function createStyleExplorerProject(
       styleSubtitle: "The space, before restyling",
       durationSec: 0,
       status: "generated",
-      imageUrl: input.baseImageUrl,
+      imageUrl: baseImageUrl,
       referenceImageUrl: null,
     },
     ...styleScenes,

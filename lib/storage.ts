@@ -1,5 +1,6 @@
 import { put } from "@vercel/blob";
 import { nanoid } from "nanoid";
+import sharp from "sharp";
 
 export type AssetKind = "images" | "videos" | "thumbnails" | "exports" | "uploads";
 
@@ -57,6 +58,43 @@ export async function storeFromUrl(opts: {
     multipart: true,
   });
   return { url: result.url, pathname: result.pathname };
+}
+
+/**
+ * Guarantee a still is a PNG, re-hosting a converted copy when it isn't.
+ *
+ * Why: fal's compose image track silently corrupts the render when keyframe
+ * formats are MIXED — a JPEG upload among PNG renders came out as a one-frame
+ * video (live-verified 2026-07-23; uniform all-PNG and all-JPEG both render
+ * correctly). Generated stills are PNG, so any operator-uploaded base gets
+ * normalized to PNG once at project creation.
+ */
+export async function ensurePngStill(opts: {
+  url: string;
+  projectId: string;
+  filename: string;
+}): Promise<string> {
+  const res = await fetch(opts.url);
+  if (!res.ok) {
+    throw new Error(`Failed to download ${opts.url}: ${res.status} ${res.statusText}`);
+  }
+  const buffer = Buffer.from(await res.arrayBuffer());
+  const isPng =
+    buffer.length > 4 &&
+    buffer[0] === 0x89 &&
+    buffer[1] === 0x50 &&
+    buffer[2] === 0x4e &&
+    buffer[3] === 0x47;
+  if (isPng) return opts.url;
+  const png = await sharp(buffer).png().toBuffer();
+  const stored = await storeBuffer({
+    buffer: png,
+    kind: "images",
+    projectId: opts.projectId,
+    filename: opts.filename,
+    contentType: "image/png",
+  });
+  return stored.url;
 }
 
 export async function storeBuffer(opts: {

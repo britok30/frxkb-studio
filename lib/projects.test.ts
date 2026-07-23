@@ -38,6 +38,7 @@ const falMocks = vi.hoisted(() => ({
 }));
 
 const storageMocks = vi.hoisted(() => ({
+  ensurePngStill: vi.fn(),
   storeFromUrl: vi.fn(),
 }));
 
@@ -74,7 +75,10 @@ vi.mock("@/lib/fal", () => ({
   generateImage: falMocks.generateImage,
   editImage: falMocks.editImage,
 }));
-vi.mock("@/lib/storage", () => ({ storeFromUrl: storageMocks.storeFromUrl }));
+vi.mock("@/lib/storage", () => ({
+  storeFromUrl: storageMocks.storeFromUrl,
+  ensurePngStill: storageMocks.ensurePngStill,
+}));
 vi.mock("@/lib/operators", () => ({
   currentOperator: operatorMocks.currentOperator,
   pickAppLink: operatorMocks.pickAppLink,
@@ -163,6 +167,8 @@ beforeEach(() => {
   Object.values(claudeMocks).forEach((m) => m.mockReset());
   Object.values(falMocks).forEach((m) => m.mockReset());
   Object.values(storageMocks).forEach((m) => m.mockReset());
+  // Default: base is already PNG — passthrough.
+  storageMocks.ensurePngStill.mockImplementation(async (o) => o.url);
   // Dedupe defaults to "no matches" — individual tests can override.
   dedupeMocks.findSimilarProjects.mockReset().mockResolvedValue({
     hasMatches: false,
