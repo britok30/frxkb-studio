@@ -43,14 +43,20 @@ export async function storeFromUrl(opts: {
   if (!res.ok) {
     throw new Error(`Failed to download ${opts.url}: ${res.status} ${res.statusText}`);
   }
-  const buffer = Buffer.from(await res.arrayBuffer());
-  return storeBuffer({
-    buffer,
-    kind: opts.kind,
-    projectId: opts.projectId,
-    filename: opts.filename,
+  if (!res.body) {
+    throw new Error(`Failed to download ${opts.url}: empty response body`);
+  }
+  // Stream straight into Blob — a stitched long-form runs 400MB+, and
+  // buffering it (arrayBuffer) OOM-crashes the serverless function.
+  // multipart chunks the upload so memory stays bounded regardless of size.
+  const pathname = blobPath(opts.kind, opts.projectId, opts.filename);
+  const result = await put(pathname, res.body, {
+    access: "public",
+    addRandomSuffix: false,
     contentType: res.headers.get("content-type") ?? undefined,
+    multipart: true,
   });
+  return { url: result.url, pathname: result.pathname };
 }
 
 export async function storeBuffer(opts: {

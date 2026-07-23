@@ -77,14 +77,18 @@ describe("storeBuffer", () => {
 });
 
 describe("storeFromUrl", () => {
-  it("fetches the upstream URL and forwards the buffer + content-type to Blob", async () => {
-    const fakeBuf = Buffer.from("imgdata");
+  it("streams the upstream body + content-type to Blob (multipart)", async () => {
+    const body = new ReadableStream({
+      start(controller) {
+        controller.enqueue(new TextEncoder().encode("imgdata"));
+        controller.close();
+      },
+    });
     vi.stubGlobal(
       "fetch",
       vi.fn().mockResolvedValue({
         ok: true,
-        arrayBuffer: async () =>
-          fakeBuf.buffer.slice(fakeBuf.byteOffset, fakeBuf.byteOffset + fakeBuf.byteLength),
+        body,
         headers: new Headers({ "content-type": "image/jpeg" }),
       })
     );
@@ -102,8 +106,11 @@ describe("storeFromUrl", () => {
 
     expect(mocks.put).toHaveBeenCalledOnce();
     expect(mocks.put.mock.calls[0][0]).toBe("images/p/out.jpg");
+    // The response body must be passed through as a stream — buffering the
+    // whole file OOM-crashes on 400MB+ stitched long-forms.
+    expect(mocks.put.mock.calls[0][1]).toBe(body);
     expect(mocks.put.mock.calls[0][2]).toEqual(
-      expect.objectContaining({ contentType: "image/jpeg" })
+      expect.objectContaining({ contentType: "image/jpeg", multipart: true })
     );
     expect(out.url).toBe("https://blob.vercel-storage.com/images/p/out.jpg");
   });
