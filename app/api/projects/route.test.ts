@@ -12,6 +12,10 @@ vi.mock("@/lib/route-helpers", () => ({
   withSessionOperator: (fn: () => Promise<Response>) => fn(),
 }));
 
+vi.mock("@/lib/operators", () => ({
+  currentOperator: () => ({ email: "op@test.dev" }),
+}));
+
 import { GET, POST } from "./route";
 
 function postJSON(body: unknown): Request {
@@ -34,6 +38,7 @@ describe("GET /api/projects", () => {
     expect(res.status).toBe(200);
     const body = await res.json();
     expect(body.projects).toHaveLength(2);
+    expect(projectsMocks.listProjects).toHaveBeenCalledWith("op@test.dev");
   });
 
   it("returns 500 when listing fails", async () => {

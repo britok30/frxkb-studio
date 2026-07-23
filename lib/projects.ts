@@ -489,17 +489,18 @@ export async function createStyleExplorerProject(
   return { project, scenes: insertedScenes };
 }
 
-export async function listProjects(): Promise<Project[]> {
-  return await listProjectsRows();
+/** Projects owned by the given operator (plus legacy unattributed rows). */
+export async function listProjects(operatorEmail: string): Promise<Project[]> {
+  return await listProjectsRows(operatorEmail);
 }
 
 /** Project list with each project's resolved hero cover URL — used by the
  *  dashboard so cards can show the cover (scene 1 for reel/carousel, the
  *  after scene for before-after). */
-export async function listProjectsForDashboard(): Promise<
-  Array<Project & { coverUrl: string | null }>
-> {
-  return await listProjectsWithCovers();
+export async function listProjectsForDashboard(
+  operatorEmail: string
+): Promise<Array<Project & { coverUrl: string | null }>> {
+  return await listProjectsWithCovers(operatorEmail);
 }
 
 export async function getProjectWithScenes(id: string): Promise<ProjectWithScenes | null> {

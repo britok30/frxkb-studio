@@ -439,10 +439,11 @@ describe("createProject", () => {
 });
 
 describe("listProjects", () => {
-  it("delegates to listProjectsRows", async () => {
+  it("delegates to listProjectsRows scoped to the operator", async () => {
     dbMocks.listProjectsRows.mockResolvedValue([{ id: "p1" }, { id: "p2" }]);
-    const out = await listProjects();
+    const out = await listProjects("op@test.dev");
     expect(out).toEqual([{ id: "p1" }, { id: "p2" }]);
+    expect(dbMocks.listProjectsRows).toHaveBeenCalledWith("op@test.dev");
   });
 });
 
