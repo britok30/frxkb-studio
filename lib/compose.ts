@@ -52,6 +52,56 @@ export function __resetComposeForTests(): void {
   clientCache.clear();
 }
 
+function composeError(err: unknown): Error {
+  // fal's ValidationError message is a bare "Unprocessable Entity" — the
+  // actionable part (e.g. "Could not download <url>") hides in body.detail.
+  const detail = (err as { body?: { detail?: unknown } })?.body?.detail;
+  if (detail) {
+    const msg = err instanceof Error ? err.message : "compose failed";
+    return new Error(`${msg}: ${JSON.stringify(detail).slice(0, 500)}`);
+  }
+  return err instanceof Error ? err : new Error(String(err));
+}
+
+function isDownloadFailure(err: unknown): boolean {
+  const detail = (err as { body?: { detail?: unknown } })?.body?.detail;
+  return JSON.stringify(detail ?? "").includes("Could not download");
+}
+
+/**
+ * Mirror every distinct non-fal media URL in the tracks onto fal's own
+ * storage and return rewritten tracks. Used as a retry path: fal's fetcher
+ * intermittently fails against Vercel Blob URLs (observed wholesale on
+ * 2026-07-21 while Shotstack read the same files fine) — but it can always
+ * read its own storage.
+ */
+async function mirrorTracksToFalStorage(
+  client: FalClient,
+  tracks: ComposeTrack[]
+): Promise<ComposeTrack[]> {
+  const urls = new Set<string>();
+  for (const t of tracks) {
+    for (const k of t.keyframes) {
+      if (!/(^https?:\/\/)([^/]*\.)?fal\.(media|ai)\//.test(k.url)) urls.add(k.url);
+    }
+  }
+  const mirrored = new Map<string, string>();
+  // Sequential on purpose — the biggest input (a rendered cycle video) can
+  // run tens of MB and we'd rather not hold several in memory at once.
+  for (const url of urls) {
+    const res = await fetch(url);
+    if (!res.ok) throw new Error(`Mirror download failed (${res.status}): ${url}`);
+    const contentType = res.headers.get("content-type") ?? "application/octet-stream";
+    const name = new URL(url).pathname.split("/").pop() || "asset";
+    const file = new File([await res.arrayBuffer()], name, { type: contentType });
+    mirrored.set(url, await client.storage.upload(file));
+  }
+  return tracks.map((t) => ({
+    ...t,
+    keyframes: t.keyframes.map((k) => ({ ...k, url: mirrored.get(k.url) ?? k.url })),
+  }));
+}
+
 export async function composeVideo(tracks: ComposeTrack[]): Promise<ComposeOutput> {
   const client = clientForOperator();
   let result;
@@ -61,16 +111,20 @@ export async function composeVideo(tracks: ComposeTrack[]): Promise<ComposeOutpu
       logs: false,
     });
   } catch (err) {
-    // fal's ValidationError message is a bare "Unprocessable Entity" — the
-    // actionable part (e.g. "Could not download <url>") hides in body.detail.
-    // Observed 2026-07-21: fal's fetcher failing against Vercel Blob URLs
-    // wholesale while Shotstack read the same files fine.
-    const detail = (err as { body?: { detail?: unknown } })?.body?.detail;
-    if (detail) {
-      const msg = err instanceof Error ? err.message : "compose failed";
-      throw new Error(`${msg}: ${JSON.stringify(detail).slice(0, 500)}`);
+    if (!isDownloadFailure(err)) throw composeError(err);
+    // fal couldn't fetch an input (its Blob fetcher is flaky even on URLs
+    // that curl fine). Re-serve everything from fal's own storage and retry
+    // once — the happy path never pays this transfer.
+    console.warn("[compose] fal could not download an input; retrying via fal storage:", composeError(err).message);
+    const rehosted = await mirrorTracksToFalStorage(client, tracks);
+    try {
+      result = await client.subscribe("fal-ai/ffmpeg-api/compose", {
+        input: { tracks: rehosted },
+        logs: false,
+      });
+    } catch (retryErr) {
+      throw composeError(retryErr);
     }
-    throw err;
   }
   const data = result.data as { video_url?: string; thumbnail_url?: string };
   if (!data?.video_url) throw new Error("compose returned no video url");
