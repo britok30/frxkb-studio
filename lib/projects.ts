@@ -1471,7 +1471,15 @@ export type StitchOpts = {
 export type StitchPrep = {
   projectId: string;
   format: "reel" | "before-after" | "style-explorer";
+  /** ONE cycle of the timeline. Style-explorer long-forms repeat it `cycles`
+   *  times; every other format is inherently single-cycle. */
   segments: StitchSegment[];
+  /** How many times the segment cycle repeats in the final video. Long-form
+   *  looping renders the cycle ONCE on Shotstack and concats copies on fal —
+   *  vendor minutes scale with the cycle, not the target length. Optional so
+   *  preps serialized by in-flight jobs before this field existed still run. */
+  cycles?: number;
+  /** Full output duration: cycle duration × cycles. */
   totalMs: number;
   aspect: string;
   opts: StitchOpts;
@@ -1497,6 +1505,7 @@ export async function prepareStitch(
 
   const ordered = [...scenes].sort((a, b) => a.order - b.order);
   const segments: StitchSegment[] = [];
+  let cycles = 1;
 
   if (project.format === "style-explorer") {
     const renderable = ordered.filter(
@@ -1515,11 +1524,11 @@ export async function prepareStitch(
     const targetMs = opts.targetMinutes
       ? clamp(opts.targetMinutes, 1, 20) * 60_000
       : cycleMs;
-    const cycles = Math.max(1, Math.ceil(targetMs / cycleMs));
-    for (let c = 0; c < cycles; c++) {
-      for (const s of renderable) {
-        segments.push({ kind: "image", url: s.imageUrl as string, ms: perStillMs });
-      }
+    cycles = Math.max(1, Math.ceil(targetMs / cycleMs));
+    // ONE cycle only — renderStitch repeats it (Shotstack renders the cycle,
+    // fal concats copies) so vendor cost doesn't scale with target length.
+    for (const s of renderable) {
+      segments.push({ kind: "image", url: s.imageUrl as string, ms: perStillMs });
     }
   } else if (project.format === "before-after") {
     const before = ordered.find((s) => !s.referenceImageUrl);
@@ -1540,7 +1549,7 @@ export async function prepareStitch(
     }
   }
 
-  const totalMs = segments.reduce((n, s) => n + s.ms, 0);
+  const totalMs = segments.reduce((n, s) => n + s.ms, 0) * cycles;
   const aspect =
     project.format === "style-explorer"
       ? (project.aspectRatio ?? "16:9")
@@ -1549,7 +1558,7 @@ export async function prepareStitch(
         : "9:16";
 
   await updateStitchState(projectId, "rendering");
-  return { projectId, format: project.format as StitchPrep["format"], segments, totalMs, aspect, opts };
+  return { projectId, format: project.format as StitchPrep["format"], segments, cycles, totalMs, aspect, opts };
 }
 
 /** Stitch step 2 — the long vendor render. Backend pick: Shotstack (true
@@ -1559,24 +1568,62 @@ export async function prepareStitch(
  *  backend. Returns the vendor-hosted URL. */
 export async function renderStitch(prep: StitchPrep): Promise<string> {
   const { projectId, format, segments, totalMs, aspect, opts } = prep;
+  const cycles = prep.cycles ?? 1;
+  const cycleMs = segments.reduce((n, s) => n + s.ms, 0);
   let renderedUrl: string | null = null;
   if (isShotstackConfigured()) {
     try {
-      const edit = buildShotstackEdit(format, segments, aspect, opts);
-      renderedUrl = (await renderShotstack(edit)).videoUrl;
-      await recordSpend({
-        projectId,
-        kind: "compose",
-        amountUsd: (totalMs / 60_000) * SHOTSTACK_PER_MINUTE,
-        meta: { format, outputSec: Math.round(totalMs / 1000), backend: "shotstack" },
-      });
+      if (cycles > 1) {
+        // Long-form loop: Shotstack renders ONE cycle (crossfades + Ken
+        // Burns, opening/ending fade so the loop seam lands on black), then
+        // fal concats `cycles` copies and lays the music bed. Shotstack
+        // bills per rendered minute — paying for the cycle instead of the
+        // full 10-20 min timeline is ~6-9× cheaper per stitch. Music must
+        // ride the concat pass, NOT the base: baked into the cycle it would
+        // restart at every loop.
+        const baseEdit = buildShotstackEdit(format, segments, aspect, {}, { loopBase: true });
+        const baseUrl = (await renderShotstack(baseEdit)).videoUrl;
+        await recordSpend({
+          projectId,
+          kind: "compose",
+          amountUsd: (cycleMs / 60_000) * SHOTSTACK_PER_MINUTE,
+          meta: { format, outputSec: Math.round(cycleMs / 1000), backend: "shotstack", pass: "base-cycle" },
+        });
+        const loops: StitchSegment[] = Array.from({ length: cycles }, () => ({
+          kind: "video" as const,
+          url: baseUrl,
+          ms: cycleMs,
+        }));
+        renderedUrl = (await composeVideo(buildFalComposeTracks(loops, totalMs, opts))).videoUrl;
+        await recordSpend({
+          projectId,
+          kind: "compose",
+          amountUsd: (totalMs / 1000) * FAL_COMPOSE_PER_SECOND,
+          meta: { format, outputSec: Math.round(totalMs / 1000), backend: "fal", pass: "loop-concat" },
+        });
+      } else {
+        const edit = buildShotstackEdit(format, segments, aspect, opts);
+        renderedUrl = (await renderShotstack(edit)).videoUrl;
+        await recordSpend({
+          projectId,
+          kind: "compose",
+          amountUsd: (totalMs / 60_000) * SHOTSTACK_PER_MINUTE,
+          meta: { format, outputSec: Math.round(totalMs / 1000), backend: "shotstack" },
+        });
+      }
     } catch (err) {
       console.warn("[stitch] Shotstack failed; falling back to fal compose:", err);
       renderedUrl = null;
     }
   }
   if (!renderedUrl) {
-    renderedUrl = (await composeVideo(buildFalComposeTracks(segments, totalMs, opts))).videoUrl;
+    // fal-only path (no Shotstack key, or Shotstack errored): hard cuts over
+    // the full timeline — tile the cycle back out to the target length.
+    const fullTimeline =
+      cycles > 1
+        ? Array.from({ length: cycles }, () => segments).flat()
+        : segments;
+    renderedUrl = (await composeVideo(buildFalComposeTracks(fullTimeline, totalMs, opts))).videoUrl;
     await recordSpend({
       projectId,
       kind: "compose",
@@ -1656,12 +1703,18 @@ const XFADE_SEC = 1;
  *  - Music: Shotstack MIXES audio tracks, so when a music bed is provided
  *    the video clips are muted to preserve the established "music replaces
  *    ambient" semantics; the bed is tiled when shorter than the timeline.
+ *  - loopBase: the edit is ONE cycle destined for concatenation (long-form
+ *    looping). The first clip fades in from black and the last fades out to
+ *    black, so every concat seam is a fade-out → fade-in instead of a hard
+ *    mid-image cut. Timing is unchanged — fades happen within the clips'
+ *    existing holds, so cycle duration stays exact for the concat math.
  */
 function buildShotstackEdit(
   format: string,
   segments: StitchSegment[],
   aspect: string,
-  opts: { musicUrl?: string; musicDurationSec?: number }
+  opts: { musicUrl?: string; musicDurationSec?: number },
+  mode: { loopBase?: boolean } = {}
 ): ShotstackEdit {
   const crossfade = format !== "before-after";
   const kenBurns = format === "style-explorer";
@@ -1702,6 +1755,12 @@ function buildShotstackEdit(
       fit: "crop",
     };
     if (crossfade && i > 0) clip.transition = { in: "fade" };
+    if (mode.loopBase) {
+      // Loop-friendly cycle: fade in from black at the start, out to black at
+      // the end — the concat seam reads as an intentional beat, not a jump.
+      if (i === 0) clip.transition = { ...clip.transition, in: "fade" };
+      if (i === segments.length - 1) clip.transition = { ...clip.transition, out: "fade" };
+    }
     if (kenBurns && seg.kind === "image") {
       clip.effect = i % 2 === 0 ? "zoomInSlow" : "zoomOutSlow";
     }

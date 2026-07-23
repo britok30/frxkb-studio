@@ -1842,6 +1842,58 @@ describe("stitchFinalVideo — Shotstack backend (transitions)", () => {
     expect(edit.timeline.soundtrack).toBeUndefined();
   });
 
+  it("long-form: ONE Shotstack cycle (loop fades) concatenated + music via fal — vendor minutes don't scale with target length", async () => {
+    shotstackMocks.isShotstackConfigured.mockReturnValue(true);
+    shotstackMocks.renderShotstack.mockResolvedValue({ videoUrl: "https://shotstack.io/cycle.mp4" });
+    dbMocks.selectProjectById.mockResolvedValue({
+      id: "p_1", format: "style-explorer", worldType: "interior", status: "ready", aspectRatio: "16:9",
+    });
+    dbMocks.selectScenesByProject.mockResolvedValue([
+      { ...fakeScene({ id: "s_1", order: 1, status: "generated" }), imageUrl: "https://blob/base.jpg" },
+      { ...fakeScene({ id: "s_2", order: 2, status: "generated" }), imageUrl: "https://blob/a.jpg" },
+      { ...fakeScene({ id: "s_3", order: 3, status: "generated" }), imageUrl: "https://blob/b.jpg" },
+    ]);
+    storageMocks.storeFromUrl.mockResolvedValue({ url: "https://blob/final.mp4", pathname: "x" });
+
+    // 3 stills × 10s = 30s cycle; 10 min target → 20 cycles.
+    await stitchFinalVideo("p_1", {
+      perStillSec: 10,
+      targetMinutes: 10,
+      musicUrl: "https://blob/song.mp3",
+      musicDurationSec: 40,
+    });
+
+    // Shotstack rendered the CYCLE only — 3 stills, not 60.
+    expect(shotstackMocks.renderShotstack).toHaveBeenCalledOnce();
+    const edit = shotstackMocks.renderShotstack.mock.calls[0][0];
+    expect(edit.timeline.tracks).toHaveLength(3);
+    // Loop fades: first clip (bottom track) fades in, last (top track) fades out.
+    expect(edit.timeline.tracks[2].clips[0].transition).toEqual({ in: "fade" });
+    expect(edit.timeline.tracks[0].clips[0].transition).toEqual({ in: "fade", out: "fade" });
+    // Music does NOT ride the base — it would restart every cycle.
+    expect(edit.timeline.soundtrack).toBeUndefined();
+
+    // fal concats 20 copies of the rendered cycle and lays the tiled bed.
+    const tracks = composeMocks.composeVideo.mock.calls[0][0];
+    const video = tracks[0].keyframes;
+    expect(video).toHaveLength(20);
+    expect(video.every((k: { url: string }) => k.url === "https://shotstack.io/cycle.mp4")).toBe(true);
+    const last = video.at(-1)!;
+    expect(last.timestamp + last.duration).toBe(600000);
+    const music = tracks[1].keyframes;
+    expect(music[0]).toEqual({ timestamp: 0, duration: 40000, url: "https://blob/song.mp3" });
+    const musicEnd = music.at(-1)!.timestamp + music.at(-1)!.duration;
+    expect(musicEnd).toBe(600000);
+
+    // Spend: Shotstack billed for the 30s cycle, fal for the 10-min concat.
+    const spends = spendMocks.recordSpend.mock.calls.map((c) => c[0]);
+    const shotstackSpend = spends.find((s) => s.meta.backend === "shotstack");
+    const falSpend = spends.find((s) => s.meta.backend === "fal");
+    expect(shotstackSpend.amountUsd).toBeCloseTo((30 / 60) * 0.3);
+    expect(shotstackSpend.meta.outputSec).toBe(30);
+    expect(falSpend.meta.outputSec).toBe(600);
+  });
+
   it("before-after: hard joint (no transitions, no Ken Burns) — the morph IS the transition", async () => {
     shotstackMocks.isShotstackConfigured.mockReturnValue(true);
     dbMocks.selectProjectById.mockResolvedValue({
