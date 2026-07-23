@@ -2,7 +2,7 @@
 // no conditionals, no parsing, no external calls. Tested implicitly through
 // `lib/projects.ts` orchestration tests + manual smoke against Neon.
 
-import { and, asc, desc, eq, inArray, isNull, lt, ne, or, sql } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, lt, ne, or, sql } from "drizzle-orm";
 import {
   getDb,
   projects,
@@ -29,15 +29,8 @@ export async function insertScenes(rows: NewScene[]): Promise<Scene[]> {
   return await getDb().insert(scenes).values(rows).returning();
 }
 
-/** Projects owned by one operator. Rows with a NULL operatorEmail predate
- *  attribution — they stay visible to every operator so old work never
- *  silently disappears from the dashboard. */
-export async function listProjectsRows(operatorEmail: string): Promise<Project[]> {
-  return await getDb()
-    .select()
-    .from(projects)
-    .where(or(eq(projects.operatorEmail, operatorEmail), isNull(projects.operatorEmail)))
-    .orderBy(desc(projects.createdAt));
+export async function listProjectsRows(): Promise<Project[]> {
+  return await getDb().select().from(projects).orderBy(desc(projects.createdAt));
 }
 
 /**
@@ -53,10 +46,10 @@ export async function listProjectsRows(operatorEmail: string): Promise<Project[]
  *
  * Single batched scenes query — no N+1.
  */
-export async function listProjectsWithCovers(operatorEmail: string): Promise<
+export async function listProjectsWithCovers(): Promise<
   Array<Project & { coverUrl: string | null }>
 > {
-  const projectRows = await listProjectsRows(operatorEmail);
+  const projectRows = await listProjectsRows();
   if (projectRows.length === 0) return [];
 
   // Pull every scene for the listed projects in one round-trip. Order by

@@ -17,18 +17,10 @@ import { FeatureCard } from "./feature-card";
 export const dynamic = "force-dynamic";
 
 export default async function ProjectsPage() {
-  // Resolve the operator once — the project list is scoped to it (each
-  // operator sees their own projects; legacy unattributed rows show for both).
-  const session = await auth();
-  const operator = getOperator(session?.user?.email);
-
   let projects: Array<Project & { coverUrl: string | null }> = [];
   let loadError: string | null = null;
   try {
-    if (!operator) {
-      throw new Error("Operator not configured for this account.");
-    }
-    projects = await listProjectsForDashboard(operator.email);
+    projects = await listProjectsForDashboard();
   } catch (err) {
     loadError = err instanceof Error ? err.message : "Failed to load projects";
   }
@@ -37,6 +29,8 @@ export default async function ProjectsPage() {
   // fails to null so a ledger hiccup never blocks the dashboard.
   let spend: { today: number; month: number; budget: number | null } | null = null;
   try {
+    const session = await auth();
+    const operator = getOperator(session?.user?.email);
     if (operator) {
       const monthStart = new Date();
       monthStart.setUTCDate(1);

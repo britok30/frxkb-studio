@@ -3,7 +3,6 @@ import { z } from "zod";
 import { createProject, listProjects } from "@/lib/projects";
 import { FormatSchema, WorldTypeSchema } from "@/lib/prompts/types";
 import { LookIdSchema } from "@/lib/prompts/looks";
-import { currentOperator } from "@/lib/operators";
 import { withSessionOperator } from "@/lib/route-helpers";
 
 export const runtime = "nodejs";
@@ -35,14 +34,12 @@ const CreateBody = z.object({
 });
 
 export async function GET() {
-  return withSessionOperator(async () => {
-    try {
-      const projects = await listProjects(currentOperator().email);
-      return NextResponse.json({ projects });
-    } catch (err) {
-      return errorResponse(err);
-    }
-  });
+  try {
+    const projects = await listProjects();
+    return NextResponse.json({ projects });
+  } catch (err) {
+    return errorResponse(err);
+  }
 }
 
 export async function POST(req: Request) {
