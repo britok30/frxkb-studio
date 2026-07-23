@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import { applySceneAction } from "@/lib/projects";
 import { LookIdSchema } from "@/lib/prompts/looks";
-import { withSessionOperator } from "@/lib/route-helpers";
+import { requireProjectOwnership, withSessionOperator } from "@/lib/route-helpers";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -47,6 +47,8 @@ export async function PATCH(
   }
 
   return withSessionOperator(async () => {
+    const denied = await requireProjectOwnership(id);
+    if (denied) return denied;
     try {
       const scene = await applySceneAction(id, sceneId, parsed.data.action, {
         designDirection: parsed.data.designDirection,

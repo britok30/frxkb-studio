@@ -15,6 +15,7 @@ vi.mock("@/lib/operators", () => ({
 
 vi.mock("@/lib/route-helpers", () => ({
   withSessionOperator: (fn: () => Promise<Response>) => fn(),
+  requireProjectOwnership: async () => null,
 }));
 
 import { POST } from "./route";

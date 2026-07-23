@@ -27,6 +27,9 @@ export function StitchPanel({
   finalVideoUrl,
   aspect,
   hasShotstack = true,
+  isOwner = true,
+  stitchStatus = null,
+  stitchError = null,
 }: {
   projectId: string;
   format: string;
@@ -36,6 +39,13 @@ export function StitchPanel({
    *  one, stitching uses the fal fallback (hard cuts) and the panel shows
    *  the crossfade opt-in hint. */
   hasShotstack?: boolean;
+  /** Stitching and downloading the final video are owner-only (the stitch
+   *  route enforces this server-side too). Non-owners can still preview. */
+  isOwner?: boolean;
+  /** Persisted stitch lifecycle — lets a failed background stitch surface
+   *  here on page load, not only in the toast of a live polling session. */
+  stitchStatus?: string | null;
+  stitchError?: string | null;
 }) {
   const router = useRouter();
   const [stitching, setStitching] = useState(false);
@@ -208,6 +218,20 @@ export function StitchPanel({
           </div>
         </CardHeader>
         <CardContent className="flex flex-col gap-4">
+          {stitchStatus === "failed" && !stitching && (
+            <p className="rounded-md border border-destructive/40 bg-destructive/5 px-3 py-2 text-xs text-destructive leading-relaxed">
+              The last stitch failed{stitchError ? `: ${stitchError}` : "."}{" "}
+              {finalVideoUrl
+                ? "The video below is the previous stitch. Re-stitch to try again."
+                : "Re-stitch to try again."}
+            </p>
+          )}
+          {stitchStatus === "queued" || stitchStatus === "rendering" ? (
+            <p className="rounded-md border border-dashed bg-muted/30 px-3 py-2 text-xs text-muted-foreground leading-relaxed">
+              A stitch is {stitchStatus === "queued" ? "queued" : "rendering"} in the
+              background — the finished video lands here when it&apos;s done.
+            </p>
+          ) : null}
           {!hasShotstack && (
             <p className="rounded-md border border-dashed bg-muted/30 px-3 py-2 text-xs text-muted-foreground leading-relaxed">
               Heads up: your videos stitch with simple hard cuts. Add your own
@@ -226,17 +250,25 @@ export function StitchPanel({
                 className="w-full rounded-md border bg-muted/40"
                 style={{ aspectRatio: aspect.replace(":", " / ") }}
               />
-              <button
-                type="button"
-                onClick={() => void downloadFinal()}
-                disabled={downloading}
-                className="text-xs text-muted-foreground hover:text-foreground tracking-tight inline-flex items-center gap-1.5 disabled:opacity-50"
-              >
-                <Download className="size-3.5" />
-                {downloading ? "Downloading…" : "Download final.mp4"}
-              </button>
+              {isOwner && (
+                <button
+                  type="button"
+                  onClick={() => void downloadFinal()}
+                  disabled={downloading}
+                  className="text-xs text-muted-foreground hover:text-foreground tracking-tight inline-flex items-center gap-1.5 disabled:opacity-50"
+                >
+                  <Download className="size-3.5" />
+                  {downloading ? "Downloading…" : "Download final.mp4"}
+                </button>
+              )}
             </div>
           )}
+          {!isOwner && (
+            <p className="text-xs text-muted-foreground tracking-tight">
+              Only the project owner can stitch or download the final video.
+            </p>
+          )}
+          {isOwner && (
           <div className="flex flex-wrap items-center gap-3">
             {isSlideshow && (
               <>
@@ -320,6 +352,7 @@ export function StitchPanel({
               }}
             />
           </div>
+          )}
         </CardContent>
       </Card>
     </motion.div>

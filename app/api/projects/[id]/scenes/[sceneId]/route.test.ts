@@ -8,6 +8,7 @@ vi.mock("@/lib/projects", () => projectsMocks);
 
 vi.mock("@/lib/route-helpers", () => ({
   withSessionOperator: (fn: () => Promise<Response>) => fn(),
+  requireProjectOwnership: async () => null,
 }));
 
 import { PATCH } from "./route";

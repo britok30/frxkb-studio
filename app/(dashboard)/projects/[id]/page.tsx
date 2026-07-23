@@ -56,12 +56,18 @@ export default async function ProjectPage({ params }: { params: Promise<{ id: st
   // an opt-in hint for crossfades. Soft-fails to true to avoid nagging when
   // the session can't be read.
   let hasShotstack = true;
+  let sessionEmail: string | null = null;
   try {
     const session = await auth();
-    hasShotstack = !!getOperator(session?.user?.email)?.shotstackKey;
+    sessionEmail = session?.user?.email ?? null;
+    hasShotstack = !!getOperator(sessionEmail)?.shotstackKey;
   } catch {
     hasShotstack = true;
   }
+  // Export/download/finalize/stitch are owner-only (enforced server-side in
+  // the finalize/stitch routes too). Legacy rows with no operatorEmail
+  // predate attribution and stay open to every operator.
+  const isOwner = !project.operatorEmail || project.operatorEmail === sessionEmail;
   const concept = project.concept;
   const counts = countByStatus(scenes);
   const exportData = buildExportData(project, scenes);
@@ -130,16 +136,20 @@ export default async function ProjectPage({ params }: { params: Promise<{ id: st
             )}
           </div>
         </div>
-        <ProjectActions
-          projectId={project.id}
-          totalScenes={scenes.length}
-          counts={counts}
-          status={project.status}
-          hasExport={!!exportData}
-          format={project.format}
-          perSceneDurationSec={perSceneDurationSec}
-          animatedCount={animatedCount}
-        />
+        {/* Every action here spends the owner's credits — owner-only, same
+            as the server-side gate on the generate/animate/finalize routes. */}
+        {isOwner && (
+          <ProjectActions
+            projectId={project.id}
+            totalScenes={scenes.length}
+            counts={counts}
+            status={project.status}
+            hasExport={!!exportData}
+            format={project.format}
+            perSceneDurationSec={perSceneDurationSec}
+            animatedCount={animatedCount}
+          />
+        )}
       </div>
 
       <FlowBanner
@@ -214,6 +224,9 @@ export default async function ProjectPage({ params }: { params: Promise<{ id: st
           format={project.format}
           finalVideoUrl={project.finalVideoUrl}
           hasShotstack={hasShotstack}
+          isOwner={isOwner}
+          stitchStatus={project.stitchStatus}
+          stitchError={project.stitchError}
           aspect={
             project.format === "before-after"
               ? (project.aspectRatio ?? "1:1")
@@ -224,7 +237,8 @@ export default async function ProjectPage({ params }: { params: Promise<{ id: st
         />
       )}
 
-      {exportData && <ExportPanel data={exportData} />}
+      {/* Export bundle is owner-only — the zip is the deliverable. */}
+      {exportData && isOwner && <ExportPanel data={exportData} />}
 
       <section className="flex flex-col gap-4">
         <div className="flex items-baseline justify-between gap-4 border-b pb-3">
@@ -236,7 +250,7 @@ export default async function ProjectPage({ params }: { params: Promise<{ id: st
               {counts.generated + counts.approved}/{scenes.length} ready ·{" "}
               {counts.pending} pending · {counts.rejected} failed
             </div>
-            {!animateStarted && (
+            {!animateStarted && isOwner && (
               <BatchActions
                 projectId={project.id}
                 generatedCount={counts.generated}
@@ -249,7 +263,7 @@ export default async function ProjectPage({ params }: { params: Promise<{ id: st
                 }
               />
             )}
-            {scenes.length > 0 && (
+            {scenes.length > 0 && isOwner && (
               <RegenerateAllLink
                 projectId={project.id}
                 totalScenes={scenes.length}
@@ -277,7 +291,7 @@ export default async function ProjectPage({ params }: { params: Promise<{ id: st
             motionPreset: s.motionPreset,
           }))}
           format={project.format}
-          hideActions={animateStarted}
+          hideActions={animateStarted || !isOwner}
           worldType={project.worldType}
         />
       </section>

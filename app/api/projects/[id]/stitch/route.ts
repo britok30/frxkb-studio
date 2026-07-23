@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
-import { withSessionOperator } from "@/lib/route-helpers";
+import { requireProjectOwnership, withSessionOperator } from "@/lib/route-helpers";
 import { currentOperator } from "@/lib/operators";
 import { prepareStitch } from "@/lib/projects";
 import { updateStitchState } from "@/lib/projects-db";
@@ -58,6 +58,8 @@ export async function POST(
   }
 
   return withSessionOperator(async () => {
+    const denied = await requireProjectOwnership(id);
+    if (denied) return denied;
     try {
       await prepareStitch(id, parsed.data); // validation dry-run
       const op = currentOperator();

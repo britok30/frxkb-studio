@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { AspectRatioSchema } from "@/lib/prompts/types";
-import { withSessionOperator } from "@/lib/route-helpers";
+import { requireProjectOwnership, withSessionOperator } from "@/lib/route-helpers";
 import { assertWithinDailyBudget, BudgetExceededError } from "@/lib/spend";
 import { currentOperator } from "@/lib/operators";
 import { inngest } from "@/inngest/client";
@@ -47,6 +47,8 @@ export async function POST(
   }
 
   return withSessionOperator(async () => {
+    const denied = await requireProjectOwnership(id);
+    if (denied) return denied;
     try {
       const op = currentOperator();
       // Fast budget check at enqueue time so the operator sees the cap

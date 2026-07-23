@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { finalizeProject, ProjectBusyError } from "@/lib/projects";
 import { updateStitchState } from "@/lib/projects-db";
-import { withSessionOperator } from "@/lib/route-helpers";
+import { requireProjectOwnership, withSessionOperator } from "@/lib/route-helpers";
 import { currentOperator } from "@/lib/operators";
 import { inngest } from "@/inngest/client";
 
@@ -18,6 +18,8 @@ export async function POST(
   if (!id) return NextResponse.json({ error: "Missing id" }, { status: 400 });
 
   return withSessionOperator(async () => {
+    const denied = await requireProjectOwnership(id);
+    if (denied) return denied;
     try {
       const result = await finalizeProject(id);
       // Auto-stitch rides the same background pipeline as the stitch panel.

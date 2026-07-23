@@ -19,8 +19,13 @@ const FakeProjectBusyError = hoisted.ProjectBusyError;
 
 vi.mock("@/lib/projects", () => hoisted);
 
+const ownershipMock = vi.hoisted(() => ({
+  requireProjectOwnership: vi.fn(async (): Promise<Response | null> => null),
+}));
+
 vi.mock("@/lib/route-helpers", () => ({
   withSessionOperator: (fn: () => Promise<Response>) => fn(),
+  requireProjectOwnership: ownershipMock.requireProjectOwnership,
 }));
 
 import { POST } from "./route";
@@ -35,6 +40,8 @@ function postReq(id: string): Request {
 
 beforeEach(() => {
   projectsMocks.finalizeProject.mockReset();
+  ownershipMock.requireProjectOwnership.mockReset();
+  ownershipMock.requireProjectOwnership.mockResolvedValue(null);
 });
 
 describe("POST /api/projects/[id]/finalize", () => {
@@ -50,6 +57,18 @@ describe("POST /api/projects/[id]/finalize", () => {
     expect(body.thumbnailUrl).toBe("https://blob.vercel-storage.com/thumbnails/p_1/thumb.jpg");
     expect(body).not.toHaveProperty("videoUrl");
     expect(projectsMocks.finalizeProject).toHaveBeenCalledWith("p_1");
+  });
+
+  it("returns the ownership denial without finalizing", async () => {
+    ownershipMock.requireProjectOwnership.mockResolvedValue(
+      new Response(JSON.stringify({ error: "Only the project owner can do this." }), {
+        status: 403,
+      })
+    );
+
+    const res = await POST(postReq("p_1"), ctx("p_1"));
+    expect(res.status).toBe(403);
+    expect(projectsMocks.finalizeProject).not.toHaveBeenCalled();
   });
 
   it("returns 404 when project not found", async () => {
