@@ -11,12 +11,7 @@ import {
 } from "@/lib/pricing";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import type { Project } from "@/lib/db";
-import {
-  ADMIN_EMAIL,
-  getTimeoutSetting,
-  TIMEOUT_TARGET_EMAIL,
-  type TimeoutSetting,
-} from "@/lib/app-settings";
+import { ADMIN_EMAIL, getTimeoutSetting, type TimeoutSetting } from "@/lib/app-settings";
 import { ProjectCard } from "./project-card";
 import { FeatureCard } from "./feature-card";
 import { TimeoutToggle } from "./timeout-toggle";
@@ -27,23 +22,15 @@ export default async function ProjectsPage() {
   const session = await auth().catch(() => null);
   const sessionEmail = session?.user?.email ?? null;
 
-  // Kelvin's personal "time-out" toggle. Soft-fails to null (setting hiccups
-  // must never block the dashboard) — which also means the timeout screen
-  // fails open, never accidentally locking anyone out.
+  // Kelvin's personal "time-out" toggle — enforcement lives in proxy.ts
+  // (every page + API for the target account); this read only feeds the
+  // admin card below. Soft-fails to null so a settings hiccup never blocks
+  // the dashboard.
   let timeout: TimeoutSetting | null = null;
   try {
     timeout = await getTimeoutSetting();
   } catch {
     timeout = null;
-  }
-  if (timeout?.enabled && sessionEmail === TIMEOUT_TARGET_EMAIL) {
-    return (
-      <div className="flex min-h-[70vh] items-center justify-center px-6">
-        <p className="text-center text-2xl font-bold tracking-tight max-w-xl">
-          {timeout.message || "You're in time-out."}
-        </p>
-      </div>
-    );
   }
 
   let projects: Array<Project & { coverUrl: string | null }> = [];
