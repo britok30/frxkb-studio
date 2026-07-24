@@ -33,7 +33,15 @@ export type ExportPanelData = {
   metadata: Metadata;
 };
 
-export function ExportPanel({ data }: { data: ExportPanelData }) {
+export function ExportPanel({
+  data,
+  canDownload = true,
+}: {
+  data: ExportPanelData;
+  /** Everyone can VIEW the export; only the owner (and the admin) can pull
+   *  the bundle or open source files. */
+  canDownload?: boolean;
+}) {
   const { metadata, thumbnailUrl, scenes } = data;
   const [downloading, setDownloading] = useState(false);
   const [progress, setProgress] = useState<{ done: number; total: number } | null>(null);
@@ -93,29 +101,37 @@ export function ExportPanel({ data }: { data: ExportPanelData }) {
               alt="Cover"
               className="w-full rounded-md border bg-muted/40 object-cover"
             />
-            <motion.button
-              type="button"
-              onClick={onDownload}
-              disabled={downloading}
-              whileTap={{ scale: 0.98 }}
-              transition={{ duration: 0.12 }}
-              className="w-full h-10 rounded-md bg-foreground text-background text-sm font-medium tracking-tight hover:opacity-90 transition-opacity inline-flex items-center justify-center gap-2 disabled:opacity-60 disabled:cursor-not-allowed"
-            >
-              <Download className="size-3.5" />
-              {downloading
-                ? progress
-                  ? `Packing ${progress.done}/${progress.total}…`
-                  : "Packing…"
-                : "Download bundle"}
-            </motion.button>
-            <a
-              className="text-xs text-muted-foreground hover:text-foreground tracking-tight"
-              href={thumbnailUrl}
-              target="_blank"
-              rel="noreferrer"
-            >
-              ↗ Open cover image
-            </a>
+            {canDownload ? (
+              <>
+                <motion.button
+                  type="button"
+                  onClick={onDownload}
+                  disabled={downloading}
+                  whileTap={{ scale: 0.98 }}
+                  transition={{ duration: 0.12 }}
+                  className="w-full h-10 rounded-md bg-foreground text-background text-sm font-medium tracking-tight hover:opacity-90 transition-opacity inline-flex items-center justify-center gap-2 disabled:opacity-60 disabled:cursor-not-allowed"
+                >
+                  <Download className="size-3.5" />
+                  {downloading
+                    ? progress
+                      ? `Packing ${progress.done}/${progress.total}…`
+                      : "Packing…"
+                    : "Download bundle"}
+                </motion.button>
+                <a
+                  className="text-xs text-muted-foreground hover:text-foreground tracking-tight"
+                  href={thumbnailUrl}
+                  target="_blank"
+                  rel="noreferrer"
+                >
+                  ↗ Open cover image
+                </a>
+              </>
+            ) : (
+              <p className="text-xs text-muted-foreground tracking-tight leading-relaxed">
+                View only — the bundle download belongs to this project&apos;s owner.
+              </p>
+            )}
           </div>
 
           <MetadataView metadata={metadata} scenes={scenes} />

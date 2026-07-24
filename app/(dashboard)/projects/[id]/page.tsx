@@ -274,8 +274,9 @@ export default async function ProjectPage({ params }: { params: Promise<{ id: st
         />
       )}
 
-      {/* Export bundle: owner + admin (read side only). */}
-      {exportData && canViewExports && <ExportPanel data={exportData} />}
+      {/* Export bundle: visible to every operator; downloads stay with the
+          owner (+ the admin's read-only oversight). */}
+      {exportData && <ExportPanel data={exportData} canDownload={canViewExports} />}
 
       <section className="flex flex-col gap-4">
         <div className="flex items-baseline justify-between gap-4 border-b pb-3">

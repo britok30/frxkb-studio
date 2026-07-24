@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import localFont from "next/font/local";
 import { Toaster } from "@/components/ui/sonner";
+import { MediaGuard } from "@/components/media-guard";
 import "./globals.css";
 
 const cereal = localFont({
@@ -30,6 +31,7 @@ export default function RootLayout({
     <html lang="en" className={`${cereal.variable} h-full antialiased`}>
       <body className="min-h-full flex flex-col bg-background text-foreground font-sans">
         {children}
+        <MediaGuard />
         <Toaster position="top-right" />
       </body>
     </html>
