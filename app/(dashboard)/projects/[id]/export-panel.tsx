@@ -5,7 +5,7 @@ import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { motion } from "motion/react";
 import { toast } from "sonner";
-import { Copy, Download } from "lucide-react";
+import { Check, Copy, FileArchive, Film, X } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Separator } from "@/components/ui/separator";
 import { Badge } from "@/components/ui/badge";
@@ -52,7 +52,41 @@ export function ExportPanel({
 }) {
   const { metadata, thumbnailUrl, scenes } = data;
   const [downloading, setDownloading] = useState(false);
+  const [downloadingVideo, setDownloadingVideo] = useState(false);
   const [progress, setProgress] = useState<{ done: number; total: number } | null>(null);
+
+  // Downloads unlock only when the deliverable is COMPLETE: video formats
+  // need the stitched final; YouTube long-forms additionally need the
+  // generated thumbnail. Stills-only formats have no gates.
+  const needsVideo = data.format === "reel" || data.format === "style-explorer";
+  const needsThumbnail = data.format === "style-explorer";
+  const checklist: Array<{ label: string; done: boolean }> = [
+    ...(needsVideo
+      ? [{ label: "Stitch the final video (Final video panel above)", done: !!data.finalVideoUrl }]
+      : []),
+    ...(needsThumbnail
+      ? [{ label: "Generate the YouTube thumbnail (below)", done: !!data.youtubeThumbnailUrl }]
+      : []),
+  ];
+  const ready = checklist.every((c) => c.done);
+
+  async function downloadVideo() {
+    if (!data.finalVideoUrl || downloadingVideo) return;
+    setDownloadingVideo(true);
+    const toastId = toast.loading("Downloading final.mp4…");
+    try {
+      const res = await fetch(data.finalVideoUrl);
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const { saveAs } = await import("file-saver");
+      saveAs(await res.blob(), "final.mp4");
+      toast.success("Video downloaded", { id: toastId });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Unknown error";
+      toast.error("Video download failed", { id: toastId, description: message });
+    } finally {
+      setDownloadingVideo(false);
+    }
+  }
 
   async function onDownload() {
     if (downloading) return;
@@ -66,23 +100,14 @@ export function ExportPanel({
         niche: data.niche,
         format: data.format,
         thumbnailUrl: data.thumbnailUrl,
-        finalVideoUrl: data.finalVideoUrl,
         youtubeThumbnailUrl: data.youtubeThumbnailUrl,
         scenes,
         metadata,
       };
-      const result = await downloadBundle(bundle, {
+      await downloadBundle(bundle, {
         onProgress: (done, total) => setProgress({ done, total }),
       });
-      if (result.finalSkipped) {
-        toast.success("Bundle downloaded — final.mp4 excluded (too large for a zip)", {
-          id: toastId,
-          description: "Grab the video with the Download final.mp4 button in the Final video panel.",
-          duration: 10000,
-        });
-      } else {
-        toast.success("Bundle downloaded", { id: toastId });
-      }
+      toast.success("Bundle downloaded", { id: toastId });
     } catch (err) {
       const message = err instanceof Error ? err.message : "Unknown error";
       toast.error("Couldn't pack bundle", { id: toastId, description: message });
@@ -122,21 +147,60 @@ export function ExportPanel({
             />
             {canDownload ? (
               <>
+                {/* Two distinguishable deliverables: the zip of assets+copy,
+                    and the final video by itself (gigabyte-class files can't
+                    live inside a browser-built zip). Both unlock together
+                    when the checklist is complete. */}
                 <motion.button
                   type="button"
                   onClick={onDownload}
-                  disabled={downloading}
+                  disabled={downloading || !ready}
                   whileTap={{ scale: 0.98 }}
                   transition={{ duration: 0.12 }}
-                  className="w-full h-10 rounded-md bg-foreground text-background text-sm font-medium tracking-tight hover:opacity-90 transition-opacity inline-flex items-center justify-center gap-2 disabled:opacity-60 disabled:cursor-not-allowed"
+                  className="w-full h-10 rounded-md bg-foreground text-background text-sm font-medium tracking-tight hover:opacity-90 transition-opacity inline-flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
                 >
-                  <Download className="size-3.5" />
+                  <FileArchive className="size-3.5" />
                   {downloading
                     ? progress
                       ? `Packing ${progress.done}/${progress.total}…`
                       : "Packing…"
-                    : "Download bundle"}
+                    : "Bundle — stills · thumbnails · copy"}
                 </motion.button>
+                {needsVideo && (
+                  <motion.button
+                    type="button"
+                    onClick={() => void downloadVideo()}
+                    disabled={downloadingVideo || !ready}
+                    whileTap={{ scale: 0.98 }}
+                    transition={{ duration: 0.12 }}
+                    className="w-full h-10 rounded-md border text-sm font-medium tracking-tight hover:border-foreground/40 transition-colors inline-flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    <Film className="size-3.5" />
+                    {downloadingVideo ? "Downloading…" : "Video — final.mp4"}
+                  </motion.button>
+                )}
+                {!ready && (
+                  <div className="flex flex-col gap-1 rounded-md border border-dashed bg-muted/30 px-3 py-2">
+                    <span className="text-[10px] uppercase tracking-[0.18em] text-muted-foreground">
+                      To unlock downloads
+                    </span>
+                    {checklist.map((c) => (
+                      <span
+                        key={c.label}
+                        className={`inline-flex items-center gap-1.5 text-xs tracking-tight ${
+                          c.done ? "text-muted-foreground line-through" : ""
+                        }`}
+                      >
+                        {c.done ? (
+                          <Check className="size-3 text-green-600" />
+                        ) : (
+                          <X className="size-3 text-destructive" />
+                        )}
+                        {c.label}
+                      </span>
+                    ))}
+                  </div>
+                )}
                 <a
                   className="text-xs text-muted-foreground hover:text-foreground tracking-tight"
                   href={thumbnailUrl}
@@ -148,7 +212,7 @@ export function ExportPanel({
               </>
             ) : (
               <p className="text-xs text-muted-foreground tracking-tight leading-relaxed">
-                View only — the bundle download belongs to this project&apos;s owner.
+                View only — downloads belong to this project&apos;s owner.
               </p>
             )}
           </div>
