@@ -66,7 +66,7 @@ export type CarouselMetadata = z.infer<typeof CarouselMetadataSchema>;
 export const YouTubeMetadataSchema = z.object({
   kind: z.literal("youtube"),
   title: z.string().min(8).max(100),
-  thumbnailText: z.string().min(2).max(40),
+  thumbnailText: z.string().min(2).max(90),
   description: z.string().min(40).max(5000),
   tags: z.array(z.string().min(1).max(60)).min(3).max(15),
   hashtags: z.array(z.string().min(1).max(40)).min(2).max(5),
@@ -377,7 +377,7 @@ export async function generateMetadata(input: MetadataInput): Promise<Metadata> 
 
 const YouTubeDraftSchema = z.object({
   title: z.string().min(8).max(100),
-  thumbnailText: z.string().min(2).max(40),
+  thumbnailText: z.string().min(2).max(90),
   descriptionHook: z.string().min(20).max(220),
   descriptionBody: z.string().min(120).max(3500),
   tags: z.array(z.string().min(2).max(60)).min(6).max(12),
@@ -411,16 +411,12 @@ TITLE — the single biggest CTR lever:
 - Write it like a human editor, not a fill-in-the-blank template. AVOID formulaic shapes like "X Design Styles: 1 Same Space, N Looks" or anything with a "Category: subtitle" colon. Vary it — a question, a bold claim, a "this [room], N ways" hook all work. It should feel scroll-stopping and natural.
 - You may CAPITALISE one power word for emphasis (e.g. "the SAME room") — at most one. No clickbait, no full ALL-CAPS, no emoji. It must match what the video delivers (YouTube penalises mismatches).
 
-THUMBNAIL TEXT — the short overlay the operator burns into their thumbnail:
-- 2-5 words, under ~24 characters. Readable at a glance on a phone.
+THUMBNAIL TEXT — the overlay line the operator burns into their thumbnail:
+- A FULL editorial line: 5-9 words, up to ~80 characters. Do NOT compress it into a 2-3 word fragment — a complete, composed phrase is the aesthetic ("[Location] [Room] Styled In [Count] Ways" is the energy: a whole thought, beautifully put). The image generator wraps it across up to two lines, so length is welcome.
 - VOICE: this channel is calm, editorial, design-literate — ambient interiors for people who read design magazines. The overlay must sound like a magazine cover line or an exhibition title, NEVER like clickbait. No "?!", no "×15", no SHOCKED/INSANE energy, no gimmick punctuation. Confidence over hype.
-- It must NOT be the title or a truncation of it. The title carries the SEO; the overlay carries the *idea* — elegantly.
-- Ground it in THIS video. The strongest shapes (invent within them, never copy phrasing verbatim):
-  · the quiet premise — the one-space-many-worlds idea stated plainly and beautifully (the real space + the real count, written out or as a clean numeral)
-  · the space itself — name the actual room with a word of intrigue
-  · the transformation — where the video travels (e.g. between two of its real featured styles)
-- Written-out numbers often read more editorial than digits ("One Room, Fifteen Styles" energy — don't copy that phrase). Title Case or elegant small caps; a period for poise is fine, exclamation points are not.
-- A phrase that could sit on any design video is a failure. So is anything you'd expect on a reaction channel.
+- It must NOT be the title verbatim, but unlike a classic thumbnail blurb it CAN overlap the title's subject — say it more lyrically than the title's SEO phrasing.
+- Ground it in THIS video: the real location/room from the operator's description AND the real style count belong in the line. Written-out numbers read more editorial than digits.
+- Title Case. A period for poise is fine; exclamation points are not. A phrase that could sit on any design video is a failure.
 
 DESCRIPTION HOOK (descriptionHook):
 - The first ~150 characters — the ONLY part most viewers see before "...more". One or two sentences that restate the promise while referencing the ACTUAL space (the real room/space type from the description), primary keyword early and natural. No links, no hashtags here.
@@ -469,8 +465,8 @@ const YOUTUBE_TOOL_SCHEMA = {
     thumbnailText: {
       type: "string",
       minLength: 2,
-      maxLength: 40,
-      description: "Overlay text for the thumbnail. 2-5 words, under ~24 chars, EDITORIAL voice — magazine cover line, not clickbait (no ?!, no ×N, no shock energy). Ground it in THIS video's real space and/or style count; quiet-premise / the-space / the-transformation shapes, invented fresh each time. COMPLEMENTS the title, never repeats it.",
+      maxLength: 90,
+      description: "Overlay line for the thumbnail. A FULL editorial phrase: 5-9 words, up to ~80 chars, Title Case — magazine cover line, not clickbait (no ?!, no ×N, no shock energy). Ground it in the video's real location/room and style count; a complete composed thought, not a fragment.",
     },
     descriptionHook: {
       type: "string",
@@ -511,7 +507,7 @@ function coerceYouTubeDraft(raw: unknown): unknown {
   const o = { ...(raw as Record<string, unknown>) };
   const caps: Array<{ key: string; max: number }> = [
     { key: "title", max: 100 },
-    { key: "thumbnailText", max: 40 },
+    { key: "thumbnailText", max: 90 },
     { key: "descriptionHook", max: 220 },
     { key: "descriptionBody", max: 3500 },
   ];

@@ -35,7 +35,7 @@ function buildPrompt(text: string, notes?: string): string {
   return [
     "Redesign this image into a high-CTR YouTube thumbnail.",
     `Overlay EXACTLY this text and nothing else: "${text}".`,
-    "Typography: large, thick, bold sans-serif — instantly readable at small sizes; high contrast against the scene (add a subtle outline or soft drop shadow if the background is busy).",
+    "Typography: large, thick, bold sans-serif — instantly readable at small sizes; high contrast against the scene (add a subtle outline or soft drop shadow if the background is busy). Longer lines should wrap elegantly across TWO balanced lines — never shrink the type to force one line.",
     "Keep the original scene as the visual base. Punch up color, contrast, and depth for thumbnail pop, but keep it photographic — no cartoon look.",
     // gpt-image-2's only landscape canvas is 3:2; delivery is a 16:9 center
     // crop, which removes the top and bottom ~8% each. Without this rule the
