@@ -96,7 +96,7 @@ export default async function ProjectsPage() {
             href="/new?format=reel"
             kicker="Instagram · TikTok · YouTube Shorts"
             title="Reel"
-            hint="3 × 5s, each a fresh text-to-image, animated at native 1080p via Seedance. Hero quality adds Topaz 4K60."
+            hint="3 × 5s, each a fresh text-to-image, animated via Seedance + Topaz 4K, delivered as supersampled 1080p/30. Hero bumps to 60fps."
             cost={`~${formatCost(estimateProjectTotal("reel", 3) + estimateAnimateBatch(3, 5))}`}
             aspectClass="aspect-[9/16]"
           />

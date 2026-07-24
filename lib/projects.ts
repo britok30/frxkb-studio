@@ -1132,19 +1132,16 @@ export async function animateAllScenes(
           seed: freshSeed(),
         });
 
-        // Topaz 2× → 4K60 is a hero-quality pass only. At standard quality
-        // native 1080p ships as-is — Instagram recompresses to 1080p anyway,
-        // so upscaling past it for Reels is money burned.
-        const finalVideoUrl =
-          project.quality === "hero"
-            ? (
-                await upscaleVideo({
-                  videoUrl: seedanceResult.videoUrl,
-                  model: "Proteus",
-                  upscaleFactor: 2,
-                })
-              ).videoUrl
-            : seedanceResult.videoUrl;
+        // Crisp-pipeline (matches animatePlannedScene): every animate gets
+        // Topaz 2× → ~4K; the stitch downsamples to a supersampled 1080p/30.
+        const finalVideoUrl = (
+          await upscaleVideo({
+            videoUrl: seedanceResult.videoUrl,
+            model: "Proteus",
+            upscaleFactor: 2,
+            targetFps: project.quality === "hero" ? 60 : 30,
+          })
+        ).videoUrl;
 
       // Re-host on our own Blob so the URL is stable + downloadable.
       const filename = `scene-${String(scene.order).padStart(3, "0")}-${nanoid(6)}.mp4`;
@@ -1165,14 +1162,12 @@ export async function animateAllScenes(
         amountUsd: billedSec * FAL_SEEDANCE_PER_SECOND["1080p"],
         meta: { sceneOrder: scene.order, durationSec: billedSec },
       });
-      if (project.quality === "hero") {
-        await recordSpend({
-          projectId,
-          kind: "upscale",
-          amountUsd: estimateTopazUpscale(billedSec, "gt-1080p"),
-          meta: { sceneOrder: scene.order },
-        });
-      }
+      await recordSpend({
+        projectId,
+        kind: "upscale",
+        amountUsd: estimateTopazUpscale(billedSec, "gt-1080p"),
+        meta: { sceneOrder: scene.order },
+      });
     };
 
     await runWithConcurrency(targets, concurrency, async (scene) => {
@@ -1261,7 +1256,13 @@ export type AnimatePlan = {
  */
 export async function planAnimate(
   projectId: string,
-  opts: { force?: boolean } = {}
+  opts: {
+    force?: boolean;
+    /** Re-animate exactly this scene (fresh seed + fresh motion prompt),
+     *  even though it already has a video. The full-coverage "every scene
+     *  generated" check is skipped — only the target must be renderable. */
+    sceneId?: string;
+  } = {}
 ): Promise<AnimatePlan> {
   const project = await selectProjectById(projectId);
   if (!project) throw new Error(`Project ${projectId} not found`);
@@ -1287,7 +1288,7 @@ export async function planAnimate(
     if (candidates.length === 0) {
       throw new Error("No generated scenes to animate. Generate stills first.");
     }
-    if (candidates.length < allScenes.length) {
+    if (!opts.sceneId && candidates.length < allScenes.length) {
       const missing = allScenes.length - candidates.length;
       throw new Error(
         `Cannot animate: ${missing} scene${missing === 1 ? "" : "s"} not yet generated. Generate or reject them first.`
@@ -1298,7 +1299,12 @@ export async function planAnimate(
       project.format === "before-after"
         ? candidates.filter((s) => !!s.referenceImageUrl)
         : candidates;
-    const targetsRaw = animatable.filter((s) => (opts.force ? true : !s.videoUrl));
+    const targetsRaw = opts.sceneId
+      ? animatable.filter((s) => s.id === opts.sceneId)
+      : animatable.filter((s) => (opts.force ? true : !s.videoUrl));
+    if (opts.sceneId && targetsRaw.length === 0) {
+      throw new Error("Scene not found or not animatable (needs a generated still).");
+    }
     const skipped = candidates.length - targetsRaw.length;
     const quality: "standard" | "hero" = project.quality === "hero" ? "hero" : "standard";
     const isMorph = project.format === "before-after";
@@ -1369,16 +1375,19 @@ export async function animatePlannedScene(
       aspectRatio: plan.aspectRatio,
       seed: freshSeed(),
     });
-    const finalVideoUrl =
-      plan.quality === "hero"
-        ? (
-            await upscaleVideo({
-              videoUrl: seedanceResult.videoUrl,
-              model: "Proteus",
-              upscaleFactor: 2,
-            })
-          ).videoUrl
-        : seedanceResult.videoUrl;
+    // Crisp-pipeline: EVERY animate gets Topaz 2× (1080p → ~4K) at 30fps.
+    // The stitch then renders 1080p/30 from these 4K sources — supersampled
+    // output is visibly sharper than shipping native seedance 1080p, even
+    // after Instagram/YouTube recompression. Hero keeps 60fps interpolation
+    // for YouTube-grade smoothness; standard matches the 30fps export.
+    const finalVideoUrl = (
+      await upscaleVideo({
+        videoUrl: seedanceResult.videoUrl,
+        model: "Proteus",
+        upscaleFactor: 2,
+        targetFps: plan.quality === "hero" ? 60 : 30,
+      })
+    ).videoUrl;
     const filename = `scene-${String(target.order).padStart(3, "0")}-${nanoid(6)}.mp4`;
     const stored = await storeFromUrl({
       url: finalVideoUrl,
@@ -1394,14 +1403,12 @@ export async function animatePlannedScene(
       amountUsd: billedSec * FAL_SEEDANCE_PER_SECOND["1080p"],
       meta: { sceneOrder: target.order, durationSec: billedSec },
     });
-    if (plan.quality === "hero") {
-      await recordSpend({
-        projectId: plan.projectId,
-        kind: "upscale",
-        amountUsd: estimateTopazUpscale(billedSec, "gt-1080p"),
-        meta: { sceneOrder: target.order },
-      });
-    }
+    await recordSpend({
+      projectId: plan.projectId,
+      kind: "upscale",
+      amountUsd: estimateTopazUpscale(billedSec, "gt-1080p"),
+      meta: { sceneOrder: target.order },
+    });
   };
 
   try {
@@ -1787,6 +1794,10 @@ function buildShotstackEdit(
       format: "mp4",
       size: SHOTSTACK_SIZES[aspect] ?? SHOTSTACK_SIZES["9:16"],
       fps: 30,
+      // "high" pushes the encoder into the ~14-17 Mbps band at 1080p — the
+      // crisp-pipeline delivery target. Clips arrive as Topaz 4K sources, so
+      // this render is a supersampled downscale, not an upscale.
+      quality: "high",
     },
   };
 

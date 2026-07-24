@@ -38,6 +38,8 @@ export type ShotstackEdit = {
     format: "mp4";
     size: { width: number; height: number };
     fps?: number;
+    /** Encoder quality preset — "high" lands ~14-17 Mbps at 1080p. */
+    quality?: "verylow" | "low" | "medium" | "high" | "veryhigh";
   };
 };
 

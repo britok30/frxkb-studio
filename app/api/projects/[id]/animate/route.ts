@@ -12,6 +12,9 @@ const Body = z
   .object({
     force: z.boolean().optional(),
     concurrency: z.number().int().min(1).max(4).optional(),
+    /** Re-animate exactly this scene (fresh seed + fresh motion prompt) —
+     *  the per-scene retry for "this one clip looks off". */
+    sceneId: z.string().min(1).optional(),
   })
   .default({});
 

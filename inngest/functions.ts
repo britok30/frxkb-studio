@@ -41,6 +41,8 @@ type AnimateEvent = {
     operatorEmail: string;
     force?: boolean;
     concurrency?: number;
+    /** Re-animate exactly this scene (fresh seed + motion prompt). */
+    sceneId?: string;
   };
 };
 
@@ -91,7 +93,7 @@ export async function handleAnimate(
   { event }: { event: AnimateEvent },
   step: StepRunner
 ) {
-  const { projectId, operatorEmail, force } = event.data;
+  const { projectId, operatorEmail, force, sceneId } = event.data;
   const operator = getOperator(operatorEmail);
   if (!operator) {
     throw new Error(
@@ -101,7 +103,7 @@ export async function handleAnimate(
 
   const plan = await step.run("plan", async () => {
     try {
-      return await withOperator(operator, () => planAnimate(projectId, { force }));
+      return await withOperator(operator, () => planAnimate(projectId, { force, sceneId }));
     } catch (err) {
       if (err instanceof ProjectBusyError) return { busy: true as const };
       throw err;

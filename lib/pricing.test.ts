@@ -153,16 +153,17 @@ describe("video pipeline pricing", () => {
     expect(estimateTopazUpscale(10, "gt-1080p", false)).toBeCloseTo(0.8, 6);
   });
 
-  it("animate batch for a 3×5s reel at standard quality is ~$10.20-$10.50 (native 1080p, no upscale)", () => {
+  it("animate batch for a 3×5s reel includes the always-on Topaz 4K pass (crisp pipeline)", () => {
     const total = estimateAnimateBatch(3, 5);
-    expect(total).toBeGreaterThan(10.1);
-    expect(total).toBeLessThan(10.5);
+    // seedance 1080p (~$10.2) + Topaz 2×→4K interpolated (15s × $0.16 = $2.4).
+    expect(total).toBeGreaterThan(12.5);
+    expect(total).toBeLessThan(12.9);
   });
 
-  it("hero quality adds the Topaz 4K60 pass on top", () => {
+  it("hero and standard animate cost the same — both run Topaz 4K (hero just targets 60fps)", () => {
     const standard = estimateAnimateBatch(3, 5, "standard");
     const hero = estimateAnimateBatch(3, 5, "hero");
-    expect(hero - standard).toBeCloseTo(15 * FAL_TOPAZ_PER_SECOND_GT_1080P * 2, 6);
+    expect(hero).toBeCloseTo(standard, 6);
   });
 
   it("animate batch scales linearly with total seconds", () => {

@@ -199,20 +199,24 @@ export function estimateMotionPromptsGen(sceneCount: number): number {
   return llmCost(inputTokens, outputTokens);
 }
 
-/** All-in cost of the animate step for N scenes at D seconds each. Standard
- *  quality: native 1080p seedance, no upscale (Instagram delivers at 1080p —
- *  upscaling past it is money burned). Hero quality: 1080p seedance + Topaz
- *  2×→4K60 for YouTube-grade output. */
+/** All-in cost of the animate step for N scenes at D seconds each: 1080p
+ *  seedance + Topaz 2×→4K on every clip (standard interpolates to 30fps,
+ *  hero to 60) — the stitch then renders a supersampled 1080p/30 final. */
 export function estimateAnimateBatch(
   sceneCount: number,
   perSceneDurationSec: number,
   quality: "standard" | "hero" = "standard"
 ): number {
   const totalSec = sceneCount * Math.max(0, perSceneDurationSec);
+  // Crisp-pipeline: Topaz 2×→4K runs on EVERY animate (both tiers) — the
+  // stitch downsamples the 4K sources to a supersampled 1080p/30. `quality`
+  // stays in the signature for future tier divergence (hero = 60fps interp,
+  // same Topaz price band).
+  void quality;
   return (
     estimateMotionPromptsGen(sceneCount) +
     estimateSeedance(totalSec, "1080p") +
-    (quality === "hero" ? estimateTopazUpscale(totalSec, "gt-1080p") : 0)
+    estimateTopazUpscale(totalSec, "gt-1080p")
   );
 }
 

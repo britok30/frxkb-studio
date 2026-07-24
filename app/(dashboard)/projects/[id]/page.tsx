@@ -15,7 +15,12 @@ import { AutoRefresh } from "./auto-refresh";
 import { BatchActions } from "./batch-actions";
 import { JobNotifier } from "./job-notifier";
 import { StitchPanel } from "./stitch-panel";
-import { estimateBatchImages, estimateImageBatch, formatCost } from "@/lib/pricing";
+import {
+  estimateAnimateBatch,
+  estimateBatchImages,
+  estimateImageBatch,
+  formatCost,
+} from "@/lib/pricing";
 import { sumProjectSpend } from "@/lib/spend";
 
 export const dynamic = "force-dynamic";
@@ -327,6 +332,15 @@ export default async function ProjectPage({ params }: { params: Promise<{ id: st
                         ? (project.aspectRatio ?? "1:1")
                         : "9:16"
                     }
+                    projectId={project.id}
+                    canReanimate={isOwner && !isBusy}
+                    reanimateCostLabel={formatCost(
+                      estimateAnimateBatch(
+                        1,
+                        s.durationSec ?? perSceneDurationSec,
+                        project.quality === "hero" ? "hero" : "standard"
+                      )
+                    )}
                   />
                 ))}
             </div>

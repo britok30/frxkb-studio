@@ -192,6 +192,21 @@ describe("handleAnimate", () => {
     expect(result).toEqual({ animated: 1, failed: 1, skipped: 0 });
   });
 
+  it("forwards sceneId so a single clip can be re-animated", async () => {
+    hoisted.getOperator.mockReturnValue(stubOperator);
+    hoisted.planAnimate.mockResolvedValue({ ...plan, targets: [plan.targets[1]] });
+    hoisted.animatePlannedScene.mockResolvedValue({ ok: true });
+
+    const result = await handleAnimate(
+      { event: { data: { projectId: "p_1", operatorEmail: "britok30@gmail.com", sceneId: "s_2" } } },
+      passthroughStep
+    );
+
+    expect(hoisted.planAnimate).toHaveBeenCalledWith("p_1", { force: undefined, sceneId: "s_2" });
+    expect(hoisted.animatePlannedScene).toHaveBeenCalledTimes(1);
+    expect(result).toEqual({ animated: 1, failed: 0, skipped: 0 });
+  });
+
   it("returns early (no scene steps, no finish) when the plan has no targets", async () => {
     hoisted.getOperator.mockReturnValue(stubOperator);
     hoisted.planAnimate.mockResolvedValue({ ...plan, skipped: 3, targets: [] });
