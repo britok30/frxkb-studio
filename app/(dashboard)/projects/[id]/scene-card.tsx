@@ -1,5 +1,6 @@
 "use client";
 
+import Image from "next/image";
 import { useEffect, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { motion, AnimatePresence } from "motion/react";
@@ -183,14 +184,15 @@ export function SceneCard({
                 <button
                   type="button"
                   onClick={() => setLightboxOpen(true)}
-                  className="w-full h-full cursor-zoom-in"
+                  className="relative w-full h-full cursor-zoom-in"
                   aria-label={`Open scene ${scene.order} full size`}
                 >
-                  {/* eslint-disable-next-line @next/next/no-img-element */}
-                  <img
+                  <Image
                     src={scene.imageUrl!}
                     alt=""
-                    className="w-full h-full object-cover"
+                    fill
+                    sizes="(max-width: 640px) 50vw, (max-width: 1024px) 33vw, 20vw"
+                    className="object-cover"
                   />
                 </button>
               </motion.div>
@@ -513,10 +515,11 @@ function VersionStrip({
       <div className="flex gap-2 overflow-x-auto pb-1">
         {activeImageUrl && (
           <div className="relative shrink-0 w-36">
-            {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img
+            <Image
               src={activeImageUrl}
               alt=""
+              width={288}
+              height={162}
               className="aspect-video w-full object-cover rounded-md ring-2 ring-foreground"
             />
             <span className="absolute bottom-1 left-1 rounded bg-background/85 px-1.5 py-0.5 text-[9px] tracking-tight">
@@ -533,8 +536,13 @@ function VersionStrip({
             className="group/take relative shrink-0 w-36 rounded-md overflow-hidden border hover:border-foreground/50 transition-colors disabled:opacity-50"
             title="Use this take"
           >
-            {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img src={v.imageUrl} alt="" className="aspect-video w-full object-cover" />
+            <Image
+              src={v.imageUrl}
+              alt=""
+              width={288}
+              height={162}
+              className="aspect-video w-full object-cover"
+            />
             <span className="absolute inset-0 hidden group-hover/take:flex items-center justify-center bg-black/45 text-[10px] font-medium text-white tracking-tight">
               {restoring === v.id ? "Restoring…" : "Use this take"}
             </span>

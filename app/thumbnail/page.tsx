@@ -1,5 +1,6 @@
 "use client";
 
+import Image from "next/image";
 import { useState } from "react";
 import Link from "next/link";
 import { motion, AnimatePresence } from "motion/react";
@@ -116,8 +117,13 @@ export default function ThumbnailPage() {
               }`}
             >
               {sourceUrl ? (
-                // eslint-disable-next-line @next/next/no-img-element
-                <img src={sourceUrl} alt="Base" className="absolute inset-0 w-full h-full object-cover" />
+                <Image
+                  src={sourceUrl}
+                  alt="Base"
+                  fill
+                  sizes="(max-width: 1024px) 100vw, 400px"
+                  className="object-cover"
+                />
               ) : (
                 <span className="flex flex-col items-center gap-1.5 text-muted-foreground">
                   <ImagePlus className="size-5" />
@@ -211,14 +217,19 @@ export default function ThumbnailPage() {
               ) : resultUrl ? (
                 <motion.div
                   key={resultUrl}
-                  className="w-full h-full"
+                  className="relative w-full h-full"
                   initial={{ opacity: 0, scale: 1.02 }}
                   animate={{ opacity: 1, scale: 1 }}
                   exit={{ opacity: 0 }}
                   transition={{ duration: 0.6, ease }}
                 >
-                  {/* eslint-disable-next-line @next/next/no-img-element */}
-                  <img src={resultUrl} alt="Thumbnail" className="w-full h-full object-cover" />
+                  <Image
+                    src={resultUrl}
+                    alt="Thumbnail"
+                    fill
+                    sizes="(max-width: 1024px) 100vw, 60vw"
+                    className="object-cover"
+                  />
                 </motion.div>
               ) : (
                 <motion.div

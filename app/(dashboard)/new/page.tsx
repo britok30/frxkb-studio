@@ -1,5 +1,6 @@
 "use client";
 
+import Image from "next/image";
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
@@ -1224,8 +1225,7 @@ function MoodboardPicker({
       <div className="flex flex-wrap gap-2">
         {urls.map((url, i) => (
           <div key={url} className="relative size-20 rounded-md overflow-hidden border group/ref">
-            {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img src={url} alt={`Reference ${i + 1}`} className="w-full h-full object-cover" />
+            <Image src={url} alt={`Reference ${i + 1}`} fill sizes="80px" className="object-cover" />
             <button
               type="button"
               aria-label="Remove reference"
@@ -1369,11 +1369,12 @@ function BeforeAfterStep({
         />
         {beforeImageUrl ? (
           <div className="flex flex-col items-center gap-3">
-            {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img
+            <Image
               src={beforeImageUrl}
               alt="Before"
-              className="max-h-[280px] rounded-md border bg-muted/30"
+              width={560}
+              height={420}
+              className="max-h-[280px] w-auto rounded-md border bg-muted/30"
             />
             <div className="text-xs text-muted-foreground tracking-tight">
               Before · {beforeAspect} — click to replace
@@ -1496,11 +1497,13 @@ function StyleExplorerStep({
         </span>
         {baseImageUrl ? (
           <div className="flex flex-col gap-3 rounded-xl border p-4">
-            {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img
+            <Image
               src={baseImageUrl}
               alt="Rendered base space"
-              className="w-full rounded-md border bg-muted/30 object-cover aspect-video"
+              width={1280}
+              height={720}
+              sizes="(max-width: 1024px) 100vw, 800px"
+              className="w-full h-auto rounded-md border bg-muted/30 object-cover aspect-video"
             />
             <div className="flex items-center justify-between text-xs text-muted-foreground tracking-tight">
               <span>16:9 · the exact space every style restyles</span>

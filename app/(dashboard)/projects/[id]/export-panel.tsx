@@ -1,5 +1,6 @@
 "use client";
 
+import Image from "next/image";
 import { useState } from "react";
 import { motion } from "motion/react";
 import { toast } from "sonner";
@@ -95,11 +96,13 @@ export function ExportPanel({
         </CardHeader>
         <CardContent className="grid gap-6 lg:grid-cols-[260px_1fr]">
           <div className="flex flex-col gap-3">
-            {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img
+            <Image
               src={thumbnailUrl}
               alt="Cover"
-              className="w-full rounded-md border bg-muted/40 object-cover"
+              width={600}
+              height={400}
+              sizes="260px"
+              className="w-full h-auto rounded-md border bg-muted/40 object-cover"
             />
             {canDownload ? (
               <>

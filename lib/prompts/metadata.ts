@@ -90,6 +90,10 @@ export type MetadataInput = {
   /** App names from the operator's config (operator.apps[].name). Drives the
    *  CTA copy — GPT-5.5 only learns about apps that are actually live. */
   appNames: string[];
+  /** Before-after only: the named "after" concepts in swipe order (scene
+   *  styleNames, excluding the Before). Grounds the caption in the actual
+   *  directions instead of a generic transformation line. */
+  conceptNames?: string[];
 };
 
 // ── System prompts (per variant) ───────────────────────────────────────────
@@ -187,8 +191,13 @@ export function buildCarouselMetadataSystem(
   // at the end. Pure carousels stay clean (organic ambient content).
   const captionRule =
     format === "before-after"
-      ? `- **instagramCaption**: 100-400 chars. Open with the transformation moment (what changed, in one sentence). Second sentence adds mood/atmosphere. Close with ONE soft CTA inviting viewers to try the same with the operator's app — use the literal placeholder "{APP_LINK}" exactly once, at the end. The operator substitutes the real URL. Example shape: "...Reimagine your own at {APP_LINK}." No hashtags inline.`
-      : `- **instagramCaption**: 100-400 chars. Longer than a Reel caption since carousel viewers spend more time on the post. Open with the hook, second sentence adds mood/context, third sentence (optional) invites the swipe ("swipe to walk through it"). No hashtags inline. No app mention in the caption text.`;
+      ? `- **instagramCaption**: 350-800 chars, 3-4 short stanzas separated by single line breaks. This post is ONE real space explored as SEVERAL distinct "after" concepts — slide 1 is the untouched before, every following slide is a different direction on the exact same camera. The caption's job is to make the viewer swipe all the way through and VOTE.
+  Stanza 1 — the setup: the before in one honest line, then the premise ("one [room], N directions" energy — use the real number of concepts).
+  Stanza 2 — the tour: name 2-3 of the standout concepts BY NAME with one design-specific detail each (era, hero material, palette move). Tease, don't catalogue — leave the rest for the swipe.
+  Stanza 3 — the vote: ask which concept the viewer would actually keep. This is the engagement engine of the format — make the question concrete ("2 or 7?" beats "which one?").
+  Stanza 4 — ONE soft CTA inviting viewers to run their own room through the operator's app — use the literal placeholder "{APP_LINK}" exactly once, at the end. The operator substitutes the real URL. Example shape: "...Run your own room through it: {APP_LINK}".
+  No hashtags inline.`
+      : `- **instagramCaption**: 250-600 chars, 3 short stanzas separated by single line breaks. Longer than a Reel caption since carousel viewers spend more time on the post. Stanza 1: the hook. Stanza 2: the design story — name the era/region/materials/palette from the concept (saveability; IG rewards saves). Stanza 3: invite the swipe-through and close with a genuine question or a "save this for…" line. No hashtags inline. No app mention in the caption text.`;
   return `${metadataPreamble(appNames)}
 
 This is an INSTAGRAM ${format === "before-after" ? "BEFORE/AFTER" : "CAROUSEL"} — a swipeable static slide post, Instagram-native. The viewer swipes through the slides at their own pace.
@@ -267,7 +276,12 @@ const REEL_TOOL_SCHEMA = {
 const CAROUSEL_TOOL_SCHEMA = {
   type: "object",
   properties: {
-    instagramCaption: { type: "string", minLength: 20, maxLength: 2200 },
+    instagramCaption: {
+      type: "string",
+      minLength: 200,
+      maxLength: 2200,
+      description: "Multi-stanza caption per the system prompt: setup / named-concept tour / concrete vote question / {APP_LINK} CTA (before-after), or hook / design story / engagement close (carousel).",
+    },
     instagramHashtags: {
       type: "array",
       minItems: 3,
@@ -295,6 +309,9 @@ export function buildMetadataUser(input: MetadataInput): string {
     `Hook: ${concept.hook}`,
     `Vibe: ${concept.vibe}`,
     concept.notes ? `Visual rules: ${concept.notes}` : "",
+    input.conceptNames && input.conceptNames.length > 0
+      ? `The "after" concepts, in swipe order: ${input.conceptNames.join(", ")}. Reference 2-3 of them BY NAME in the caption and use ${input.conceptNames.length} as the concept count.`
+      : "",
     "",
     `Niche: ${niche}`,
     `Format: ${format}`,

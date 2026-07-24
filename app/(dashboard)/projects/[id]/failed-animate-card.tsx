@@ -1,5 +1,6 @@
 "use client";
 
+import Image from "next/image";
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { motion } from "motion/react";
@@ -72,11 +73,12 @@ export function FailedAnimateCard({
       <Card className="overflow-hidden p-0 border-destructive/40">
         <div className={`relative ${ASPECT_CLASS[aspect]} w-full bg-muted/30`}>
           {scene.posterUrl && (
-            // eslint-disable-next-line @next/next/no-img-element
-            <img
+            <Image
               src={scene.posterUrl}
               alt=""
-              className="absolute inset-0 w-full h-full object-cover opacity-40"
+              fill
+              sizes="20vw"
+              className="object-cover opacity-40"
             />
           )}
           <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 px-3 text-center">

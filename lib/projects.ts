@@ -2013,6 +2013,15 @@ export async function finalizeProject(projectId: string): Promise<FinalizeResult
       sceneCount: renderable.length,
       totalDurationSec,
       appNames: op.apps.map((a) => a.name),
+      // Before-after: the named "after" concepts (swipe order) so the caption
+      // can reference them and ask the concrete "which one?" vote.
+      conceptNames:
+        project.format === "before-after"
+          ? renderable
+              .filter((s) => !!s.styleName && s.styleName !== "Before")
+              .sort((a, b) => a.order - b.order)
+              .map((s) => s.styleName as string)
+          : undefined,
     });
     // Two-step post-process:
     //   1. substituteAppLink: replace {APP_LINK} placeholders with the
