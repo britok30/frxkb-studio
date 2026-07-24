@@ -3,6 +3,7 @@ import {
   FAL_NANO_BANANA_PER_IMAGE,
   FAL_NANO_BANANA_PER_IMAGE_4K,
   FAL_NANO_BANANA_EDIT_PER_IMAGE,
+  FAL_SEEDANCE_FAST_720P_PER_SECOND,
   FAL_SEEDANCE_PER_SECOND,
   FAL_TOPAZ_PER_SECOND_GT_1080P,
   LLM_INPUT_PER_MTOK,
@@ -153,23 +154,27 @@ describe("video pipeline pricing", () => {
     expect(estimateTopazUpscale(10, "gt-1080p", false)).toBeCloseTo(0.8, 6);
   });
 
-  it("animate batch for a 3×5s reel includes the always-on Topaz 4K pass (crisp pipeline)", () => {
+  it("standard animate rides Seedance FAST 720p + always-on Topaz (crisp pipeline)", () => {
     const total = estimateAnimateBatch(3, 5);
-    // seedance 1080p (~$10.2) + Topaz 2×→4K interpolated (15s × $0.16 = $2.4).
-    expect(total).toBeGreaterThan(12.5);
-    expect(total).toBeLessThan(12.9);
+    // fast 720p (15s × $0.2419 ≈ $3.63) + Topaz interpolated (15s × $0.16 = $2.4) + motion GPT.
+    expect(total).toBeGreaterThan(5.9);
+    expect(total).toBeLessThan(6.3);
   });
 
-  it("hero and standard animate cost the same — both run Topaz 4K (hero just targets 60fps)", () => {
+  it("hero animate uses full-tier 1080p seedance — the difference is exactly the seedance tier gap", () => {
     const standard = estimateAnimateBatch(3, 5, "standard");
     const hero = estimateAnimateBatch(3, 5, "hero");
-    expect(hero).toBeCloseTo(standard, 6);
+    expect(hero - standard).toBeCloseTo(
+      15 * (FAL_SEEDANCE_PER_SECOND["1080p"] - FAL_SEEDANCE_FAST_720P_PER_SECOND),
+      6
+    );
   });
 
   it("animate batch scales linearly with total seconds", () => {
     const baseline = estimateAnimateBatch(3, 5); // 15s
     const doubled = estimateAnimateBatch(6, 5); // 30s
-    const perSecCost = FAL_SEEDANCE_PER_SECOND["1080p"];
+    // Standard tier: fast-720p seedance + Topaz per extra second.
+    const perSecCost = FAL_SEEDANCE_FAST_720P_PER_SECOND;
     expect(doubled - baseline).toBeGreaterThan(15 * perSecCost * 0.95);
   });
 });

@@ -42,6 +42,7 @@ import {
   FAL_NANO_BANANA_EDIT_PER_IMAGE,
   FAL_NANO_BANANA_PER_IMAGE,
   FAL_NANO_BANANA_PER_IMAGE_4K,
+  FAL_SEEDANCE_FAST_720P_PER_SECOND,
   FAL_SEEDANCE_PER_SECOND,
 } from "@/lib/pricing";
 import { currentOperator, pickAppLink } from "@/lib/operators";
@@ -1122,23 +1123,27 @@ export async function animateAllScenes(
         // Reels render one extra second of footage per clip: the stitch's
         // 1s crossfades consume overlap, and without the pad a 3×5s reel
         // lands at 13s instead of 15s. Morphs don't crossfade — no pad.
+        // Tiering matches animatePlannedScene: standard reels ride the fast
+        // 720p endpoint + Topaz 3×; hero/morphs ride full 1080p + Topaz 2×.
+        const useFast = project.quality !== "hero" && !isMorph;
         const seedanceResult = await generateVideo({
           imageUrl: isMorph ? (scene.referenceImageUrl as string) : (scene.imageUrl as string),
           endImageUrl: isMorph ? (scene.imageUrl as string) : undefined,
           motionPrompt: motion,
           durationSec: (scene.durationSec || 5) + (isMorph ? 0 : XFADE_SEC),
-          resolution: "1080p",
+          resolution: useFast ? "720p" : "1080p",
+          fast: useFast,
           aspectRatio: animateAspect,
           seed: freshSeed(),
         });
 
-        // Crisp-pipeline (matches animatePlannedScene): every animate gets
-        // Topaz 2× → ~4K; the stitch downsamples to a supersampled 1080p/30.
+        // Crisp-pipeline (matches animatePlannedScene): every animate ends at
+        // ~4K; the stitch downsamples to a supersampled 1080p/30.
         const finalVideoUrl = (
           await upscaleVideo({
             videoUrl: seedanceResult.videoUrl,
             model: "Proteus",
-            upscaleFactor: 2,
+            upscaleFactor: useFast ? 3 : 2,
             targetFps: project.quality === "hero" ? 60 : 30,
           })
         ).videoUrl;
@@ -1159,7 +1164,9 @@ export async function animateAllScenes(
       await recordSpend({
         projectId,
         kind: "video",
-        amountUsd: billedSec * FAL_SEEDANCE_PER_SECOND["1080p"],
+        amountUsd:
+          billedSec *
+          (useFast ? FAL_SEEDANCE_FAST_720P_PER_SECOND : FAL_SEEDANCE_PER_SECOND["1080p"]),
         meta: { sceneOrder: scene.order, durationSec: billedSec },
       });
       await recordSpend({
@@ -1361,6 +1368,13 @@ export async function animatePlannedScene(
   plan: Pick<AnimatePlan, "projectId" | "quality" | "aspectRatio" | "isMorph">,
   target: AnimatePlanTarget
 ): Promise<{ ok: boolean }> {
+  // Crisp-pipeline tiers (both end at ~4K sources, stitched to 1080p/30):
+  //   standard reel: Seedance FAST 720p (~$0.24/s, quicker) → Topaz 3× → 4K30
+  //   hero reel:     Seedance full 1080p (~$0.68/s)         → Topaz 2× → 4K60
+  //   morphs:        always the full tier — end_image_url support on fast is
+  //                  unverified (see lib/seedance.ts).
+  const useFast = plan.quality !== "hero" && !plan.isMorph;
+
   const attempt = async () => {
     await heartbeatGenerationLock(plan.projectId);
     await markSceneAnimating(target.sceneId, target.motion);
@@ -1371,20 +1385,19 @@ export async function animatePlannedScene(
       endImageUrl: plan.isMorph ? target.imageUrl : undefined,
       motionPrompt: target.motion,
       durationSec: target.durationSec + (plan.isMorph ? 0 : XFADE_SEC),
-      resolution: "1080p",
+      resolution: useFast ? "720p" : "1080p",
+      fast: useFast,
       aspectRatio: plan.aspectRatio,
       seed: freshSeed(),
     });
-    // Crisp-pipeline: EVERY animate gets Topaz 2× (1080p → ~4K) at 30fps.
-    // The stitch then renders 1080p/30 from these 4K sources — supersampled
-    // output is visibly sharper than shipping native seedance 1080p, even
-    // after Instagram/YouTube recompression. Hero keeps 60fps interpolation
-    // for YouTube-grade smoothness; standard matches the 30fps export.
+    // Supersampled delivery: detail synthesized at 4K survives the stitch's
+    // 1080p/30 downscale and platform recompression far better than native
+    // seedance output shipped as-is.
     const finalVideoUrl = (
       await upscaleVideo({
         videoUrl: seedanceResult.videoUrl,
         model: "Proteus",
-        upscaleFactor: 2,
+        upscaleFactor: useFast ? 3 : 2,
         targetFps: plan.quality === "hero" ? 60 : 30,
       })
     ).videoUrl;
@@ -1400,8 +1413,10 @@ export async function animatePlannedScene(
     await recordSpend({
       projectId: plan.projectId,
       kind: "video",
-      amountUsd: billedSec * FAL_SEEDANCE_PER_SECOND["1080p"],
-      meta: { sceneOrder: target.order, durationSec: billedSec },
+      amountUsd:
+        billedSec *
+        (useFast ? FAL_SEEDANCE_FAST_720P_PER_SECOND : FAL_SEEDANCE_PER_SECOND["1080p"]),
+      meta: { sceneOrder: target.order, durationSec: billedSec, tier: useFast ? "fast-720p" : "1080p" },
     });
     await recordSpend({
       projectId: plan.projectId,

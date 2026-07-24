@@ -35,6 +35,11 @@ export const FAL_SEEDANCE_PER_SECOND: Record<"480p" | "720p" | "1080p" | "4k", n
   "4k": 2.7216,
 };
 
+/** Seedance 2.0 FAST tier at 720p (fal, 2026-07). Same output quality per
+ *  fal's docs, lower latency, ~2.8× cheaper than full-tier 1080p — the
+ *  standard-quality reel path (Topaz 3× recovers the resolution). */
+export const FAL_SEEDANCE_FAST_720P_PER_SECOND = 0.2419;
+
 /** Topaz video upscale tiered pricing per second of OUTPUT.
  *  ≤720p: $0.01/s, ≤1080p: $0.02/s, >1080p: $0.08/s.
  *  Doubles when target_fps is set (Apollo frame-interpolation surcharge). */
@@ -199,23 +204,22 @@ export function estimateMotionPromptsGen(sceneCount: number): number {
   return llmCost(inputTokens, outputTokens);
 }
 
-/** All-in cost of the animate step for N scenes at D seconds each: 1080p
- *  seedance + Topaz 2×→4K on every clip (standard interpolates to 30fps,
- *  hero to 60) — the stitch then renders a supersampled 1080p/30 final. */
+/** All-in cost of the animate step for N scenes at D seconds each.
+ *  Standard: Seedance FAST 720p + Topaz 3×→4K30. Hero: Seedance full 1080p
+ *  + Topaz 2×→4K60. Both stitch to a supersampled 1080p/30 (hero 60) final. */
 export function estimateAnimateBatch(
   sceneCount: number,
   perSceneDurationSec: number,
   quality: "standard" | "hero" = "standard"
 ): number {
   const totalSec = sceneCount * Math.max(0, perSceneDurationSec);
-  // Crisp-pipeline: Topaz 2×→4K runs on EVERY animate (both tiers) — the
-  // stitch downsamples the 4K sources to a supersampled 1080p/30. `quality`
-  // stays in the signature for future tier divergence (hero = 60fps interp,
-  // same Topaz price band).
-  void quality;
+  const seedance =
+    quality === "hero"
+      ? estimateSeedance(totalSec, "1080p")
+      : totalSec * FAL_SEEDANCE_FAST_720P_PER_SECOND;
   return (
     estimateMotionPromptsGen(sceneCount) +
-    estimateSeedance(totalSec, "1080p") +
+    seedance +
     estimateTopazUpscale(totalSec, "gt-1080p")
   );
 }
