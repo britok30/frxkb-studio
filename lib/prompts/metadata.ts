@@ -34,7 +34,7 @@ const HASHTAG_TARGET_TOTAL = 5;
  */
 export const ReelMetadataSchema = z.object({
   kind: z.literal("reel"),
-  tiktokCaption: z.string().min(20).max(300),
+  tiktokCaption: z.string().min(20).max(600),
   tiktokHashtags: REEL_PLATFORM_HASHTAGS,
   instagramCaption: z.string().min(20).max(2200),
   instagramHashtags: REEL_PLATFORM_HASHTAGS,
@@ -167,14 +167,14 @@ This is a REEL — short vertical video cross-posted to TikTok, Instagram Reels,
 ${lockedHashtagsRule(worldType)}
 
 Field requirements:
-- **tiktokCaption**: 60-150 chars. One punchy hook line. Native TikTok voice — direct, present-tense, no preamble. No hashtags inline. No "POV:" unless it actually fits the niche.
+- **tiktokCaption**: 150-350 chars, 2-3 short lines separated by line breaks. Line 1: the punchy hook — native TikTok voice, direct, present-tense, no preamble, no "POV:" unless it genuinely fits. Line 2: place the viewer IN the scene — pull real specifics from the concept (era, region, materials, the quality of light). Line 3 (optional): a short question that seeds comments ("which corner are you taking?"). TikTok SEARCH reads captions now — weave 2-3 natural search phrases (e.g. "mid-century brazilian living room") into the lines without keyword-stuffing. No hashtags inline.
 - **tiktokHashtags**: 5 tags total. Follow the lane rule above (locked anchors + design tags). Lowercase, no # prefix in the array values.
-- **instagramCaption**: 80-300 chars. Slightly more story-shaped than TikTok — opens with the hook, second line adds mood/context. Single line break between sentences. No hashtags inline.
+- **instagramCaption**: 250-600 chars, 3 short stanzas separated by single line breaks. Stanza 1: the hook. Stanza 2: the design story — NAME the era/region/materials/palette from the concept (this is what makes the caption saveable; IG rewards saves above likes). Stanza 3: an engagement close — a genuine question, or an invitation shaped like "save this for your next …" (never "like and follow"). No hashtags inline.
 - **instagramHashtags**: 5 tags total. Follow the lane rule above. Lowercase, no #.
 - **shortsTitle**: 40-80 chars. Shorts are SEARCHED on YouTube — write with light SEO in mind: include the era/region/material as keywords, but keep it human. Numbers ok if relevant.
-- **shortsDescription**: 100-400 chars. 1-2 short paragraphs. Para 1: the hook. Para 2: subtle app CTA using "{APP_LINK}" once, phrased as if the operator uses the app to riff on these spaces.
+- **shortsDescription**: 400-900 chars, 3 paragraphs — treat it like a miniature YouTube description, not a caption. Para 1 (~150 chars, all most viewers see before "...more"): the hook with the primary search phrase early. Para 2 (60-120 words): searchable context a design-curious viewer actually wants — what defines this style/era, the materials and palette on screen, who the look suits. Keyword-rich but written for a human. Para 3: subtle app CTA using "{APP_LINK}" once, phrased as if the operator uses the app to riff on these spaces.
 - **shortsHashtags**: 1-3 tags. Shorts only surfaces the first 1-2 prominently — pick the strongest anchor for the lane plus optionally one niche tag. Lowercase, no #.
-- **pinnedComment**: 1-2 conversational sentences. Mentions the relevant app naturally with "{APP_LINK}". Reusable across all three platforms. Example tone: "Sketched a few of these in ${pinnedExampleApp} before generating — link if you want to riff: {APP_LINK}".`;
+- **pinnedComment**: 2-3 conversational sentences. Open with a question that seeds replies (the algorithm reads early comment velocity), then mention the relevant app naturally with "{APP_LINK}". Reusable across all three platforms. Example tone: "Which of these rooms would you actually live in? Sketched a few in ${pinnedExampleApp} before generating — link if you want to riff: {APP_LINK}".`;
 }
 
 export function buildCarouselMetadataSystem(
@@ -205,14 +205,24 @@ ${captionRule}
 const REEL_TOOL_SCHEMA = {
   type: "object",
   properties: {
-    tiktokCaption: { type: "string", minLength: 20, maxLength: 300 },
+    tiktokCaption: {
+      type: "string",
+      minLength: 120,
+      maxLength: 500,
+      description: "150-350 chars, 2-3 lines: hook / scene specifics / optional comment-seeding question. TikTok-search keywords woven in naturally.",
+    },
     tiktokHashtags: {
       type: "array",
       minItems: 3,
       maxItems: 5,
       items: { type: "string", minLength: 1, maxLength: 40 },
     },
-    instagramCaption: { type: "string", minLength: 20, maxLength: 2200 },
+    instagramCaption: {
+      type: "string",
+      minLength: 200,
+      maxLength: 2200,
+      description: "250-600 chars, 3 stanzas: hook / design story naming era-region-materials-palette / engagement close (question or save-this).",
+    },
     instagramHashtags: {
       type: "array",
       minItems: 3,
@@ -222,14 +232,24 @@ const REEL_TOOL_SCHEMA = {
     // Floor matches the 40-80 guidance above (a sub-40-char title is wasting
     // YouTube search real estate); soft ceiling 80 with headroom to 100.
     shortsTitle: { type: "string", minLength: 40, maxLength: 100 },
-    shortsDescription: { type: "string", minLength: 40, maxLength: 5000 },
+    shortsDescription: {
+      type: "string",
+      minLength: 300,
+      maxLength: 5000,
+      description: "400-900 chars, 3 paragraphs: hook with primary keyword / 60-120 words of searchable style context / subtle {APP_LINK} CTA.",
+    },
     shortsHashtags: {
       type: "array",
       minItems: 1,
       maxItems: 3,
       items: { type: "string", minLength: 1, maxLength: 40 },
     },
-    pinnedComment: { type: "string", minLength: 10, maxLength: 800 },
+    pinnedComment: {
+      type: "string",
+      minLength: 60,
+      maxLength: 800,
+      description: "2-3 sentences: comment-seeding question first, then a natural app mention with {APP_LINK}.",
+    },
   },
   required: [
     "tiktokCaption",
@@ -297,7 +317,7 @@ export async function generateMetadata(input: MetadataInput): Promise<Metadata> 
         user: buildMetadataUser(input),
         schema: REEL_TOOL_SCHEMA as unknown as Record<string, unknown>,
         toolName: "submit_reel_metadata",
-        maxTokens: 3000,
+        maxTokens: 4000,
       });
       // Inject the discriminator client-side — GPT-5.5 returns the field shape,
       // we tag it for the discriminated union.

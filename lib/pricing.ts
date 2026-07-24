@@ -87,7 +87,7 @@ const LLM_OUTPUT_TOKENS = {
   concept: 600, // workingTitle + hook + vibe + notes + signature + keywords
   sceneGenPerScene: 100, // each scene prompt ~80-120 tokens
   sceneGenOverhead: 200, // tool boilerplate
-  metadata: 1500, // title + alts + description + tags + caption + hashtags + pinned
+  metadata: 2000, // beefed-up 2026-07-25: 3-stanza captions + mini-description Shorts copy
   suggestWorld: 200, // niche + rationale
 };
 
