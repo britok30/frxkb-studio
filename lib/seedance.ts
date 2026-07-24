@@ -60,9 +60,9 @@ export function __resetSeedanceForTests(): void {
  * (opt-in via `fast`): ≈ $0.24/s, 720p max — same output quality per fal,
  * just lower latency; the crisp pipeline recovers resolution via Topaz.
  *
- * Audio is ON (generate_audio: true) — synced ambient sound is included in
- * the price either way, and a reel that ships with ambient audio beats a
- * silent clip the operator has to score from scratch.
+ * Audio is OFF (generate_audio: false) — each clip used to get its own
+ * unrelated ambience, which never synced across cuts. Clips ship silent;
+ * the operator lays one music bed at stitch time (stitch panel upload).
  */
 export async function generateVideo(input: SeedanceInput): Promise<SeedanceOutput> {
   const client = clientForOperator();
@@ -101,7 +101,7 @@ export async function generateVideo(input: SeedanceInput): Promise<SeedanceOutpu
         duration: apiDuration,
         resolution,
         aspect_ratio: aspectRatio,
-        generate_audio: true,
+        generate_audio: false,
         ...(seed !== undefined ? { seed } : {}),
       },
       logs: false,

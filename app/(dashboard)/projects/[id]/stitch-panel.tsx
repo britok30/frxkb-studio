@@ -13,13 +13,12 @@ import { ease } from "@/lib/motion";
 
 /**
  * One-click assembled deliverable — the CapCut replacement. Stitches the
- * project's clips into a single ready-to-post MP4 via fal's ffmpeg compose
+ * project's clips into a single ready-to-post MP4
  * (reel: clips in order; before-after: held before still → morph).
  *
- * Audio: every seedance clip carries its own ambient audio, and each
- * segment's ambience DIFFERS. Default keeps them (hard cuts between
- * ambiences); uploading a music file lays one uniform bed across the whole
- * video and replaces the per-clip audio entirely.
+ * Audio: clips render SILENT (per-clip seedance ambience never synced
+ * across cuts, so it was turned off). The uploaded music file is the one
+ * audio source — without it the final ships silent.
  */
 export function StitchPanel({
   projectId,
@@ -211,7 +210,7 @@ export function StitchPanel({
                     ? "The YouTube long-form, ready to upload: every still held in sequence, looped to your target length, music tiled underneath. Add music — the video is silent without it. Chapters land every " +
                       perStillSec +
                       "s of cycle one."
-                    : "All clips as one ready-to-post MP4 with crossfades. Stitched automatically when you finalize (native ambient audio); re-stitch here to swap in a music bed."}
+                    : "All clips as one ready-to-post MP4 with crossfades. Clips are silent — add a music file for the audio bed, or the final ships without sound."}
               </CardDescription>
             </div>
             {finalVideoUrl && <Badge>Stitched</Badge>}

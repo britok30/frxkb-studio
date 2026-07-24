@@ -64,13 +64,13 @@ describe("generateVideo", () => {
     expect(args.input.aspect_ratio).toBe("9:16");
   });
 
-  it("keeps generated audio ON (synced ambient sound is included in the price)", async () => {
+  it("renders clips SILENT — per-clip ambience never synced across cuts; music rides the stitch", async () => {
     subscribeMock.mockResolvedValue(okResponse);
 
     await withOperator(britok, () =>
       generateVideo({ imageUrl: "https://x", motionPrompt: "p" })
     );
-    expect(subscribeMock.mock.calls[0][1].input.generate_audio).toBe(true);
+    expect(subscribeMock.mock.calls[0][1].input.generate_audio).toBe(false);
   });
 
   it("passes end_image_url when an endImageUrl is provided (first→last morph), omits it otherwise", async () => {

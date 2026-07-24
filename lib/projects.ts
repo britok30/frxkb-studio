@@ -1476,13 +1476,11 @@ const STYLE_EXPLORER_PER_STILL_SEC = 7;
  * uniform `perStillSec` — a stills+music YouTube long-form; with uniform
  * timing the description's chapter timestamps are just i × perStillSec.
  *
- * Audio: each seedance clip carries its own synced ambient audio, and those
- * tracks differ segment to segment. With no music, the native audio
- * concatenates through (hard cuts between ambiences); stills-only timelines
- * are silent. Passing `musicUrl` lays ONE audio bed across the whole
- * timeline and REPLACES the per-clip ambient entirely (compose does not
- * mix) — the uniform-audio option, and effectively required for the
- * style-explorer YouTube upload.
+ * Audio: clips render SILENT (per-clip seedance ambience was turned off —
+ * it never synced across cuts). Passing `musicUrl` lays ONE audio bed
+ * across the whole timeline; without it the final ships without sound.
+ * Legacy clips animated before the switch may still carry ambience — the
+ * music bed replaces it (compose/Shotstack don't mix), and muting covers it.
  */
 export type StitchOpts = {
   musicUrl?: string;
@@ -2039,10 +2037,9 @@ export async function finalizeProject(projectId: string): Promise<FinalizeResult
 
     // Finalize means "package the deliverable" — so when every clip exists
     // and no final video has been stitched yet, flag the route to ENQUEUE a
-    // background stitch (native ambient audio, default settings) rather
-    // than rendering inline: vendor renders never run inside request-bound
-    // functions. The stitch panel remains for re-stitching with a music bed
-    // or different knobs.
+    // background stitch (silent — clips carry no audio; the stitch panel
+    // adds the music bed) rather than rendering inline: vendor renders
+    // never run inside request-bound functions.
     // Style-explorer is excluded on purpose — a stills slideshow without a
     // music upload is a silent video, so that stitch stays operator-driven.
     let autoStitch = false;
