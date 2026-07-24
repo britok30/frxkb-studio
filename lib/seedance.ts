@@ -25,9 +25,8 @@ export type SeedanceInput = {
   seed?: number;
   /** Use the Fast tier endpoint — same model quality per fal, lower latency,
    *  ~$0.24/s vs $0.68/s. Caps at 720p, so the caller pairs it with a bigger
-   *  Topaz factor (3× → 4K). Morphs stay on the standard endpoint: fal's
-   *  docs now list end_image_url on fast, but it was absent when this
-   *  integration was verified — not worth risking the before-after format. */
+   *  Topaz factor (3× → 4K). end_image_url calls stay on the standard
+   *  endpoint (fast-tier support was unverified at integration time). */
   fast?: boolean;
 };
 

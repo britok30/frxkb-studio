@@ -1128,9 +1128,7 @@ export async function animateAllScenes(
     // One GPT-5.5 call for all motion prompts — cheaper than per-scene and
     // gives GPT-5.5 the full sequence so it can vary moves intentionally.
     // Defensive [] fallback for objectSet — pre-2026-05 concepts persisted
-    // before the field existed. (Reel-only: the before-after morph path was
-    // retired 2026-07-24 when the format went stills-only.)
-    const isMorph = false;
+    // before the field existed.
     const motionByOrder = new Map(
       (
         await generateMotionPrompts({
@@ -1157,21 +1155,16 @@ export async function animateAllScenes(
         // per call so the same motion prompt + still doesn't keep landing
         // on the same camera move.
         //
-        // Before-after is a true morph: the operator's BEFORE photo is the
-        // first frame and the generated AFTER render is the last frame, so
-        // the clip shows the room actually transforming instead of ambient
-        // motion on the after still.
         // Reels render one extra second of footage per clip: the stitch's
         // 1s crossfades consume overlap, and without the pad a 3×5s reel
-        // lands at 13s instead of 15s. Morphs don't crossfade — no pad.
+        // lands at 13s instead of 15s.
         // Tiering matches animatePlannedScene: standard reels ride the fast
-        // 720p endpoint + Topaz 3×; hero/morphs ride full 1080p + Topaz 2×.
-        const useFast = project.quality !== "hero" && !isMorph;
+        // 720p endpoint + Topaz 3×; hero rides full 1080p + Topaz 2×.
+        const useFast = project.quality !== "hero";
         const seedanceResult = await generateVideo({
-          imageUrl: isMorph ? (scene.referenceImageUrl as string) : (scene.imageUrl as string),
-          endImageUrl: isMorph ? (scene.imageUrl as string) : undefined,
+          imageUrl: scene.imageUrl as string,
           motionPrompt: motion,
-          durationSec: (scene.durationSec || 5) + (isMorph ? 0 : XFADE_SEC),
+          durationSec: (scene.durationSec || 5) + XFADE_SEC,
           resolution: useFast ? "720p" : "1080p",
           fast: useFast,
           aspectRatio: animateAspect,
@@ -1284,7 +1277,6 @@ export type AnimatePlanTarget = {
   sceneId: string;
   order: number;
   imageUrl: string;
-  referenceImageUrl: string | null;
   durationSec: number;
   motion: string;
 };
@@ -1293,7 +1285,6 @@ export type AnimatePlan = {
   projectId: string;
   quality: "standard" | "hero";
   aspectRatio: AspectRatio;
-  isMorph: boolean;
   skipped: number;
   targets: AnimatePlanTarget[];
 };
@@ -1354,14 +1345,10 @@ export async function planAnimate(
     }
     const skipped = candidates.length - targetsRaw.length;
     const quality: "standard" | "hero" = project.quality === "hero" ? "hero" : "standard";
-    // Reel-only since 2026-07-24 — the before-after morph path was retired
-    // when the format went stills-only. Kept in the plan shape for
-    // serialized-plan compatibility with in-flight jobs.
-    const isMorph = false;
 
     if (targetsRaw.length === 0) {
       await updateProjectStatus(projectId, "ready");
-      return { projectId, quality, aspectRatio, isMorph, skipped, targets: [] };
+      return { projectId, quality, aspectRatio, skipped, targets: [] };
     }
 
     await assertWithinDailyBudget(
@@ -1387,12 +1374,11 @@ export async function planAnimate(
         sceneId: s.id,
         order: s.order,
         imageUrl: s.imageUrl as string,
-        referenceImageUrl: s.referenceImageUrl,
         durationSec: s.durationSec || 5,
         motion: motionByOrder.get(s.order) as string,
       }));
 
-    return { projectId, quality, aspectRatio, isMorph, skipped, targets };
+    return { projectId, quality, aspectRatio, skipped, targets };
   } catch (err) {
     await updateProjectStatus(projectId, "ready");
     throw err;
@@ -1406,15 +1392,13 @@ export async function planAnimate(
  * completes and the batch keeps its per-scene independence.
  */
 export async function animatePlannedScene(
-  plan: Pick<AnimatePlan, "projectId" | "quality" | "aspectRatio" | "isMorph">,
+  plan: Pick<AnimatePlan, "projectId" | "quality" | "aspectRatio">,
   target: AnimatePlanTarget
 ): Promise<{ ok: boolean }> {
   // Crisp-pipeline tiers (both end at ~4K sources, stitched to 1080p/30):
   //   standard reel: Seedance FAST 720p (~$0.24/s, quicker) → Topaz 3× → 4K30
   //   hero reel:     Seedance full 1080p (~$0.68/s)         → Topaz 2× → 4K30
-  //   morphs:        always the full tier — end_image_url support on fast is
-  //                  unverified (see lib/seedance.ts).
-  const useFast = plan.quality !== "hero" && !plan.isMorph;
+  const useFast = plan.quality !== "hero";
 
   const attempt = async () => {
     await heartbeatGenerationLock(plan.projectId);
@@ -1422,10 +1406,9 @@ export async function animatePlannedScene(
     // Crossfade pad — see animateAllScenes: reels render +XFADE_SEC of
     // footage so the stitched final keeps its full nominal length.
     const seedanceResult = await generateVideo({
-      imageUrl: plan.isMorph ? (target.referenceImageUrl as string) : target.imageUrl,
-      endImageUrl: plan.isMorph ? target.imageUrl : undefined,
+      imageUrl: target.imageUrl,
       motionPrompt: target.motion,
-      durationSec: target.durationSec + (plan.isMorph ? 0 : XFADE_SEC),
+      durationSec: target.durationSec + XFADE_SEC,
       resolution: useFast ? "720p" : "1080p",
       fast: useFast,
       aspectRatio: plan.aspectRatio,
@@ -1452,7 +1435,7 @@ export async function animatePlannedScene(
       filename,
     });
     await markSceneAnimated(target.sceneId, { videoUrl: stored.url });
-    const billedSec = Math.min(15, Math.max(4, target.durationSec + (plan.isMorph ? 0 : XFADE_SEC)));
+    const billedSec = Math.min(15, Math.max(4, target.durationSec + XFADE_SEC));
     await recordSpend({
       projectId: plan.projectId,
       kind: "video",

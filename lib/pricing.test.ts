@@ -13,7 +13,6 @@ import {
   estimateMetadataGen,
   estimateSuggestWorld,
   estimateImageBatch,
-  estimateThumbnail,
   estimateProjectScripting,
   estimateBatchImages,
   estimateFinalize,
@@ -55,12 +54,6 @@ describe("estimateImageBatch", () => {
   it("returns 0 for zero or negative count", () => {
     expect(estimateImageBatch(0)).toBe(0);
     expect(estimateImageBatch(-5)).toBe(0);
-  });
-});
-
-describe("estimateThumbnail", () => {
-  it("is 0 — thumbnail generation deprecated; covers derive from scenes", () => {
-    expect(estimateThumbnail()).toBe(0);
   });
 });
 

@@ -13,8 +13,8 @@ import { ease } from "@/lib/motion";
 
 /**
  * One-click assembled deliverable — the CapCut replacement. Stitches the
- * project's clips into a single ready-to-post MP4
- * (reel: clips in order; before-after: held before still → morph).
+ * project's clips into a single ready-to-post MP4 (reel: crossfaded clips
+ * in order; style-explorer: held stills looped to target length).
  *
  * Audio: clips render SILENT (per-clip seedance ambience never synced
  * across cuts, so it was turned off). The uploaded music file is the one
@@ -30,6 +30,8 @@ export function StitchPanel({
   isOwner = true,
   stitchStatus = null,
   stitchError = null,
+  initialMusicUrl = null,
+  initialMusicDurationSec = null,
 }: {
   projectId: string;
   format: string;
@@ -49,11 +51,19 @@ export function StitchPanel({
   /** The final this one replaced — re-stitching keeps one prior render
    *  reachable so a worse re-render never destroys a good deliverable. */
   previousFinalVideoUrl?: string | null;
+  /** Music bed remembered from the last stitch — pre-loaded so a re-stitch
+   *  keeps the soundtrack without re-uploading the file. */
+  initialMusicUrl?: string | null;
+  initialMusicDurationSec?: number | null;
 }) {
   const router = useRouter();
   const [stitching, setStitching] = useState(false);
-  const [musicUrl, setMusicUrl] = useState<string | null>(null);
-  const [musicName, setMusicName] = useState<string | null>(null);
+  const [musicUrl, setMusicUrl] = useState<string | null>(initialMusicUrl);
+  const [musicName, setMusicName] = useState<string | null>(
+    initialMusicUrl
+      ? decodeURIComponent(initialMusicUrl.split("/").pop()?.split("?")[0] ?? "saved music")
+      : null
+  );
   const [uploadingMusic, setUploadingMusic] = useState(false);
   const [downloading, setDownloading] = useState(false);
 
@@ -74,7 +84,9 @@ export function StitchPanel({
       setDownloading(false);
     }
   }
-  const [musicDurationSec, setMusicDurationSec] = useState<number | null>(null);
+  const [musicDurationSec, setMusicDurationSec] = useState<number | null>(
+    initialMusicDurationSec
+  );
   const [perStillSec, setPerStillSec] = useState(7);
   const [targetMinutes, setTargetMinutes] = useState(10);
   const fileRef = useRef<HTMLInputElement | null>(null);
@@ -208,9 +220,7 @@ export function StitchPanel({
             <div>
               <CardTitle className="text-base">Final video</CardTitle>
               <CardDescription>
-                {format === "before-after"
-                  ? "Before still (2.5s) → transformation morph, as one ready-to-post MP4. Stitched automatically when you finalize; re-stitch here to swap in a music bed."
-                  : isSlideshow
+                {isSlideshow
                     ? "The YouTube long-form, ready to upload: every still held in sequence, looped to your target length, music tiled underneath. Add music — the video is silent without it. Chapters land every " +
                       perStillSec +
                       "s of cycle one."

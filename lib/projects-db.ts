@@ -317,6 +317,19 @@ export async function setProjectSceneReferences(
     );
 }
 
+/** Remember the music bed used for a stitch so the panel can pre-load it
+ *  on the next visit (no re-upload for every re-stitch). */
+export async function rememberProjectMusic(
+  id: string,
+  musicUrl: string,
+  musicDurationSec: number | null
+): Promise<void> {
+  await getDb()
+    .update(projects)
+    .set({ lastMusicUrl: musicUrl, lastMusicDurationSec: musicDurationSec, updatedAt: new Date() })
+    .where(eq(projects.id, id));
+}
+
 /** Advance the background-stitch lifecycle; failure messages ride along. */
 export async function updateStitchState(
   id: string,

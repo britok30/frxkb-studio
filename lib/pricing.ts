@@ -146,13 +146,6 @@ export function estimateImageBatch(
   return FAL_NANO_BANANA_PER_IMAGE + (n - 1) * FAL_NANO_BANANA_EDIT_PER_IMAGE;
 }
 
-/** Thumbnail uses nano-banana-pro/edit conditioned on the project's anchor
- *  Deprecated 2026-05-10 — covers now derive live from scenes (no fal call).
- *  Returns 0 so any straggler caller doesn't double-count. */
-export function estimateThumbnail(): number {
-  return 0;
-}
-
 // ── Phase totals ─────────────────────────────────────────────────────────────
 
 /** Cost of project creation only (concept brief + scene-prompt generation).

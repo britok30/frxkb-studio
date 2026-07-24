@@ -89,6 +89,11 @@ export const projects = pgTable(
     /** The stitched final this one replaced — re-stitching shifts the
      *  outgoing URL here so a worse re-render never destroys a good final. */
     previousFinalVideoUrl: text("previous_final_video_url"),
+    /** Last music bed used for a stitch (Blob URL + its duration) — the
+     *  stitch panel pre-loads it so a re-stitch doesn't need the file
+     *  re-uploaded every time. */
+    lastMusicUrl: text("last_music_url"),
+    lastMusicDurationSec: real("last_music_duration_sec"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },

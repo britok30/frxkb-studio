@@ -3,7 +3,7 @@ import { z } from "zod";
 import { requireProjectOwnership, withSessionOperator } from "@/lib/route-helpers";
 import { currentOperator } from "@/lib/operators";
 import { prepareStitch } from "@/lib/projects";
-import { updateStitchState } from "@/lib/projects-db";
+import { rememberProjectMusic, updateStitchState } from "@/lib/projects-db";
 import { inngest } from "@/inngest/client";
 
 export const runtime = "nodejs";
@@ -63,6 +63,10 @@ export async function POST(
     try {
       await prepareStitch(id, parsed.data); // validation dry-run
       const op = currentOperator();
+      // Remember the bed so the next re-stitch pre-loads it (no re-upload).
+      if (parsed.data.musicUrl) {
+        await rememberProjectMusic(id, parsed.data.musicUrl, parsed.data.musicDurationSec ?? null);
+      }
       await updateStitchState(id, "queued");
       await inngest.send({
         name: "project/stitch.requested",

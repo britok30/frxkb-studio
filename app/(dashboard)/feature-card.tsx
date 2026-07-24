@@ -13,7 +13,7 @@ export type FeatureCardProps = {
   cost: string;
   /** Tailwind aspect class for the visual proof rectangle on the left. */
   aspectClass: string;
-  /** "ghost" variant for non-format actions like Scratch — different border treatment. */
+  /** "ghost" variant for secondary actions — different border treatment. */
   variant?: "default" | "ghost";
   index?: number;
 };

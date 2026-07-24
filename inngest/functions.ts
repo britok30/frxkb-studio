@@ -14,6 +14,7 @@ import {
   type StitchPrep,
 } from "@/lib/projects";
 import { getOperator, withOperator } from "@/lib/operators";
+import { cleanupOrphanedUploads } from "@/lib/cleanup";
 import type { AspectRatio } from "@/lib/prompts/types";
 
 /**
@@ -238,5 +239,18 @@ export const stitchProject = inngest.createFunction(
     handleStitch({ event: event as unknown as StitchEvent }, step as unknown as StepRunner)
 );
 
+/**
+ * Weekly blob hygiene — deletes pre-project uploads (uploads/, thumbnail-src/,
+ * music/) that are 7+ days old and referenced by nothing in the DB. Mondays
+ * 06:00 UTC; a failed run just leaves the remainder for next week.
+ */
+export const cleanupUploads = inngest.createFunction(
+  { id: "cleanup-orphaned-uploads", retries: 1, triggers: [{ cron: "0 6 * * 1" }] },
+  async () => {
+    const result = await cleanupOrphanedUploads();
+    return result;
+  }
+);
+
 /** Every function we want Inngest to discover at /api/inngest. */
-export const functions = [generateProject, animateProject, stitchProject];
+export const functions = [generateProject, animateProject, stitchProject, cleanupUploads];

@@ -255,6 +255,8 @@ export default async function ProjectPage({ params }: { params: Promise<{ id: st
           format={project.format}
           finalVideoUrl={project.finalVideoUrl}
           previousFinalVideoUrl={project.previousFinalVideoUrl}
+          initialMusicUrl={project.lastMusicUrl}
+          initialMusicDurationSec={project.lastMusicDurationSec}
           hasShotstack={hasShotstack}
           isOwner={isOwner}
           stitchStatus={project.stitchStatus}
