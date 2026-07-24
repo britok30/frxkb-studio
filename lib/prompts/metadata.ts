@@ -413,7 +413,13 @@ TITLE — the single biggest CTR lever:
 
 THUMBNAIL TEXT — the punchy overlay the operator burns into their thumbnail:
 - 1-3 words, ABSOLUTE max 5. Under ~20 characters. Bold, readable at a glance on a phone.
-- It must NOT be the title, a truncation of the title, or a full sentence. The title carries the specifics; the thumbnail is the 2-3 word gut-punch — and it can name the space (e.g. "1 LIVING ROOM", "10 WAYS", "SAME ROOM", "WHICH ONE?").
+- It must NOT be the title, a truncation of the title, or a full sentence. The title carries the specifics; the thumbnail is the 2-3 word gut-punch.
+- Reach for a proven CTR pattern and make it feel charged, not flat:
+  · the impossible number ("1 ROOM, 15 WAYS", "15 ROOMS?!")
+  · the challenge/question ("WHICH ONE?", "PICK ONE", "KEEP OR SKIP?")
+  · the twist reveal ("SAME ROOM.", "ALL ONE SPACE")
+  · the bold verdict ("ONE WINS", "#7 SHOCKED US")
+- Punctuation is a weapon at this size — a period, "?!", or comma can carry the drama. Avoid limp label text ("DESIGN STYLES", "INTERIORS") that states a category instead of provoking a click.
 
 DESCRIPTION HOOK (descriptionHook):
 - The first ~150 characters — the ONLY part most viewers see before "...more". One or two sentences that restate the promise while referencing the ACTUAL space (the real room/space type from the description), primary keyword early and natural. No links, no hashtags here.
@@ -463,7 +469,7 @@ const YOUTUBE_TOOL_SCHEMA = {
       type: "string",
       minLength: 2,
       maxLength: 40,
-      description: "Overlay text for the thumbnail. 1-3 words (max 5), under ~20 chars, punchy. COMPLEMENTS the title, does not repeat it (e.g. \"1 ROOM, 10 WAYS\", \"SAME SPACE\", \"WHICH ONE?\").",
+      description: "Overlay text for the thumbnail. 1-3 words (max 5), under ~20 chars, charged not flat — impossible number / challenge / twist / verdict patterns (e.g. \"1 ROOM, 15 WAYS\", \"WHICH ONE?\", \"SAME ROOM.\", \"ONE WINS\"). COMPLEMENTS the title, never repeats it, never a limp category label.",
     },
     descriptionHook: {
       type: "string",
@@ -563,11 +569,21 @@ export function assembleYouTubeMetadata(opts: {
     `Design your own space with ${opts.appName} 👇`,
     `🌐 ${opts.website}`,
     `📸 Instagram: @${opts.instagram}`,
+    "———",
   ].join("\n");
+  // Sandwich layout: hook stays FIRST (the ~150 chars YouTube shows in
+  // search and above "...more" — burying it under links wastes the SEO
+  // real estate), then the app block, body, an engagement ask, chapters,
+  // the app block AGAIN, hashtags. Viewers who open the description hit
+  // the app link immediately; viewers who scroll to chapters hit it again.
   const description = [
     opts.draft.descriptionHook.trim(),
     "",
+    cta,
+    "",
     opts.draft.descriptionBody.trim(),
+    "",
+    "👉 Which style would you actually live in? Drop your pick in the comments.",
     "",
     "⏱ CHAPTERS:",
     chapterLines,
