@@ -1524,6 +1524,12 @@ export type StitchOpts = {
    *  When the timeline outruns the song, the music keyframe is tiled so
    *  the bed loops instead of going silent. */
   musicDurationSec?: number;
+  /** Style-explorer long-forms only: render the FULL timeline in one
+   *  Shotstack pass (~14-17 Mbps at quality "high") instead of the cheap
+   *  loop-concat, whose fal re-encode caps bitrate around ~2-3 Mbps.
+   *  Costs Shotstack minutes for the whole video (~$0.30/min) — the
+   *  upload-quality option; the loop stays the iteration default. */
+  fullQuality?: boolean;
 };
 
 /** Serializable stitch plan passed between Inngest steps. */
@@ -1618,7 +1624,20 @@ export async function renderStitch(prep: StitchPrep): Promise<string> {
   let renderedUrl: string | null = null;
   if (isShotstackConfigured()) {
     try {
-      if (cycles > 1) {
+      if (cycles > 1 && opts.fullQuality) {
+        // Upload-quality long-form: ONE Shotstack render of the whole tiled
+        // timeline (music included) at quality "high" — no fal re-encode to
+        // cap the bitrate. Costs the full output minutes.
+        const fullTimeline = Array.from({ length: cycles }, () => segments).flat();
+        const edit = buildShotstackEdit(format, fullTimeline, aspect, opts);
+        renderedUrl = (await renderShotstack(edit)).videoUrl;
+        await recordSpend({
+          projectId,
+          kind: "compose",
+          amountUsd: (totalMs / 60_000) * SHOTSTACK_PER_MINUTE,
+          meta: { format, outputSec: Math.round(totalMs / 1000), backend: "shotstack", pass: "full-quality" },
+        });
+      } else if (cycles > 1) {
         // Long-form loop: Shotstack renders ONE cycle (crossfades + Ken
         // Burns, opening/ending fade so the loop seam lands on black), then
         // fal concats `cycles` copies and lays the music bed. Shotstack

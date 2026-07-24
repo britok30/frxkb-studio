@@ -94,6 +94,10 @@ export function StitchPanel({
   // cycle) looped to ~15 min — comfortably past the 8-min mid-roll gate.
   const [perStillSec, setPerStillSec] = useState(10);
   const [targetMinutes, setTargetMinutes] = useState(15);
+  // Upload-quality = full-timeline Shotstack render (~14-17 Mbps) instead of
+  // the cheap loop-concat (fal re-encode caps ~2-3 Mbps). Default ON — the
+  // long-form's job is YouTube; uncheck for cheap draft iterations.
+  const [fullQuality, setFullQuality] = useState(true);
   const fileRef = useRef<HTMLInputElement | null>(null);
   const [, startTransition] = useTransition();
   const isSlideshow = format === "style-explorer";
@@ -186,7 +190,7 @@ export function StitchPanel({
         body: JSON.stringify({
           ...(musicUrl ? { musicUrl } : {}),
           ...(musicUrl && musicDurationSec ? { musicDurationSec } : {}),
-          ...(isSlideshow ? { perStillSec, targetMinutes } : {}),
+          ...(isSlideshow ? { perStillSec, targetMinutes, fullQuality } : {}),
         }),
       });
       if (!res.ok) {
@@ -314,6 +318,18 @@ export function StitchPanel({
                     }
                     className="w-16 h-9 rounded-md border bg-transparent px-2 text-sm text-foreground focus:border-foreground outline-none"
                   />
+                </label>
+                <label
+                  className="inline-flex items-center gap-2 text-xs text-muted-foreground tracking-tight"
+                  title="Full-timeline Shotstack render at high bitrate (~14-17 Mbps) — the upload-quality option. Unchecked uses the cheap loop-concat (~2-3 Mbps), fine for drafts."
+                >
+                  <input
+                    type="checkbox"
+                    checked={fullQuality}
+                    onChange={(e) => setFullQuality(e.target.checked)}
+                    className="size-3.5 accent-foreground"
+                  />
+                  Upload quality
                 </label>
                 <label className="inline-flex items-center gap-2 text-xs text-muted-foreground tracking-tight">
                   Target minutes

@@ -1488,6 +1488,31 @@ describe("stitchFinalVideo", () => {
     expect(composeMocks.composeVideo).not.toHaveBeenCalled();
   });
 
+  it("fullQuality long-form: whole tiled timeline in ONE Shotstack pass, no fal re-encode", async () => {
+    shotstackMocks.isShotstackConfigured.mockReturnValue(true);
+    shotstackMocks.renderShotstack.mockResolvedValue({ videoUrl: "https://shotstack.io/full.mp4" });
+    dbMocks.selectProjectById.mockResolvedValue({
+      id: "p_1", format: "style-explorer", worldType: "interior", status: "ready", aspectRatio: "16:9",
+    });
+    dbMocks.selectScenesByProject.mockResolvedValue([
+      { ...fakeScene({ id: "s_1", order: 1, status: "generated" }), imageUrl: "https://blob/base.jpg" },
+      { ...fakeScene({ id: "s_2", order: 2, status: "generated" }), imageUrl: "https://blob/a.jpg" },
+      { ...fakeScene({ id: "s_3", order: 3, status: "generated" }), imageUrl: "https://blob/b.jpg" },
+    ]);
+    storageMocks.storeFromUrl.mockResolvedValue({ url: "https://blob/final.mp4", pathname: "x" });
+
+    // 3 stills × 10s = 30s cycle; 2 min target → 4 cycles.
+    await stitchFinalVideo("p_1", { perStillSec: 10, targetMinutes: 2, fullQuality: true });
+
+    // ONE Shotstack render of the FULL 12-still timeline; fal never touches it.
+    expect(shotstackMocks.renderShotstack).toHaveBeenCalledOnce();
+    expect(shotstackMocks.renderShotstack.mock.calls[0][0].timeline.tracks).toHaveLength(12);
+    expect(composeMocks.composeVideo).not.toHaveBeenCalled();
+    const spend = spendMocks.recordSpend.mock.calls.map((c) => c[0]).find((x) => x.kind === "compose");
+    expect(spend.meta.pass).toBe("full-quality");
+    expect(spend.meta.outputSec).toBe(120);
+  });
+
   it("before-after is stills-only — stitch refuses it", async () => {
     dbMocks.selectProjectById.mockResolvedValue({
       id: "p_1",

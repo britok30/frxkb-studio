@@ -27,6 +27,8 @@ const PostBody = z.object({
   /** Music file duration in seconds (read client-side) — lets the server
    *  tile the bed so long videos don't go silent when the song ends. */
   musicDurationSec: z.number().positive().max(3600).optional(),
+  /** Style-explorer only: full-timeline Shotstack render (upload quality). */
+  fullQuality: z.boolean().optional(),
 });
 
 /**

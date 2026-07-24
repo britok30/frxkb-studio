@@ -56,7 +56,11 @@ function apiBase(): string {
 export const SHOTSTACK_PER_MINUTE = 0.3;
 
 const POLL_INTERVAL_MS = 3000;
-const POLL_TIMEOUT_MS = 5 * 60 * 1000;
+// 12 min: full-quality long-forms render whole ~16-minute timelines, which
+// can outlive the old 5-min cap (a timeout here silently falls back to the
+// low-bitrate fal path). Stays inside the /api/inngest maxDuration (800s)
+// with headroom for the step's other work.
+const POLL_TIMEOUT_MS = 12 * 60 * 1000;
 
 /**
  * Submit an edit and poll until the render lands. Returns the hosted MP4
@@ -98,5 +102,5 @@ export async function renderShotstack(edit: ShotstackEdit): Promise<{ videoUrl: 
       throw new Error(`Shotstack render failed: ${data.response?.error ?? "unknown error"}`);
     }
   }
-  throw new Error("Shotstack render timed out after 5 minutes");
+  throw new Error("Shotstack render timed out after 12 minutes");
 }
