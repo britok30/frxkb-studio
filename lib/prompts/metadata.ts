@@ -414,11 +414,12 @@ TITLE — the single biggest CTR lever:
 THUMBNAIL TEXT — the punchy overlay the operator burns into their thumbnail:
 - 1-3 words, ABSOLUTE max 5. Under ~20 characters. Bold, readable at a glance on a phone.
 - It must NOT be the title, a truncation of the title, or a full sentence. The title carries the specifics; the thumbnail is the 2-3 word gut-punch.
-- Reach for a proven CTR pattern and make it feel charged, not flat:
-  · the impossible number ("1 ROOM, 15 WAYS", "15 ROOMS?!")
-  · the challenge/question ("WHICH ONE?", "PICK ONE", "KEEP OR SKIP?")
-  · the twist reveal ("SAME ROOM.", "ALL ONE SPACE")
-  · the bold verdict ("ONE WINS", "#7 SHOCKED US")
+- Reach for a proven CTR pattern and make it feel charged, not flat. The patterns (NOT a menu of phrases — never copy these examples verbatim, invent within the shape):
+  · the impossible number — leads with THIS video's real count and/or space
+  · the challenge/question — makes the viewer pick a side
+  · the twist reveal — the "it's all one room" gut-punch
+  · the bold verdict — one style wins, name the stakes
+- GROUND it in this specific video: the number of styles and/or the actual space should almost always appear ("1 KITCHEN, 15 WAYS" beats a generic challenge every time). A phrase that could sit on any design video is a failure.
 - Punctuation is a weapon at this size — a period, "?!", or comma can carry the drama. Avoid limp label text ("DESIGN STYLES", "INTERIORS") that states a category instead of provoking a click.
 
 DESCRIPTION HOOK (descriptionHook):
@@ -469,7 +470,7 @@ const YOUTUBE_TOOL_SCHEMA = {
       type: "string",
       minLength: 2,
       maxLength: 40,
-      description: "Overlay text for the thumbnail. 1-3 words (max 5), under ~20 chars, charged not flat — impossible number / challenge / twist / verdict patterns (e.g. \"1 ROOM, 15 WAYS\", \"WHICH ONE?\", \"SAME ROOM.\", \"ONE WINS\"). COMPLEMENTS the title, never repeats it, never a limp category label.",
+      description: "Overlay text for the thumbnail. 1-3 words (max 5), under ~20 chars, charged not flat — impossible-number / challenge / twist / verdict pattern SHAPES (invent the phrase; never a stock phrase that fits any video). Ground it in THIS video: real style count and/or the actual space. COMPLEMENTS the title, never repeats it, never a limp category label.",
     },
     descriptionHook: {
       type: "string",
