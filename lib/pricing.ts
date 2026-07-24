@@ -40,6 +40,10 @@ export const FAL_SEEDANCE_PER_SECOND: Record<"480p" | "720p" | "1080p" | "4k", n
  *  standard-quality reel path (Topaz 3× recovers the resolution). */
 export const FAL_SEEDANCE_FAST_720P_PER_SECOND = 0.2419;
 
+/** One gpt-image-2 thumbnail edit at 1536×1024 (token-billed by OpenAI;
+ *  this is a rough per-image estimate for the ledger + button label). */
+export const GPT_IMAGE_2_THUMBNAIL_USD = 0.2;
+
 /** Topaz video upscale tiered pricing per second of OUTPUT.
  *  ≤720p: $0.01/s, ≤1080p: $0.02/s, >1080p: $0.08/s.
  *  Doubles when target_fps is set (Apollo frame-interpolation surcharge). */

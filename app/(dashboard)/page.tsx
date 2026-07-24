@@ -8,6 +8,7 @@ import {
   estimateProjectTotal,
   FAL_NANO_BANANA_PER_IMAGE,
   formatCost,
+  GPT_IMAGE_2_THUMBNAIL_USD,
 } from "@/lib/pricing";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import type { Project } from "@/lib/db";
@@ -89,9 +90,9 @@ export default async function ProjectsPage() {
           <span className="text-xs uppercase tracking-[0.18em] text-muted-foreground">
             Start something
           </span>
-          <span className="text-xs text-muted-foreground tabular-nums">5</span>
+          <span className="text-xs text-muted-foreground tabular-nums">6</span>
         </div>
-        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-5">
+        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
           <FeatureCard
             href="/new?format=reel"
             kicker="Instagram · TikTok · YouTube Shorts"
@@ -123,6 +124,14 @@ export default async function ProjectsPage() {
             hint="10 still slides, no video."
             cost={`~${formatCost(estimateProjectTotal("carousel", 10))}`}
             aspectClass="aspect-square"
+          />
+          <FeatureCard
+            href="/thumbnail"
+            kicker="YouTube"
+            title="Thumbnail"
+            hint="Upload a frame, type the hook text — gpt-image-2 restyles it into a 1280×720 thumbnail."
+            cost={`~${formatCost(GPT_IMAGE_2_THUMBNAIL_USD)}`}
+            aspectClass="aspect-video"
           />
           <FeatureCard
             href="/scratch"
