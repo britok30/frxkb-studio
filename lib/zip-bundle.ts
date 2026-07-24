@@ -40,11 +40,34 @@ export type BundleData = {
  * apply because the response goes to the user's machine, not back through
  * our serverless function.
  */
+/** Finals above this stay OUT of the zip — a 2.4GB full-quality long-form
+ *  can't be fetched+zipped in browser memory (observed: "Packing…" hanging
+ *  for minutes). The stitch panel's direct download streams it instead. */
+const FINAL_IN_ZIP_MAX_BYTES = 300 * 1024 * 1024;
+
+export type BundleResult = {
+  /** True when final.mp4 was too large for the zip — the caller should point
+   *  the operator at the direct download. */
+  finalSkipped: boolean;
+};
+
 export async function downloadBundle(
   data: BundleData,
   opts: { onProgress?: (done: number, total: number) => void } = {}
-): Promise<void> {
+): Promise<BundleResult> {
   const zip = new JSZip();
+
+  // Probe the final's size up front; huge ones are excluded from the zip.
+  let includeFinal = !!data.finalVideoUrl;
+  if (data.finalVideoUrl) {
+    try {
+      const head = await fetch(data.finalVideoUrl, { method: "HEAD" });
+      const size = Number(head.headers.get("content-length") ?? 0);
+      if (size > FINAL_IN_ZIP_MAX_BYTES) includeFinal = false;
+    } catch {
+      // Probe failure: keep legacy behavior (attempt inclusion).
+    }
+  }
   // Each scene contributes 1 fetch (still OR video — animated scenes still
   // ship the still as a poster fallback though), plus 1 for the thumbnail.
   // We fetch BOTH still and video for animated scenes so the operator has
@@ -52,7 +75,7 @@ export async function downloadBundle(
   const fetchUnits =
     data.scenes.reduce((n, s) => n + 1 + (s.videoUrl ? 1 : 0), 0) +
     1 +
-    (data.finalVideoUrl ? 1 : 0) +
+    (includeFinal ? 1 : 0) +
     (data.youtubeThumbnailUrl ? 1 : 0);
   let done = 0;
 
@@ -74,7 +97,7 @@ export async function downloadBundle(
           const path = data.scenes.some((x) => x.videoUrl)
             ? `stills/scene-${padded}.jpg`
             : `scene-${padded}.jpg`;
-          zip.file(path, blob);
+          zip.file(path, blob, { compression: "STORE" });
           tick();
         })(),
       ];
@@ -82,7 +105,7 @@ export async function downloadBundle(
         tasks.push(
           (async () => {
             const blob = await fetchAsBlob(s.videoUrl as string);
-            zip.file(`videos/scene-${padded}.mp4`, blob);
+            zip.file(`videos/scene-${padded}.mp4`, blob, { compression: "STORE" });
             tick();
           })()
         );
@@ -91,14 +114,14 @@ export async function downloadBundle(
     }),
     (async () => {
       const blob = await fetchAsBlob(data.thumbnailUrl);
-      zip.file("thumbnail.jpg", blob);
+      zip.file("thumbnail.jpg", blob, { compression: "STORE" });
       tick();
     })(),
-    ...(data.finalVideoUrl
+    ...(includeFinal && data.finalVideoUrl
       ? [
           (async () => {
             const blob = await fetchAsBlob(data.finalVideoUrl as string);
-            zip.file("final.mp4", blob);
+            zip.file("final.mp4", blob, { compression: "STORE" });
             tick();
           })(),
         ]
@@ -107,7 +130,7 @@ export async function downloadBundle(
       ? [
           (async () => {
             const blob = await fetchAsBlob(data.youtubeThumbnailUrl as string);
-            zip.file("youtube-thumbnail-1280x720.jpg", blob);
+            zip.file("youtube-thumbnail-1280x720.jpg", blob, { compression: "STORE" });
             tick();
           })(),
         ]
@@ -123,7 +146,11 @@ export async function downloadBundle(
     format: data.format,
     generatedAt: new Date().toISOString(),
     thumbnail: "thumbnail.jpg",
-    finalVideo: data.finalVideoUrl ? "final.mp4" : null,
+    finalVideo: includeFinal && data.finalVideoUrl ? "final.mp4" : null,
+    finalVideoNote:
+      data.finalVideoUrl && !includeFinal
+        ? "final.mp4 exceeds the zip size limit — download it directly from the project's Final video panel."
+        : null,
     youtubeThumbnail: data.youtubeThumbnailUrl ? "youtube-thumbnail-1280x720.jpg" : null,
     metadata: data.metadata,
     scenes: data.scenes.map((s) => {
@@ -152,6 +179,7 @@ export async function downloadBundle(
   });
 
   saveAs(blob, `${slugify(data.title)}-bundle.zip`);
+  return { finalSkipped: !!data.finalVideoUrl && !includeFinal };
 }
 
 async function fetchAsBlob(url: string): Promise<Blob> {

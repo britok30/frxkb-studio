@@ -71,10 +71,18 @@ export function ExportPanel({
         scenes,
         metadata,
       };
-      await downloadBundle(bundle, {
+      const result = await downloadBundle(bundle, {
         onProgress: (done, total) => setProgress({ done, total }),
       });
-      toast.success("Bundle downloaded", { id: toastId });
+      if (result.finalSkipped) {
+        toast.success("Bundle downloaded — final.mp4 excluded (too large for a zip)", {
+          id: toastId,
+          description: "Grab the video with the Download final.mp4 button in the Final video panel.",
+          duration: 10000,
+        });
+      } else {
+        toast.success("Bundle downloaded", { id: toastId });
+      }
     } catch (err) {
       const message = err instanceof Error ? err.message : "Unknown error";
       toast.error("Couldn't pack bundle", { id: toastId, description: message });
