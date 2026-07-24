@@ -15,6 +15,9 @@ const hoisted = vi.hoisted(() => {
     animatePlannedScene: vi.fn(),
     finishAnimate: vi.fn(),
     prepareStitch: vi.fn(),
+    planStitchRehost: vi.fn(),
+    transferStitchRehostParts: vi.fn(),
+    completeStitchRehost: vi.fn(),
     renderStitch: vi.fn(),
     finishStitch: vi.fn(),
     failStitch: vi.fn(),
@@ -31,6 +34,9 @@ vi.mock("@/lib/projects", () => ({
   animatePlannedScene: hoisted.animatePlannedScene,
   finishAnimate: hoisted.finishAnimate,
   prepareStitch: hoisted.prepareStitch,
+  planStitchRehost: hoisted.planStitchRehost,
+  transferStitchRehostParts: hoisted.transferStitchRehostParts,
+  completeStitchRehost: hoisted.completeStitchRehost,
   renderStitch: hoisted.renderStitch,
   finishStitch: hoisted.finishStitch,
   failStitch: hoisted.failStitch,
@@ -75,6 +81,10 @@ beforeEach(() => {
   hoisted.animatePlannedScene.mockReset();
   hoisted.finishAnimate.mockReset().mockResolvedValue(undefined);
   hoisted.prepareStitch.mockReset();
+  hoisted.planStitchRehost.mockReset();
+  hoisted.planStitchRehost.mockResolvedValue({ mode: "simple" });
+  hoisted.transferStitchRehostParts.mockReset();
+  hoisted.completeStitchRehost.mockReset();
   hoisted.renderStitch.mockReset();
   hoisted.finishStitch.mockReset();
   hoisted.failStitch.mockReset().mockResolvedValue(undefined);
@@ -282,6 +292,42 @@ describe("handleStitch", () => {
     expect(hoisted.renderStitch).toHaveBeenCalledWith(prep);
     expect(hoisted.finishStitch).toHaveBeenCalledWith("p_1", "https://fal/out.mp4");
     expect(result).toEqual({ finalVideoUrl: "https://blob/final.mp4" });
+  });
+
+  it("large finals: chunked rehost — part batches in their own steps, then complete (no single-step finish)", async () => {
+    hoisted.getOperator.mockReturnValue(stubOperator);
+    hoisted.prepareStitch.mockResolvedValue({ projectId: "p_1", format: "style-explorer", segments: [], totalMs: 960000, aspect: "16:9", opts: {} });
+    hoisted.renderStitch.mockResolvedValue("https://shotstack/full.mp4");
+    const plan = {
+      mode: "multipart" as const,
+      pathname: "videos/p_1/final-x.mp4",
+      key: "k",
+      uploadId: "u",
+      contentType: "video/mp4",
+      sizeBytes: 7 * 64 * 1024 * 1024,
+      partSizeBytes: 64 * 1024 * 1024,
+      partCount: 7,
+    };
+    hoisted.planStitchRehost.mockResolvedValue(plan);
+    hoisted.transferStitchRehostParts.mockImplementation(async (_url: string, _p: unknown, from: number, to: number) =>
+      Array.from({ length: to - from + 1 }, (_, i) => ({ etag: `e${from + i}`, partNumber: from + i }))
+    );
+    hoisted.completeStitchRehost.mockResolvedValue({ finalVideoUrl: "https://blob/final-big.mp4" });
+
+    const result = await handleStitch(
+      { event: { data: { projectId: "p_1", operatorEmail: "britok30@gmail.com", opts: {} } } },
+      passthroughStep
+    );
+
+    // 7 parts at 3/step → batches [1-3], [4-6], [7-7].
+    expect(hoisted.transferStitchRehostParts).toHaveBeenCalledTimes(3);
+    expect(hoisted.transferStitchRehostParts).toHaveBeenNthCalledWith(1, "https://shotstack/full.mp4", plan, 1, 3);
+    expect(hoisted.transferStitchRehostParts).toHaveBeenNthCalledWith(3, "https://shotstack/full.mp4", plan, 7, 7);
+    expect(hoisted.finishStitch).not.toHaveBeenCalled();
+    const parts = hoisted.completeStitchRehost.mock.calls[0][2];
+    expect(parts).toHaveLength(7);
+    expect(parts[6]).toEqual({ etag: "e7", partNumber: 7 });
+    expect(result).toEqual({ finalVideoUrl: "https://blob/final-big.mp4" });
   });
 
   it("throws when the operator has no configured keys", async () => {

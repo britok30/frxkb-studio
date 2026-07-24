@@ -1,18 +1,22 @@
 import { inngest } from "./client";
 import {
   animatePlannedScene,
+  completeStitchRehost,
   failStitch,
   finishAnimate,
   finishStitch,
   generateAllImages,
   planAnimate,
+  planStitchRehost,
   prepareStitch,
   ProjectBusyError,
   renderStitch,
+  transferStitchRehostParts,
   type AnimatePlan,
   type StitchOpts,
   type StitchPrep,
 } from "@/lib/projects";
+import { REHOST_PARTS_PER_STEP, type RehostPart, type RehostPlan } from "@/lib/storage";
 import { getOperator, withOperator } from "@/lib/operators";
 import { cleanupOrphanedUploads } from "@/lib/cleanup";
 import type { AspectRatio } from "@/lib/prompts/types";
@@ -210,8 +214,34 @@ export async function handleStitch(
     withOperator(operator, () => renderStitch(prep))
   )) as string;
 
-  return await step.run("finish", () =>
-    withOperator(operator, () => finishStitch(projectId, renderedUrl))
+  // Re-host: full-quality long-forms run 1.5-2GB — one invocation can't
+  // move that (observed platform kill 2026-07-24). Plan step decides:
+  // small files stream in one "finish" step as before; large files split
+  // into Range-download part batches, each in its OWN invocation, then a
+  // complete step assembles them.
+  const rehostPlan = (await step.run("rehost-plan", () =>
+    withOperator(operator, () => planStitchRehost(projectId, renderedUrl))
+  )) as RehostPlan;
+
+  if (rehostPlan.mode === "simple") {
+    return await step.run("finish", () =>
+      withOperator(operator, () => finishStitch(projectId, renderedUrl))
+    );
+  }
+
+  let parts: RehostPart[] = [];
+  for (let from = 1; from <= rehostPlan.partCount; from += REHOST_PARTS_PER_STEP) {
+    const to = Math.min(from + REHOST_PARTS_PER_STEP - 1, rehostPlan.partCount);
+    const batch = (await step.run(`rehost-parts-${from}-${to}`, () =>
+      withOperator(operator, () =>
+        transferStitchRehostParts(renderedUrl, rehostPlan, from, to)
+      )
+    )) as RehostPart[];
+    parts = parts.concat(batch);
+  }
+
+  return await step.run("finish-large", () =>
+    withOperator(operator, () => completeStitchRehost(projectId, rehostPlan, parts))
   );
 }
 

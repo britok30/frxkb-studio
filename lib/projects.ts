@@ -28,7 +28,15 @@ import {
 import { generateVideo } from "@/lib/seedance";
 import { upscaleVideo } from "@/lib/topaz";
 import { generateMotionPrompts, getCameraMove } from "@/lib/prompts/motion";
-import { ensurePngStill, storeFromUrl } from "@/lib/storage";
+import {
+  completeLargeRehost,
+  ensurePngStill,
+  planLargeRehost,
+  storeFromUrl,
+  transferRehostParts,
+  type RehostPart,
+  type RehostPlan,
+} from "@/lib/storage";
 import { runWithConcurrency } from "@/lib/concurrency";
 import { assertWithinDailyBudget, recordSpend } from "@/lib/spend";
 import {
@@ -1696,6 +1704,43 @@ export async function renderStitch(prep: StitchPrep): Promise<string> {
     });
   }
   return renderedUrl;
+}
+
+/** Stitch step 3a (large finals): probe the rendered file and open a
+ *  chunked multipart re-host when it's too big for one invocation. */
+export async function planStitchRehost(
+  projectId: string,
+  renderedUrl: string
+): Promise<RehostPlan> {
+  return await planLargeRehost({
+    url: renderedUrl,
+    kind: "videos",
+    projectId,
+    filename: `final-${nanoid(6)}.mp4`,
+  });
+}
+
+/** Stitch step 3b (× N): transfer one batch of parts. Pure passthrough —
+ *  exists so the Inngest orchestrator imports everything from lib/projects. */
+export async function transferStitchRehostParts(
+  renderedUrl: string,
+  plan: Extract<RehostPlan, { mode: "multipart" }>,
+  fromPart: number,
+  toPart: number
+): Promise<RehostPart[]> {
+  return await transferRehostParts(renderedUrl, plan, fromPart, toPart);
+}
+
+/** Stitch step 3c: assemble the parts, persist, settle the lifecycle. */
+export async function completeStitchRehost(
+  projectId: string,
+  plan: Extract<RehostPlan, { mode: "multipart" }>,
+  parts: RehostPart[]
+): Promise<StitchResult> {
+  const stored = await completeLargeRehost(plan, parts);
+  await markProjectFinalVideo(projectId, stored.url);
+  await updateStitchState(projectId, "ready");
+  return { finalVideoUrl: stored.url };
 }
 
 /** Stitch step 3 — re-host on our own Blob (stable, downloadable URL),

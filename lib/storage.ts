@@ -1,4 +1,4 @@
-import { put } from "@vercel/blob";
+import { completeMultipartUpload, createMultipartUpload, put, uploadPart } from "@vercel/blob";
 import { nanoid } from "nanoid";
 import sharp from "sharp";
 
@@ -135,5 +135,117 @@ export async function storeOperatorUpload(opts: {
     addRandomSuffix: false,
     contentType: opts.contentType,
   });
+  return { url: result.url, pathname: result.pathname };
+}
+
+// ── Large-file rehost (chunked multipart) ───────────────────────────────────
+//
+// A full-quality 16-min long-form is ~1.5-2GB. Moving that through ONE
+// serverless invocation dies on the execution ceiling (observed 2026-07-24:
+// "server returned HTTP 500 before the SDK responded" on the finish step
+// after a successful Shotstack render). These helpers split the transfer
+// into serializable steps the Inngest orchestrator can spread across
+// invocations: plan → N part-batches → complete. Each part is a bounded
+// Range download + uploadPart, so memory stays flat too.
+
+export type RehostPart = { etag: string; partNumber: number };
+
+export type RehostPlan =
+  | { mode: "simple" }
+  | {
+      mode: "multipart";
+      pathname: string;
+      key: string;
+      uploadId: string;
+      contentType: string;
+      sizeBytes: number;
+      partSizeBytes: number;
+      partCount: number;
+    };
+
+/** Files at or under this stream in one step (storeFromUrl). */
+const REHOST_SIMPLE_MAX_BYTES = 256 * 1024 * 1024;
+/** 64MB parts (Blob multipart minimum is 5MB). */
+const REHOST_PART_BYTES = 64 * 1024 * 1024;
+/** Parts per orchestrator step — ~192MB of transfer per invocation. */
+export const REHOST_PARTS_PER_STEP = 3;
+
+/** Probe the source and decide: single-step stream vs chunked multipart.
+ *  Falls back to simple when the size is unknown or Range isn't supported
+ *  (the simple path then bears the risk it always had). */
+export async function planLargeRehost(opts: {
+  url: string;
+  kind: AssetKind;
+  projectId: string;
+  filename: string;
+}): Promise<RehostPlan> {
+  const head = await fetch(opts.url, { method: "HEAD" });
+  const sizeBytes = Number(head.headers.get("content-length") ?? 0);
+  const acceptRanges = (head.headers.get("accept-ranges") ?? "").toLowerCase().includes("bytes");
+  if (!head.ok || !sizeBytes || sizeBytes <= REHOST_SIMPLE_MAX_BYTES || !acceptRanges) {
+    return { mode: "simple" };
+  }
+  const contentType = head.headers.get("content-type") ?? "video/mp4";
+  const pathname = blobPath(opts.kind, opts.projectId, opts.filename);
+  const { key, uploadId } = await createMultipartUpload(pathname, {
+    access: "public",
+    contentType,
+  });
+  return {
+    mode: "multipart",
+    pathname,
+    key,
+    uploadId,
+    contentType,
+    sizeBytes,
+    partSizeBytes: REHOST_PART_BYTES,
+    partCount: Math.ceil(sizeBytes / REHOST_PART_BYTES),
+  };
+}
+
+/** Transfer parts [fromPart..toPart] (1-based, inclusive): Range-download
+ *  each and uploadPart it. Sequential — one 64MB part in memory at a time. */
+export async function transferRehostParts(
+  url: string,
+  plan: Extract<RehostPlan, { mode: "multipart" }>,
+  fromPart: number,
+  toPart: number
+): Promise<RehostPart[]> {
+  const parts: RehostPart[] = [];
+  for (let partNumber = fromPart; partNumber <= toPart; partNumber++) {
+    const start = (partNumber - 1) * plan.partSizeBytes;
+    const end = Math.min(start + plan.partSizeBytes, plan.sizeBytes) - 1;
+    const res = await fetch(url, { headers: { Range: `bytes=${start}-${end}` } });
+    if (res.status !== 206) {
+      throw new Error(`Range download failed for part ${partNumber}: HTTP ${res.status}`);
+    }
+    const body = Buffer.from(await res.arrayBuffer());
+    const uploaded = await uploadPart(plan.pathname, body, {
+      access: "public",
+      uploadId: plan.uploadId,
+      key: plan.key,
+      partNumber,
+      contentType: plan.contentType,
+    });
+    parts.push({ etag: uploaded.etag, partNumber: uploaded.partNumber });
+  }
+  return parts;
+}
+
+/** Stitch the uploaded parts into the final blob. */
+export async function completeLargeRehost(
+  plan: Extract<RehostPlan, { mode: "multipart" }>,
+  parts: RehostPart[]
+): Promise<StoredAsset> {
+  const result = await completeMultipartUpload(
+    plan.pathname,
+    [...parts].sort((a, b) => a.partNumber - b.partNumber),
+    {
+      access: "public",
+      uploadId: plan.uploadId,
+      key: plan.key,
+      contentType: plan.contentType,
+    }
+  );
   return { url: result.url, pathname: result.pathname };
 }
