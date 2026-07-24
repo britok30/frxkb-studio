@@ -92,17 +92,14 @@ export function ProjectActions({
   const ready = counts.generated + counts.approved;
   const allStillsDone = totalScenes > 0 && remaining === 0 && counts.generating === 0 && ready === totalScenes;
 
-  // Animate gating: stills all done, but not all the animatable scenes have
-  // a video yet. Reels animate every scene; before-after only animates the
-  // AI-generated "after" (one of two scenes — the upload stays static).
+  // Animate gating: stills all done, but not every scene has a video yet.
+  // Reels are the only animatable format — everything else (carousel,
+  // style-explorer, before-after) is stills-only and finalizes as soon as
+  // every still is in.
   const isReel = format === "reel";
-  const isAnimatable = isReel || format === "before-after";
-  const animatableCount = format === "before-after" ? 1 : totalScenes;
+  const isAnimatable = isReel;
+  const animatableCount = totalScenes;
   const animateNeeded = isAnimatable && allStillsDone && animatedCount < animatableCount;
-  // Finalize is gated behind animation for both animatable formats — a
-  // before-after bundle without the after video is missing the whole point,
-  // same as a reel without its motion. Static formats (carousel, style-explorer)
-  // finalize as soon as every still is in.
   const canFinalize =
     allStillsDone && (!isAnimatable || animatedCount >= animatableCount);
 

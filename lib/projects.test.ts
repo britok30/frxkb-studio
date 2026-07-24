@@ -84,6 +84,14 @@ vi.mock("@/lib/operators", () => ({
   pickAppLink: operatorMocks.pickAppLink,
 }));
 
+const stylesMocks = vi.hoisted(() => ({
+  generateStyles: vi.fn(),
+}));
+vi.mock("@/lib/prompts/styles", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/prompts/styles")>()),
+  generateStyles: stylesMocks.generateStyles,
+}));
+
 const dedupeMocks = vi.hoisted(() => ({
   findSimilarProjects: vi.fn(),
 }));
@@ -482,11 +490,20 @@ describe("createBeforeAfterProject", () => {
       vibe: concept.vibe,
       notes: concept.notes,
     });
+    // Vision styles call proposes the 4 "after" concepts.
+    stylesMocks.generateStyles.mockResolvedValue({
+      styles: [
+        { styleName: "Japandi", styleSubtitle: "Warm minimal", editPrompt: "japandi restyle" },
+        { styleName: "Coastal", styleSubtitle: "Airy + salt-washed", editPrompt: "coastal restyle" },
+        { styleName: "Industrial", styleSubtitle: "Steel + patina", editPrompt: "industrial restyle" },
+        { styleName: "Art Deco", styleSubtitle: "Gloss + geometry", editPrompt: "deco restyle" },
+      ],
+    });
     dbMocks.insertProject.mockImplementation(async (values) => ({ ...values }));
     dbMocks.insertScenes.mockImplementation(async (rows) => rows);
   });
 
-  it("persists the upload as the before scene + creates a pending after scene", async () => {
+  it("persists the upload as the before scene + creates 4 pending after concepts", async () => {
     const out = await createBeforeAfterProject({
       beforeImageUrl: "https://blob.example/upload-abc.jpg",
       transformationPrompt:
@@ -502,6 +519,14 @@ describe("createBeforeAfterProject", () => {
         worldType: "interior",
       })
     );
+    // Vision styles call SEES the upload and is steered by the prompt.
+    expect(stylesMocks.generateStyles).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({
+        baseImageUrl: "https://blob.example/upload-abc.jpg",
+        count: 4,
+        operatorNotes: expect.stringContaining("Modernize"),
+      })
+    );
     // The full generateConcept (with dedupe fields) is NOT called for before-after.
     expect(claudeMocks.generateConcept).not.toHaveBeenCalled();
 
@@ -512,34 +537,40 @@ describe("createBeforeAfterProject", () => {
     expect(projectInsert.worldType).toBe("interior");
     expect(projectInsert.worldSignature).toBeNull();
     expect(projectInsert.worldKeywords).toBeNull();
+    // Stills-only: no target duration.
+    expect(projectInsert.targetDurationSec).toBeNull();
 
-    // Two scenes: before (pre-generated) + after (pending, references the before).
+    // Five scenes: before (pre-generated) + 4 after concepts (pending,
+    // each pinned to the upload, static).
     const sceneRows = dbMocks.insertScenes.mock.calls[0][0];
-    expect(sceneRows).toHaveLength(2);
+    expect(sceneRows).toHaveLength(5);
 
     const before = sceneRows.find((s: { order: number }) => s.order === 1);
     expect(before).toMatchObject({
       status: "generated",
       imageUrl: "https://blob.example/upload-abc.jpg",
       referenceImageUrl: null,
-      // Both scenes share the same animation duration so they pair as
-      // matched cuts in CapCut.
-      durationSec: 7,
+      styleName: "Before",
+      durationSec: 0,
     });
 
-    const after = sceneRows.find((s: { order: number }) => s.order === 2);
-    expect(after).toMatchObject({
-      status: "pending",
-      // Frozen reference = the upload, so per-scene regen always re-uses it.
-      referenceImageUrl: "https://blob.example/upload-abc.jpg",
-      durationSec: 7, // matches defaultsForFormat("before-after").sceneDurationSec
-    });
+    for (const order of [2, 3, 4, 5]) {
+      const after = sceneRows.find((s: { order: number }) => s.order === order);
+      expect(after).toMatchObject({
+        status: "pending",
+        referenceImageUrl: "https://blob.example/upload-abc.jpg",
+        durationSec: 0,
+      });
+      // Camera lock leads every concept's edit prompt.
+      expect(after.prompt).toMatch(/SAME space, only restyled/);
+      expect(after.styleName).toBeTruthy();
+    }
 
     expect(out.project.format).toBe("before-after");
-    expect(out.scenes).toHaveLength(2);
+    expect(out.scenes).toHaveLength(5);
   });
 
-  it("does NOT call generateScenePrompts (only 2 hardcoded scenes)", async () => {
+  it("does NOT call generateScenePrompts (concepts come from the styles call)", async () => {
     await createBeforeAfterProject({
       beforeImageUrl: "https://blob.example/x.jpg",
       transformationPrompt: "Add walnut cabinets and terrazzo floors throughout.",
@@ -1456,58 +1487,17 @@ describe("stitchFinalVideo", () => {
     expect(composeMocks.composeVideo).not.toHaveBeenCalled();
   });
 
-  it("before-after: holds the before still 2.5s then plays the morph, on a single video track", async () => {
+  it("before-after is stills-only — stitch refuses it", async () => {
     dbMocks.selectProjectById.mockResolvedValue({
       id: "p_1",
       format: "before-after",
       worldType: "interior",
       status: "ready",
     });
-    dbMocks.selectScenesByProject.mockResolvedValue([
-      {
-        ...fakeScene({ id: "s_1", order: 1, status: "generated" }),
-        imageUrl: "https://blob/before.jpg",
-        referenceImageUrl: null,
-        durationSec: 9,
-      },
-      {
-        ...fakeScene({ id: "s_2", order: 2, status: "generated" }),
-        imageUrl: "https://blob/after.jpg",
-        referenceImageUrl: "https://blob/before.jpg",
-        videoUrl: "https://blob/morph.mp4",
-        durationSec: 9,
-      },
-    ]);
-    storageMocks.storeFromUrl.mockResolvedValue({
-      url: "https://blob.vercel-storage.com/videos/p_1/final.mp4",
-      pathname: "videos/p_1/final.mp4",
-    });
+    dbMocks.selectScenesByProject.mockResolvedValue([]);
 
-    await stitchFinalVideo("p_1");
-
-    const tracks = composeMocks.composeVideo.mock.calls[0][0];
-    // compose rejects multiple video tracks — the still must be a keyframe
-    // INSIDE the single video track (verified against the live API).
-    expect(tracks).toHaveLength(1);
-    expect(tracks[0].keyframes).toEqual([
-      { timestamp: 0, duration: 2500, url: "https://blob/before.jpg" },
-      { timestamp: 2500, duration: 9000, url: "https://blob/morph.mp4" },
-    ]);
-  });
-
-  it("before-after: refuses when the morph clip is missing", async () => {
-    dbMocks.selectProjectById.mockResolvedValue({ id: "p_1", format: "before-after", worldType: "interior", status: "ready" });
-    dbMocks.selectScenesByProject.mockResolvedValue([
-      { ...fakeScene({ id: "s_1", order: 1, status: "generated" }), imageUrl: "https://blob/before.jpg" },
-      {
-        ...fakeScene({ id: "s_2", order: 2, status: "generated" }),
-        imageUrl: "https://blob/after.jpg",
-        referenceImageUrl: "https://blob/before.jpg",
-        videoUrl: null,
-      },
-    ]);
-
-    await expect(stitchFinalVideo("p_1")).rejects.toThrow(/Animate the after/);
+    await expect(stitchFinalVideo("p_1")).rejects.toThrow(/only available/);
+    expect(composeMocks.composeVideo).not.toHaveBeenCalled();
   });
 
   it("rejects formats without an animated deliverable", async () => {
@@ -1906,34 +1896,6 @@ describe("stitchFinalVideo — Shotstack backend (transitions)", () => {
     expect(falSpend.meta.outputSec).toBe(600);
   });
 
-  it("before-after: hard joint (no transitions, no Ken Burns) — the morph IS the transition", async () => {
-    shotstackMocks.isShotstackConfigured.mockReturnValue(true);
-    dbMocks.selectProjectById.mockResolvedValue({
-      id: "p_1", format: "before-after", worldType: "interior", status: "ready", aspectRatio: "9:16",
-    });
-    dbMocks.selectScenesByProject.mockResolvedValue([
-      { ...fakeScene({ id: "s_1", order: 1, status: "generated" }), imageUrl: "https://blob/before.jpg" },
-      {
-        ...fakeScene({ id: "s_2", order: 2, status: "generated" }),
-        imageUrl: "https://blob/after.jpg",
-        referenceImageUrl: "https://blob/before.jpg",
-        videoUrl: "https://blob/morph.mp4",
-        durationSec: 9,
-      },
-    ]);
-    storageMocks.storeFromUrl.mockResolvedValue({ url: "https://blob/final.mp4", pathname: "x" });
-
-    await stitchFinalVideo("p_1");
-
-    const tracks = shotstackMocks.renderShotstack.mock.calls[0][0].timeline.tracks;
-    // Reversed: tracks[1] = before still, tracks[0] = morph clip.
-    const before = tracks[1].clips[0];
-    const morph = tracks[0].clips[0];
-    expect(before.transition).toBeUndefined();
-    expect(before.effect).toBeUndefined();
-    expect(morph.transition).toBeUndefined();
-    expect(morph.start).toBe(2.5);
-  });
 });
 
 describe("finalize auto-stitch", () => {

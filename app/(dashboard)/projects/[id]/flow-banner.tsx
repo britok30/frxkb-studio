@@ -20,10 +20,10 @@ type FlowState = {
 type Step = "concept" | "images" | "animate" | "review" | "export";
 
 /** How many scenes actually need to be animated for this format. Reels =
- *  every scene; before-after = only the after; carousel = none. */
+ *  every scene; everything else (carousel, style-explorer, before-after)
+ *  is stills-only. */
 function animatableCountFor(format: string, totalScenes: number): number {
   if (format === "reel") return totalScenes;
-  if (format === "before-after") return 1;
   return 0;
 }
 
@@ -32,7 +32,7 @@ function stepsFor(format: string): { key: Step; label: string }[] {
     { key: "concept", label: "Concept" },
     { key: "images", label: "Images" },
   ];
-  if (format === "reel" || format === "before-after") {
+  if (format === "reel") {
     base.push({ key: "animate", label: "Animate" });
   }
   base.push({ key: "review", label: "Review" }, { key: "export", label: "Export" });

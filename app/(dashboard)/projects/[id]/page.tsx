@@ -215,12 +215,11 @@ export default async function ProjectPage({ params }: { params: Promise<{ id: st
       )}
 
       {/* Stitch appears once the deliverable's inputs exist: all clips for a
-          reel, the morph for before-after, all stills for style-explorer's
-          stills+music YouTube long-form. */}
+          reel, all stills for style-explorer's stills+music YouTube
+          long-form. Before-after is stills-only — no stitch. */}
       {((project.format === "reel" &&
         scenes.length > 0 &&
         animatedCount === scenes.length) ||
-        (project.format === "before-after" && animatedCount > 0) ||
         (project.format === "style-explorer" &&
           scenes.length > 0 &&
           counts.generated + counts.approved === scenes.length)) && (
@@ -233,11 +232,9 @@ export default async function ProjectPage({ params }: { params: Promise<{ id: st
           stitchStatus={project.stitchStatus}
           stitchError={project.stitchError}
           aspect={
-            project.format === "before-after"
-              ? (project.aspectRatio ?? "1:1")
-              : project.format === "style-explorer"
-                ? (project.aspectRatio ?? "16:9")
-                : "9:16"
+            project.format === "style-explorer"
+              ? (project.aspectRatio ?? "16:9")
+              : "9:16"
           }
         />
       )}
@@ -301,8 +298,7 @@ export default async function ProjectPage({ params }: { params: Promise<{ id: st
         />
       </section>
 
-      {(project.format === "reel" || project.format === "before-after") &&
-        animatedCount > 0 && (
+      {project.format === "reel" && animatedCount > 0 && (
           <section className="flex flex-col gap-4">
             <div className="flex items-baseline justify-between gap-4 border-b pb-3">
               <span className="text-xs uppercase tracking-[0.18em] text-muted-foreground">
@@ -327,11 +323,7 @@ export default async function ProjectPage({ params }: { params: Promise<{ id: st
                       posterUrl: s.imageUrl,
                       durationSec: s.durationSec,
                     }}
-                    aspect={
-                      project.format === "before-after"
-                        ? (project.aspectRatio ?? "1:1")
-                        : "9:16"
-                    }
+                    aspect="9:16"
                     projectId={project.id}
                     canReanimate={isOwner && !isBusy}
                     reanimateCostLabel={formatCost(

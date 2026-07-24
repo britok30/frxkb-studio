@@ -260,14 +260,18 @@ export type CreateBeforeAfterInput = {
   /** Public URL of the uploaded "before" image (already on Vercel Blob via
    *  /api/upload). Becomes scene 1's imageUrl directly. */
   beforeImageUrl: string;
-  /** Operator's transformation prompt — what the AI should do to the before
-   *  image. Becomes scene 2's prompt. */
+  /** Operator's transformation direction — what the afters should explore
+   *  ("modernize this kitchen", "coastal budget refresh", …). Steers the
+   *  four AI-proposed concepts. */
   transformationPrompt: string;
   /** Aspect ratio detected from the uploaded image (snapped to enum by
    *  /api/upload). Persisted on the project so downstream calls inherit it. */
   aspectRatio: AspectRatio;
   worldType: WorldType;
 };
+
+/** How many distinct "after" concepts a before-after explores. */
+const BEFORE_AFTER_CONCEPT_COUNT = 4;
 
 export async function createBeforeAfterProject(
   input: CreateBeforeAfterInput
@@ -280,15 +284,28 @@ export async function createBeforeAfterProject(
   }
 
   const projectId = nanoid(12);
-  const afterDurationSec = defaultsForFormat("before-after").sceneDurationSec; // 9
 
-  // Slim concept call — generates only the four PromptableConcept fields
-  // (workingTitle/hook/vibe/notes). Skips worldSignature + worldKeywords
-  // since before-after doesn't dedupe (each upload is unique).
-  const concept = await generateBeforeAfterConcept({
-    transformationPrompt: input.transformationPrompt,
-    worldType: input.worldType,
-  });
+  // Two GPT calls before any DB write (a failure leaves no orphan row):
+  //   1. Slim concept — workingTitle/hook/vibe for finalize metadata.
+  //   2. Vision styles call — GPT SEES the upload and proposes 4 distinct
+  //      "after" concepts steered by the operator's transformation prompt
+  //      (same machinery as style-explorer, smaller fan-out).
+  const [concept, stylesResp] = await Promise.all([
+    generateBeforeAfterConcept({
+      transformationPrompt: input.transformationPrompt,
+      worldType: input.worldType,
+    }),
+    generateStyles({
+      baseImageUrl: input.beforeImageUrl,
+      worldType: input.worldType,
+      propertyType: "residential",
+      count: BEFORE_AFTER_CONCEPT_COUNT,
+      operatorNotes: input.transformationPrompt,
+    }),
+  ]);
+  if (stylesResp.styles.length === 0) {
+    throw new Error("Concept generation returned nothing. Try again or adjust the prompt.");
+  }
 
   const project = await insertProject({
     id: projectId,
@@ -299,7 +316,8 @@ export async function createBeforeAfterProject(
     aspectRatio: input.aspectRatio,
     status: "scripting",
     operatorEmail: op.email,
-    targetDurationSec: afterDurationSec,
+    // Stills-only format (video was retired 2026-07-24) — no duration.
+    targetDurationSec: null,
     concept: {
       workingTitle: concept.workingTitle,
       hook: concept.hook,
@@ -313,32 +331,34 @@ export async function createBeforeAfterProject(
   });
 
   // Scene 1 = the upload itself, persisted as already-generated. No fal call.
-  // Scene 2 = the "after" — pending. Its referenceImageUrl pins scene 1's
-  // upload so generateAllImages routes it through /edit (legitimate edit
-  // of the operator's photo, not a reel/carousel text-to-image).
-  // Only the after gets animated; the upload stays static. They still share
-  // a durationSec so the operator can cut a paired reel (static before →
-  // animated after) cleanly.
+  // Scenes 2..5 = the four "after" concepts — pending, each pinned to the
+  // upload via referenceImageUrl so generateAllImages routes them through
+  // nano-banana /edit. ARCHITECTURE_LOCK keeps every concept on the exact
+  // same camera so the before→after comparison reads honestly.
   const insertedScenes = await insertScenes([
     {
       id: nanoid(12),
       projectId,
       order: 1,
       prompt: `(uploaded before) ${concept.workingTitle}`,
-      durationSec: afterDurationSec, // shared with the after so paired cuts read as matched
+      styleName: "Before",
+      styleSubtitle: "The space as uploaded",
+      durationSec: 0,
       status: "generated",
       imageUrl: input.beforeImageUrl,
-      referenceImageUrl: null, // it IS the reference for the after scene
+      referenceImageUrl: null, // it IS the reference for the after scenes
     },
-    {
+    ...stylesResp.styles.map((s, i) => ({
       id: nanoid(12),
       projectId,
-      order: 2,
-      prompt: input.transformationPrompt,
-      durationSec: afterDurationSec,
-      status: "pending",
+      order: i + 2,
+      prompt: `${ARCHITECTURE_LOCK}${s.editPrompt}`,
+      styleName: s.styleName,
+      styleSubtitle: s.styleSubtitle,
+      durationSec: 0,
+      status: "pending" as const,
       referenceImageUrl: input.beforeImageUrl,
-    },
+    })),
   ]);
 
   return { project, scenes: insertedScenes };
@@ -1008,8 +1028,9 @@ export async function animateAllScenes(
   if (!project) throw new Error(`Project ${projectId} not found`);
   // Animation makes sense for reel (every scene → video) and before-after
   // (just the "after" scene → video). Carousel stays static.
-  if (project.format !== "reel" && project.format !== "before-after") {
-    throw new Error("Animate is only available for reel and before-after projects.");
+  // before-after went stills-only 2026-07-24 (4 static "after" concepts).
+  if (project.format !== "reel") {
+    throw new Error("Animate is only available for reel projects.");
   }
   if (!project.concept) throw new Error("Project has no concept brief — animate after concept exists.");
 
@@ -1054,15 +1075,7 @@ export async function animateAllScenes(
       );
     }
 
-    // Before-after only animates the AI-generated "after" — the upload stays
-    // static (it's a real photo, not Seedance fodder; animating it tends to
-    // produce uncanny artifacts). The static before + animated after pair
-    // also gives the operator a clean cut for the reel/TikTok edit.
-    const animatable =
-      project.format === "before-after"
-        ? candidates.filter((s) => !!s.referenceImageUrl)
-        : candidates;
-    const targets = animatable.filter((s) => (opts.force ? true : !s.videoUrl));
+    const targets = candidates.filter((s) => (opts.force ? true : !s.videoUrl));
     const skipped = candidates.length - targets.length;
 
     if (targets.length === 0) {
@@ -1080,28 +1093,24 @@ export async function animateAllScenes(
       )
     );
 
-    // Before-after renders a true first→last morph (before frame → after
-    // frame via seedance's end_image_url), so the motion direction is a
-    // fixed transformation prompt — no GPT call needed. Every other format
-    // gets one GPT-5.5 call for all motion prompts — cheaper than per-scene
-    // and gives GPT-5.5 the full sequence so it can vary moves intentionally.
+    // One GPT-5.5 call for all motion prompts — cheaper than per-scene and
+    // gives GPT-5.5 the full sequence so it can vary moves intentionally.
     // Defensive [] fallback for objectSet — pre-2026-05 concepts persisted
-    // before the field existed.
-    const isMorph = project.format === "before-after";
-    const motionByOrder = isMorph
-      ? new Map(targets.map((s) => [s.order, BEFORE_AFTER_MORPH_MOTION]))
-      : new Map(
-          (
-            await generateMotionPrompts({
-              concept: { ...project.concept, objectSet: project.concept.objectSet ?? [] },
-              scenes: targets.map((s) => ({
-                order: s.order,
-                prompt: s.prompt,
-                motionPreset: s.motionPreset,
-              })),
-            })
-          ).motions.map((m) => [m.order, m.motion])
-        );
+    // before the field existed. (Reel-only: the before-after morph path was
+    // retired 2026-07-24 when the format went stills-only.)
+    const isMorph = false;
+    const motionByOrder = new Map(
+      (
+        await generateMotionPrompts({
+          concept: { ...project.concept, objectSet: project.concept.objectSet ?? [] },
+          scenes: targets.map((s) => ({
+            order: s.order,
+            prompt: s.prompt,
+            motionPreset: s.motionPreset,
+          })),
+        })
+      ).motions.map((m) => [m.order, m.motion])
+    );
 
     let animated = 0;
     let failed = 0;
@@ -1275,8 +1284,9 @@ export async function planAnimate(
 ): Promise<AnimatePlan> {
   const project = await selectProjectById(projectId);
   if (!project) throw new Error(`Project ${projectId} not found`);
-  if (project.format !== "reel" && project.format !== "before-after") {
-    throw new Error("Animate is only available for reel and before-after projects.");
+  // before-after went stills-only 2026-07-24 (4 static "after" concepts).
+  if (project.format !== "reel") {
+    throw new Error("Animate is only available for reel projects.");
   }
   if (!project.concept) throw new Error("Project has no concept brief — animate after concept exists.");
 
@@ -1304,19 +1314,18 @@ export async function planAnimate(
       );
     }
 
-    const animatable =
-      project.format === "before-after"
-        ? candidates.filter((s) => !!s.referenceImageUrl)
-        : candidates;
     const targetsRaw = opts.sceneId
-      ? animatable.filter((s) => s.id === opts.sceneId)
-      : animatable.filter((s) => (opts.force ? true : !s.videoUrl));
+      ? candidates.filter((s) => s.id === opts.sceneId)
+      : candidates.filter((s) => (opts.force ? true : !s.videoUrl));
     if (opts.sceneId && targetsRaw.length === 0) {
       throw new Error("Scene not found or not animatable (needs a generated still).");
     }
     const skipped = candidates.length - targetsRaw.length;
     const quality: "standard" | "hero" = project.quality === "hero" ? "hero" : "standard";
-    const isMorph = project.format === "before-after";
+    // Reel-only since 2026-07-24 — the before-after morph path was retired
+    // when the format went stills-only. Kept in the plan shape for
+    // serialized-plan compatibility with in-flight jobs.
+    const isMorph = false;
 
     if (targetsRaw.length === 0) {
       await updateProjectStatus(projectId, "ready");
@@ -1327,20 +1336,18 @@ export async function planAnimate(
       estimateAnimateBatch(targetsRaw.length, targetsRaw[0]?.durationSec || 5, quality)
     );
 
-    const motionByOrder = isMorph
-      ? new Map(targetsRaw.map((s) => [s.order, BEFORE_AFTER_MORPH_MOTION]))
-      : new Map(
-          (
-            await generateMotionPrompts({
-              concept: { ...project.concept, objectSet: project.concept.objectSet ?? [] },
-              scenes: targetsRaw.map((s) => ({
-                order: s.order,
-                prompt: s.prompt,
-                motionPreset: s.motionPreset,
-              })),
-            })
-          ).motions.map((m) => [m.order, m.motion])
-        );
+    const motionByOrder = new Map(
+      (
+        await generateMotionPrompts({
+          concept: { ...project.concept, objectSet: project.concept.objectSet ?? [] },
+          scenes: targetsRaw.map((s) => ({
+            order: s.order,
+            prompt: s.prompt,
+            motionPreset: s.motionPreset,
+          })),
+        })
+      ).motions.map((m) => [m.order, m.motion])
+    );
 
     const targets: AnimatePlanTarget[] = targetsRaw
       .filter((s) => motionByOrder.has(s.order))
@@ -1450,11 +1457,6 @@ export async function finishAnimate(projectId: string): Promise<void> {
   await updateProjectStatus(projectId, "ready");
 }
 
-/** Fixed motion direction for the before-after morph clip (first frame =
- *  operator's before photo, last frame = the generated after). Affirmative
- *  only, locked camera — the transformation IS the motion. */
-const BEFORE_AFTER_MORPH_MOTION =
-  "Locked-off static camera. The room transforms smoothly and continuously from its current state into the redesigned space: furniture, finishes, materials, and lighting morph in place while the architecture, walls, windows, and camera stay perfectly fixed. Gradual, seamless, satisfying transformation.";
 
 // ── Stitch: assembled final video (fal ffmpeg compose) ──────────────────────
 
@@ -1462,10 +1464,6 @@ export type StitchResult = {
   finalVideoUrl: string;
 };
 
-/** How long the "before" still holds on screen before the morph clip plays,
- *  in ms. Long enough to register the original space, short enough that the
- *  transformation stays the star. */
-const BEFORE_HOLD_MS = 2500;
 
 /** Default hold per still in the style-explorer long-form slideshow. Long
  *  enough to read the room and register the style, short enough that a
@@ -1528,12 +1526,9 @@ export async function prepareStitch(
   if (!found) throw new Error(`Project ${projectId} not found`);
   const { project, scenes } = found;
 
-  if (
-    project.format !== "reel" &&
-    project.format !== "before-after" &&
-    project.format !== "style-explorer"
-  ) {
-    throw new Error("Stitch is only available for reel, before-after, and style-explorer projects.");
+  // before-after is stills-only (no video deliverable since 2026-07-24).
+  if (project.format !== "reel" && project.format !== "style-explorer") {
+    throw new Error("Stitch is only available for reel and style-explorer projects.");
   }
 
   const ordered = [...scenes].sort((a, b) => a.order - b.order);
@@ -1563,13 +1558,6 @@ export async function prepareStitch(
     for (const s of renderable) {
       segments.push({ kind: "image", url: s.imageUrl as string, ms: perStillMs });
     }
-  } else if (project.format === "before-after") {
-    const before = ordered.find((s) => !s.referenceImageUrl);
-    const after = ordered.find((s) => !!s.referenceImageUrl);
-    if (!before?.imageUrl) throw new Error("Missing the before image.");
-    if (!after?.videoUrl) throw new Error("Animate the after scene first — no morph clip yet.");
-    segments.push({ kind: "image", url: before.imageUrl, ms: BEFORE_HOLD_MS });
-    segments.push({ kind: "video", url: after.videoUrl, ms: (after.durationSec || 9) * 1000 });
   } else {
     const missing = ordered.filter((s) => !s.videoUrl);
     if (ordered.length === 0 || missing.length > 0) {
@@ -1584,11 +1572,7 @@ export async function prepareStitch(
 
   const totalMs = segments.reduce((n, s) => n + s.ms, 0) * cycles;
   const aspect =
-    project.format === "style-explorer"
-      ? (project.aspectRatio ?? "16:9")
-      : project.format === "before-after"
-        ? (project.aspectRatio ?? "9:16")
-        : "9:16";
+    project.format === "style-explorer" ? (project.aspectRatio ?? "16:9") : "9:16";
 
   await updateStitchState(projectId, "rendering");
   return { projectId, format: project.format as StitchPrep["format"], segments, cycles, totalMs, aspect, opts };
@@ -2047,15 +2031,8 @@ export async function finalizeProject(projectId: string): Promise<FinalizeResult
     // Style-explorer is excluded on purpose — a stills slideshow without a
     // music upload is a silent video, so that stitch stays operator-driven.
     let autoStitch = false;
-    if (
-      (project.format === "reel" || project.format === "before-after") &&
-      !project.finalVideoUrl
-    ) {
-      const animatable =
-        project.format === "before-after"
-          ? renderable.filter((s) => !!s.referenceImageUrl)
-          : renderable;
-      autoStitch = animatable.length > 0 && animatable.every((s) => !!s.videoUrl);
+    if (project.format === "reel" && !project.finalVideoUrl) {
+      autoStitch = renderable.length > 0 && renderable.every((s) => !!s.videoUrl);
     }
 
     return { metadata, autoStitch };

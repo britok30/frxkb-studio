@@ -236,12 +236,16 @@ export function estimateAnimateBatch(
  *  and the cover is just the after image (no fal call). */
 export function estimateProjectTotal(format: Format, sceneCount: number): number {
   if (format === "before-after") {
-    const dur = defaultsForFormat("before-after").sceneDurationSec;
+    // Stills-only since 2026-07-24: the upload (free) + 4 AI "after"
+    // concepts via /edit, plus the two GPT calls (slim concept + the vision
+    // styles proposal) and finalize metadata. No video.
+    const afters = 4;
+    const conceptsGen = llmCost(2400, 300 + afters * 350);
     return (
       estimateConceptGen() +
-      FAL_NANO_BANANA_EDIT_PER_IMAGE + // 1 edit (the "after")
-      estimateAnimateBatch(1, dur) + // only the after animates
-      estimateMetadataGen() // metadata only — no thumbnail fal call
+      conceptsGen +
+      afters * FAL_NANO_BANANA_EDIT_PER_IMAGE +
+      estimateMetadataGen()
     );
   }
   if (format === "style-explorer") {

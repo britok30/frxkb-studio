@@ -53,9 +53,9 @@ const FORMAT_PRESETS: Record<
   "before-after": {
     label: "Before / after",
     kicker: "Instagram · TikTok",
-    hint: "Drop a real photo, describe the transformation. Live demo content for ArchitectGPT.",
-    sceneCount: 2, // before + after
-    sceneDurationSec: 9,
+    hint: "Drop a real photo, describe the direction — the studio proposes 4 distinct \"after\" concepts as stills. No video.",
+    sceneCount: 5, // before + 4 after concepts
+    sceneDurationSec: 0,
     aspectClass: "aspect-square", // overridden by uploaded image's actual aspect
   },
   "style-explorer": {
@@ -381,7 +381,7 @@ export default function NewProjectPage() {
                 }
                 hint={
                   format === "before-after"
-                    ? "Upload a real photo of an interior or exterior. Describe what should change. The studio generates the after, animates it, and bundles a transformation triptych."
+                    ? "Upload a real photo of an interior or exterior. Describe the direction — the studio proposes and renders 4 distinct after concepts on the exact same camera, ready to compare side by side."
                     : format === "style-explorer"
                       ? "Pick the program and vantage, describe the space, and render a base image. Review it here — then GPT-5.6 reimagines that exact space in distinct, recognisable design styles."
                       : "Describe a home a designer would screenshot — a place with strong identity, a quality of light, materials and the kind of objects (plants, art, books) that fill it. Or have the studio suggest one."

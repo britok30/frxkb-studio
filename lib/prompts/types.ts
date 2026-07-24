@@ -92,12 +92,11 @@ export function defaultsForFormat(format: Format): {
     case "carousel":
       return { aspectRatio: "1:1", sceneCount: 10, sceneDurationSec: 0 };
     case "before-after":
-      // Two scenes: the uploaded "before" + the AI-generated "after." Aspect
-      // is overridden per-project from the uploaded image's actual dimensions
-      // (defaultsForFormat returns 1:1 as a placeholder; the real value lives
-      // on projects.aspectRatio). Both scenes animate at 7s — paired length
-      // for CapCut edits, comfortably inside seedance's 4-15s native range.
-      return { aspectRatio: "1:1", sceneCount: 2, sceneDurationSec: 7 };
+      // Stills-only (video retired 2026-07-24): the uploaded "before" + four
+      // AI-proposed "after" concepts. Aspect is overridden per-project from
+      // the uploaded image's actual dimensions (1:1 here is a placeholder;
+      // the real value lives on projects.aspectRatio).
+      return { aspectRatio: "1:1", sceneCount: 5, sceneDurationSec: 0 };
     case "style-explorer":
       // N styled edits of one uploaded base, for a YouTube long-form "X styles
       // of this space" video. Like before-after, the real aspect comes from

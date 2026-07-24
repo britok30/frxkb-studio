@@ -105,9 +105,9 @@ export default async function ProjectsPage() {
             href="/new?format=before-after"
             kicker="Instagram · TikTok"
             title="Before / after"
-            hint="Drop a real photo, AI transforms it. After is animated (7s); the upload stays static for a clean cut. Live ArchitectGPT demo."
-            cost={`~${formatCost(estimateProjectTotal("before-after", 2))}`}
-            aspectClass="aspect-[9/16]"
+            hint="Drop a real photo, describe the direction — 4 distinct AI “after” concepts on the same camera. Stills only."
+            cost={`~${formatCost(estimateProjectTotal("before-after", 5))}`}
+            aspectClass="aspect-square"
           />
           <FeatureCard
             href="/new?format=style-explorer"
