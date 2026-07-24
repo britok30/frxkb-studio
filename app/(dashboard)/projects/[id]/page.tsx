@@ -276,7 +276,13 @@ export default async function ProjectPage({ params }: { params: Promise<{ id: st
 
       {/* Export bundle: visible to every operator; downloads stay with the
           owner (+ the admin's read-only oversight). */}
-      {exportData && <ExportPanel data={exportData} canDownload={canViewExports} />}
+      {exportData && (
+        <ExportPanel
+          data={exportData}
+          canDownload={canViewExports}
+          canGenerateThumbnail={isOwner && project.format === "style-explorer"}
+        />
+      )}
 
       <section className="flex flex-col gap-4">
         <div className="flex items-baseline justify-between gap-4 border-b pb-3">
@@ -403,6 +409,8 @@ type ProjectRow = {
   niche: string;
   format: string;
   finalVideoUrl: string | null;
+  /** Style-explorer: the generated YouTube thumbnail. */
+  thumbnailUrl: string | null;
   metadata: ExportPanelData["metadata"] | null;
 };
 
@@ -452,6 +460,7 @@ function buildExportData(project: ProjectRow, scenes: SceneRow[]): ExportPanelDa
     format: project.format,
     thumbnailUrl: cover.imageUrl,
     finalVideoUrl: project.finalVideoUrl,
+    youtubeThumbnailUrl: project.format === "style-explorer" ? project.thumbnailUrl : null,
     metadata: project.metadata,
     scenes: renderableScenes,
   };

@@ -1,7 +1,8 @@
 "use client";
 
 import Image from "next/image";
-import { useState } from "react";
+import { useState, useTransition } from "react";
+import { useRouter } from "next/navigation";
 import { motion } from "motion/react";
 import { toast } from "sonner";
 import { Copy, Download } from "lucide-react";
@@ -20,6 +21,9 @@ export type ExportPanelData = {
   thumbnailUrl: string;
   /** Stitched final MP4, when the operator ran Stitch — packed into the zip. */
   finalVideoUrl?: string | null;
+  /** Generated YouTube thumbnail (style-explorer) — previewed in the panel
+   *  and packed into the zip as youtube-thumbnail-1280x720.jpg. */
+  youtubeThumbnailUrl?: string | null;
   scenes: {
     order: number;
     prompt: string;
@@ -37,11 +41,14 @@ export type ExportPanelData = {
 export function ExportPanel({
   data,
   canDownload = true,
+  canGenerateThumbnail = false,
 }: {
   data: ExportPanelData;
   /** Everyone can VIEW the export; only the owner (and the admin) can pull
    *  the bundle or open source files. */
   canDownload?: boolean;
+  /** Owner-only: the gpt-image-2 thumbnail generate/regenerate button. */
+  canGenerateThumbnail?: boolean;
 }) {
   const { metadata, thumbnailUrl, scenes } = data;
   const [downloading, setDownloading] = useState(false);
@@ -60,6 +67,7 @@ export function ExportPanel({
         format: data.format,
         thumbnailUrl: data.thumbnailUrl,
         finalVideoUrl: data.finalVideoUrl,
+        youtubeThumbnailUrl: data.youtubeThumbnailUrl,
         scenes,
         metadata,
       };
@@ -137,7 +145,13 @@ export function ExportPanel({
             )}
           </div>
 
-          <MetadataView metadata={metadata} scenes={scenes} />
+          <MetadataView
+            metadata={metadata}
+            scenes={scenes}
+            projectId={data.projectId}
+            youtubeThumbnailUrl={data.youtubeThumbnailUrl}
+            canGenerateThumbnail={canGenerateThumbnail}
+          />
         </CardContent>
       </Card>
     </motion.div>
@@ -147,9 +161,15 @@ export function ExportPanel({
 function MetadataView({
   metadata,
   scenes,
+  projectId,
+  youtubeThumbnailUrl,
+  canGenerateThumbnail,
 }: {
   metadata: Metadata;
   scenes: ExportPanelData["scenes"];
+  projectId: string;
+  youtubeThumbnailUrl?: string | null;
+  canGenerateThumbnail: boolean;
 }) {
   switch (metadata.kind) {
     case "reel":
@@ -157,16 +177,30 @@ function MetadataView({
     case "carousel":
       return <CarouselMetadataView metadata={metadata} />;
     case "youtube":
-      return <YouTubeMetadataView metadata={metadata} scenes={scenes} />;
+      return (
+        <YouTubeMetadataView
+          metadata={metadata}
+          scenes={scenes}
+          projectId={projectId}
+          youtubeThumbnailUrl={youtubeThumbnailUrl}
+          canGenerateThumbnail={canGenerateThumbnail}
+        />
+      );
   }
 }
 
 function YouTubeMetadataView({
   metadata,
   scenes,
+  projectId,
+  youtubeThumbnailUrl,
+  canGenerateThumbnail,
 }: {
   metadata: Extract<Metadata, { kind: "youtube" }>;
   scenes: ExportPanelData["scenes"];
+  projectId: string;
+  youtubeThumbnailUrl?: string | null;
+  canGenerateThumbnail: boolean;
 }) {
   const cards = scenes.filter((s) => !!s.styleName);
   return (
@@ -178,6 +212,13 @@ function YouTubeMetadataView({
         <ChipList label="Tags" items={metadata.tags} />
         <ChipList label="Hashtags" items={metadata.hashtags.map((h) => `#${h}`)} />
       </PlatformSection>
+      <Separator />
+      <YouTubeThumbnailSection
+        projectId={projectId}
+        defaultText={metadata.thumbnailText}
+        thumbnailUrl={youtubeThumbnailUrl ?? null}
+        canGenerate={canGenerateThumbnail}
+      />
       {cards.length > 0 && (
         <>
           <Separator />
@@ -325,5 +366,93 @@ function ChipList({ label, items }: { label: string; items: string[] }) {
         ))}
       </div>
     </div>
+  );
+}
+
+/** In-project YouTube thumbnail generator: base still + the finalize-written
+ *  thumbnailText → gpt-image-2 → 1280×720, persisted on the project and
+ *  packed into the bundle as youtube-thumbnail-1280x720.jpg. */
+function YouTubeThumbnailSection({
+  projectId,
+  defaultText,
+  thumbnailUrl,
+  canGenerate,
+}: {
+  projectId: string;
+  defaultText: string;
+  thumbnailUrl: string | null;
+  canGenerate: boolean;
+}) {
+  const router = useRouter();
+  const [text, setText] = useState(defaultText);
+  const [busy, setBusy] = useState(false);
+  const [, startTransition] = useTransition();
+
+  async function generate() {
+    if (busy || text.trim().length === 0) return;
+    setBusy(true);
+    const toastId = toast.loading("Generating thumbnail — usually 30-90s…");
+    try {
+      const res = await fetch(`/api/projects/${projectId}/thumbnail`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ text: text.trim() }),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.error ?? `HTTP ${res.status}`);
+      }
+      toast.success("Thumbnail ready — it ships in the bundle", { id: toastId });
+      startTransition(() => router.refresh());
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Unknown error";
+      toast.error("Couldn't generate thumbnail", { id: toastId, description: message });
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <PlatformSection title="Thumbnail (1280×720)">
+      <div className="flex flex-col gap-3">
+        {thumbnailUrl ? (
+          <div className="relative aspect-video w-full max-w-[420px] overflow-hidden rounded-md border bg-muted/30">
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img
+              src={thumbnailUrl}
+              alt="YouTube thumbnail"
+              className="absolute inset-0 w-full h-full object-cover"
+            />
+          </div>
+        ) : (
+          <p className="text-xs text-muted-foreground tracking-tight">
+            No thumbnail yet — generate one from the base still + your thumbnail text.
+          </p>
+        )}
+        {canGenerate && (
+          <div className="flex flex-wrap items-center gap-2">
+            <input
+              value={text}
+              onChange={(e) => setText(e.target.value)}
+              maxLength={120}
+              className="h-9 w-64 rounded-md border bg-transparent px-3 text-sm focus:border-foreground outline-none"
+            />
+            <button
+              type="button"
+              onClick={() => void generate()}
+              disabled={busy || text.trim().length === 0}
+              className="h-9 rounded-md border px-3 text-sm tracking-tight hover:border-foreground/40 transition-colors disabled:opacity-50"
+            >
+              {busy ? "Generating…" : thumbnailUrl ? "Regenerate (~$0.20)" : "Generate (~$0.20)"}
+            </button>
+          </div>
+        )}
+        {thumbnailUrl && (
+          <p className="text-[10px] text-muted-foreground tracking-tight">
+            Packed into the bundle as youtube-thumbnail-1280x720.jpg.
+          </p>
+        )}
+      </div>
+    </PlatformSection>
   );
 }

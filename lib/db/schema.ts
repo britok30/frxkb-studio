@@ -79,7 +79,9 @@ export const projects = pgTable(
      *  variant (reel | carousel). Each variant carries the platform-tailored
      *  copy for that format. */
     metadata: jsonb("metadata").$type<Metadata>(),
-    /** Public Vercel Blob URL of the rendered thumbnail. */
+    /** Style-explorer: the generated YouTube thumbnail (gpt-image-2,
+     *  1280×720) — produced from the export panel, packed into the bundle.
+     *  Covers are unrelated (they derive live from scenes). */
     thumbnailUrl: text("thumbnail_url"),
     /** Public Blob URL of the stitched, ready-to-post final video (reel:
      *  concatenated clips; before-after: held before still → morph clip),

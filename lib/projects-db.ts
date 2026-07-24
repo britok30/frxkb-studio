@@ -317,6 +317,15 @@ export async function setProjectSceneReferences(
     );
 }
 
+/** Persist the generated YouTube thumbnail (gpt-image-2, 1280x720) for a
+ *  style-explorer project. Regenerating overwrites. */
+export async function setProjectThumbnail(id: string, thumbnailUrl: string): Promise<void> {
+  await getDb()
+    .update(projects)
+    .set({ thumbnailUrl, updatedAt: new Date() })
+    .where(eq(projects.id, id));
+}
+
 /** Remember the music bed used for a stitch so the panel can pre-load it
  *  on the next visit (no re-upload for every re-stitch). */
 export async function rememberProjectMusic(

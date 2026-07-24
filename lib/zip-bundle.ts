@@ -27,6 +27,9 @@ export type BundleData = {
   /** Stitched ready-to-post MP4 (when the operator ran Stitch). Packed as
    *  final.mp4 at the zip root. */
   finalVideoUrl?: string | null;
+  /** Generated YouTube thumbnail (1280×720). Packed at the zip root as
+   *  youtube-thumbnail-1280x720.jpg. */
+  youtubeThumbnailUrl?: string | null;
   scenes: SceneAsset[];
   metadata: Metadata;
 };
@@ -49,7 +52,8 @@ export async function downloadBundle(
   const fetchUnits =
     data.scenes.reduce((n, s) => n + 1 + (s.videoUrl ? 1 : 0), 0) +
     1 +
-    (data.finalVideoUrl ? 1 : 0);
+    (data.finalVideoUrl ? 1 : 0) +
+    (data.youtubeThumbnailUrl ? 1 : 0);
   let done = 0;
 
   const tick = () => {
@@ -99,6 +103,15 @@ export async function downloadBundle(
           })(),
         ]
       : []),
+    ...(data.youtubeThumbnailUrl
+      ? [
+          (async () => {
+            const blob = await fetchAsBlob(data.youtubeThumbnailUrl as string);
+            zip.file("youtube-thumbnail-1280x720.jpg", blob);
+            tick();
+          })(),
+        ]
+      : []),
   ]);
 
   const hasAnyVideo = data.scenes.some((s) => s.videoUrl);
@@ -111,6 +124,7 @@ export async function downloadBundle(
     generatedAt: new Date().toISOString(),
     thumbnail: "thumbnail.jpg",
     finalVideo: data.finalVideoUrl ? "final.mp4" : null,
+    youtubeThumbnail: data.youtubeThumbnailUrl ? "youtube-thumbnail-1280x720.jpg" : null,
     metadata: data.metadata,
     scenes: data.scenes.map((s) => {
       const padded = String(s.order).padStart(3, "0");
