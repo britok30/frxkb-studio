@@ -281,8 +281,8 @@ function YouTubeMetadataView({
         <CopyField label="Title" value={metadata.title} />
         <CopyField label="Thumbnail text (burn into your thumbnail)" value={metadata.thumbnailText} />
         <CopyField label="Description" value={metadata.description} multiline />
-        <ChipList label="Tags" items={metadata.tags} />
-        <ChipList label="Hashtags" items={metadata.hashtags.map((h) => `#${h}`)} />
+        <ChipList label="Tags" items={metadata.tags} copyValue={metadata.tags.join(", ")} />
+        <ChipList label="Hashtags" items={metadata.hashtags.map((h) => `#${h}`)} copyValue={metadata.hashtags.map((h) => `#${h}`).join(" ")} />
       </PlatformSection>
       <Separator />
       <YouTubeThumbnailSection
@@ -423,10 +423,41 @@ function CopyField({
   );
 }
 
-function ChipList({ label, items }: { label: string; items: string[] }) {
+function ChipList({
+  label,
+  items,
+  copyValue,
+}: {
+  label: string;
+  items: string[];
+  /** Paste-ready string behind the one-click copy (e.g. comma-separated
+   *  tags for YouTube's tag box, space-separated #hashtags for captions). */
+  copyValue?: string;
+}) {
+  async function copy() {
+    if (!copyValue) return;
+    try {
+      await navigator.clipboard.writeText(copyValue);
+      toast.success("Copied — paste straight into the field");
+    } catch {
+      toast.error("Couldn't copy");
+    }
+  }
   return (
     <div className="flex flex-col gap-1.5">
-      <div className="text-xs text-muted-foreground">{label}</div>
+      <div className="flex items-center gap-2">
+        <div className="text-xs text-muted-foreground">{label}</div>
+        {copyValue && (
+          <button
+            type="button"
+            onClick={() => void copy()}
+            title={`Copy: ${copyValue.slice(0, 80)}`}
+            className="inline-flex items-center gap-1 text-[10px] text-muted-foreground hover:text-foreground tracking-tight transition-colors"
+          >
+            <Copy className="size-3" /> Copy all
+          </button>
+        )}
+      </div>
       <div className="flex flex-wrap gap-1.5">
         {items.map((t, i) => (
           <span
