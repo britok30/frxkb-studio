@@ -1,7 +1,7 @@
 import { nanoid } from "nanoid";
 import { generateBeforeAfterConcept, generateConcept } from "@/lib/prompts/concept";
 import { generateScenePrompts } from "@/lib/prompts/scenes";
-import { ARCHITECTURE_LOCK, generateStyles } from "@/lib/prompts/styles";
+import { ARCHITECTURE_LOCK, ARCHITECTURE_LOCK_CLOSE, generateStyles } from "@/lib/prompts/styles";
 import { applyLookToPrompt, getLook, type LookId } from "@/lib/prompts/looks";
 import {
   assembleYouTubeMetadata,
@@ -851,14 +851,18 @@ export async function applySceneAction(
  * "Original" scene (no referenceImageUrl), and for prompts that already carry it.
  */
 function lockedScenePrompt(project: Project, scene: Scene): string {
-  if (
-    project.format === "style-explorer" &&
-    scene.referenceImageUrl &&
-    !scene.prompt.startsWith(ARCHITECTURE_LOCK)
-  ) {
-    return `${ARCHITECTURE_LOCK}${scene.prompt}`;
-  }
-  return scene.prompt;
+  // Restyle formats: the "same space, restyled" contract. Before-after joined
+  // style-explorer here when it became 9 concepts off one upload.
+  const isRestyle =
+    project.format === "style-explorer" || project.format === "before-after";
+  if (!isRestyle || !scene.referenceImageUrl) return scene.prompt;
+  const lead = scene.prompt.startsWith(ARCHITECTURE_LOCK)
+    ? scene.prompt
+    : `${ARCHITECTURE_LOCK}${scene.prompt}`;
+  // Sandwich: re-assert at the END too. A lead-only lock loses to style text
+  // that implies new massing (see ARCHITECTURE_LOCK_CLOSE). Applied at
+  // generation time so existing projects pick it up on regenerate.
+  return lead.includes(ARCHITECTURE_LOCK_CLOSE) ? lead : `${lead}${ARCHITECTURE_LOCK_CLOSE}`;
 }
 
 /**

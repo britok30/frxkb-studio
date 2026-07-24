@@ -1757,6 +1757,54 @@ describe("moodboard references", () => {
   });
 });
 
+describe("restyle camera lock (style-explorer / before-after)", () => {
+  beforeEach(() => {
+    dbMocks.selectProjectById.mockResolvedValue({
+      id: "p_1",
+      format: "style-explorer",
+      worldType: "exterior",
+      status: "ready",
+      quality: "standard",
+      aspectRatio: "16:9",
+    });
+    falMocks.editImage.mockResolvedValue({ images: [{ url: "https://fal/x.jpg" }], requestId: "r" });
+    storageMocks.storeFromUrl.mockResolvedValue({ url: "https://blob/x.jpg", pathname: "x" });
+  });
+
+  it("sandwiches the lock — lead AND close — around a styled scene's prompt", async () => {
+    dbMocks.selectSceneById.mockResolvedValue({
+      ...fakeScene({ id: "s_2", order: 2, status: "generated" }),
+      imageUrl: "https://blob/old.jpg",
+      referenceImageUrl: "https://blob/base.png",
+      prompt: "Restyle in Brutalist concrete and corten.",
+    });
+
+    await applySceneAction("p_1", "s_2", "regenerate");
+
+    const prompt = falMocks.editImage.mock.calls[0][0].prompt as string;
+    expect(prompt.startsWith("This is the SAME space, only restyled")).toBe(true);
+    // Closing re-assertion lands AFTER the style text — a lead-only lock
+    // loses to style descriptions that imply new massing.
+    expect(prompt).toMatch(/FINAL CHECK — this must remain the SAME photograph/);
+    expect(prompt.indexOf("FINAL CHECK")).toBeGreaterThan(prompt.indexOf("Brutalist"));
+  });
+
+  it("leaves the base/original scene (no reference) untouched", async () => {
+    dbMocks.selectSceneById.mockResolvedValue({
+      ...fakeScene({ id: "s_1", order: 1, status: "generated" }),
+      imageUrl: "https://blob/base.png",
+      referenceImageUrl: null,
+      prompt: "(base) the original space, before restyling",
+    });
+    falMocks.generateImage.mockResolvedValue({ images: [{ url: "https://fal/b.jpg" }], requestId: "r" });
+
+    await applySceneAction("p_1", "s_1", "regenerate");
+
+    const prompt = falMocks.generateImage.mock.calls[0][0].prompt as string;
+    expect(prompt).not.toMatch(/FINAL CHECK/);
+  });
+});
+
 describe("applySceneAction set-motion", () => {
   beforeEach(() => {
     dbMocks.selectSceneById.mockResolvedValue(fakeScene({ id: "s_1" }));

@@ -33,6 +33,16 @@ export type StylesResponse = z.infer<typeof StylesResponseSchema>;
  * to a new camera angle. Leads the prompt (the edit model weights early tokens
  * most) and ends mid-sentence so the style's restyle text continues it.
  */
+/**
+ * Re-assertion of the lock, APPENDED after the style's own text. Nano weights
+ * both ends of a prompt, and a lead-only lock loses to a style description
+ * that implies new massing (verified 2026-07-24: "Brutalist Modern" and
+ * "Streamline Moderne" both rotated the camera and rebuilt the facade while
+ * "Googie" — same lock, restyle-only wording — held perfectly).
+ */
+export const ARCHITECTURE_LOCK_CLOSE =
+  " FINAL CHECK — this must remain the SAME photograph of the SAME building from the SAME camera as the reference image: identical viewpoint, angle, framing, crop, and perspective; identical building footprint, massing, roofline, corner geometry, and window/door placement; identical background and horizon. Nothing structural is added, removed, reshaped, or re-angled — only surfaces, materials, colour, furnishings, decor, planting, and lighting change.";
+
 export const ARCHITECTURE_LOCK =
   "This is the SAME space, only restyled — keep it the exact same photograph. Reproduce the base image's camera EXACTLY, as a locked tripod shot: identical camera position, angle, height, lens and focal length, framing, crop, and perspective/vanishing point. Keep the room's footprint, wall positions, ceiling height, and the exact size and placement of every window, door, and structural opening unchanged. Change ONLY the furnishings, finishes, materials, colour palette, textiles, decor, art, plants, and lighting. Restyle it as follows: ";
 
@@ -81,7 +91,7 @@ What each style DOES change: furniture, finishes and materials, color palette, t
 For EACH style return three fields:
 - styleName: the on-screen card TITLE. Short (2-5 words), recognisable, search-friendly. Title Case. This is what the YouTube viewer reads, so make it the name they'd type into a search bar.
 - styleSubtitle: the on-screen card SUBTITLE — one short line (4-10 words, max ~120 chars) that sits under the title and tells the viewer what defines this look. Name the feeling and a material or two, e.g. "Warm minimalism in oak, linen, and paper light." Sentence case, no trailing period needed. It must read as card copy, not a full sentence of prose.
-- editPrompt: a single instruction describing ONLY the restyle for this named style. A fixed instruction that locks the camera angle, framing, perspective, and architecture of the base is prepended automatically — so DO NOT write about the camera, framing, viewpoint, walls, windows, doors, or layout. Spend every word on the restyle, concretely and fully: name the materials (e.g. "white oak, lime-wash plaster, bouclé"), the palette, 5-8 specific furniture/decor pieces that fully furnish the space, the textiles and rugs, the wall art, the lighting fixtures, the plants/objects, and the quality/mood of light. Commit to the style's signature; picture an editorial, fully-styled room — not a sparse one. Keep it free of people and of any on-screen text, signage, or branding — richly inhabited and lived-in, never staged-showroom-empty.
+- editPrompt: a single instruction describing ONLY the restyle for this named style. It MUST read as a re-dressing of the EXISTING building in the reference image — start with a restyle verb ("Restyle…", "Re-dress…", "Refinish…"). NEVER write "Create a…", "Design a…", "Build a…", or "A [style] building/exterior/space with…": those read as instructions to generate a NEW building and the model will rebuild the facade and move the camera. Equally, never describe massing, silhouette, rooflines, curved or chamfered corners, added volumes, canopies, towers, or new openings — even when the style is famous for them; express the style through SURFACE and CONTENTS only (materials, finishes, colour, glazing treatment, furnishings, planting, lighting, signage-free decor) applied to the geometry that already exists. A fixed instruction that locks the camera angle, framing, perspective, and architecture of the base is prepended automatically — so DO NOT write about the camera, framing, viewpoint, walls, windows, doors, or layout. Spend every word on the restyle, concretely and fully: name the materials (e.g. "white oak, lime-wash plaster, bouclé"), the palette, 5-8 specific furniture/decor pieces that fully furnish the space, the textiles and rugs, the wall art, the lighting fixtures, the plants/objects, and the quality/mood of light. Commit to the style's signature; picture an editorial, fully-styled room — not a sparse one. Keep it free of people and of any on-screen text, signage, or branding — richly inhabited and lived-in, never staged-showroom-empty.
 
 Honor the operator's notes (location, tier, any angle) as a bias on style selection and on the light/mood — don't water them down.`;
 }
