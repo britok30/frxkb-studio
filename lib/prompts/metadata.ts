@@ -411,16 +411,16 @@ TITLE — the single biggest CTR lever:
 - Write it like a human editor, not a fill-in-the-blank template. AVOID formulaic shapes like "X Design Styles: 1 Same Space, N Looks" or anything with a "Category: subtitle" colon. Vary it — a question, a bold claim, a "this [room], N ways" hook all work. It should feel scroll-stopping and natural.
 - You may CAPITALISE one power word for emphasis (e.g. "the SAME room") — at most one. No clickbait, no full ALL-CAPS, no emoji. It must match what the video delivers (YouTube penalises mismatches).
 
-THUMBNAIL TEXT — the punchy overlay the operator burns into their thumbnail:
-- 1-3 words, ABSOLUTE max 5. Under ~20 characters. Bold, readable at a glance on a phone.
-- It must NOT be the title, a truncation of the title, or a full sentence. The title carries the specifics; the thumbnail is the 2-3 word gut-punch.
-- Reach for a proven CTR pattern and make it feel charged, not flat. The patterns (NOT a menu of phrases — never copy these examples verbatim, invent within the shape):
-  · the impossible number — leads with THIS video's real count and/or space
-  · the challenge/question — makes the viewer pick a side
-  · the twist reveal — the "it's all one room" gut-punch
-  · the bold verdict — one style wins, name the stakes
-- GROUND it in this specific video: the number of styles and/or the actual space should almost always appear ("1 KITCHEN, 15 WAYS" beats a generic challenge every time). A phrase that could sit on any design video is a failure.
-- Punctuation is a weapon at this size — a period, "?!", or comma can carry the drama. Avoid limp label text ("DESIGN STYLES", "INTERIORS") that states a category instead of provoking a click.
+THUMBNAIL TEXT — the short overlay the operator burns into their thumbnail:
+- 2-5 words, under ~24 characters. Readable at a glance on a phone.
+- VOICE: this channel is calm, editorial, design-literate — ambient interiors for people who read design magazines. The overlay must sound like a magazine cover line or an exhibition title, NEVER like clickbait. No "?!", no "×15", no SHOCKED/INSANE energy, no gimmick punctuation. Confidence over hype.
+- It must NOT be the title or a truncation of it. The title carries the SEO; the overlay carries the *idea* — elegantly.
+- Ground it in THIS video. The strongest shapes (invent within them, never copy phrasing verbatim):
+  · the quiet premise — the one-space-many-worlds idea stated plainly and beautifully (the real space + the real count, written out or as a clean numeral)
+  · the space itself — name the actual room with a word of intrigue
+  · the transformation — where the video travels (e.g. between two of its real featured styles)
+- Written-out numbers often read more editorial than digits ("One Room, Fifteen Styles" energy — don't copy that phrase). Title Case or elegant small caps; a period for poise is fine, exclamation points are not.
+- A phrase that could sit on any design video is a failure. So is anything you'd expect on a reaction channel.
 
 DESCRIPTION HOOK (descriptionHook):
 - The first ~150 characters — the ONLY part most viewers see before "...more". One or two sentences that restate the promise while referencing the ACTUAL space (the real room/space type from the description), primary keyword early and natural. No links, no hashtags here.
@@ -470,7 +470,7 @@ const YOUTUBE_TOOL_SCHEMA = {
       type: "string",
       minLength: 2,
       maxLength: 40,
-      description: "Overlay text for the thumbnail. 1-3 words (max 5), under ~20 chars, charged not flat — impossible-number / challenge / twist / verdict pattern SHAPES (invent the phrase; never a stock phrase that fits any video). Ground it in THIS video: real style count and/or the actual space. COMPLEMENTS the title, never repeats it, never a limp category label.",
+      description: "Overlay text for the thumbnail. 2-5 words, under ~24 chars, EDITORIAL voice — magazine cover line, not clickbait (no ?!, no ×N, no shock energy). Ground it in THIS video's real space and/or style count; quiet-premise / the-space / the-transformation shapes, invented fresh each time. COMPLEMENTS the title, never repeats it.",
     },
     descriptionHook: {
       type: "string",
