@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import Image from "next/image";
 import { motion } from "motion/react";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -67,11 +68,12 @@ export function ProjectCard({
               dashboard grid visually rhythmic regardless of source aspect. */}
           <div className="relative aspect-video bg-muted/40 overflow-hidden">
             {project.coverUrl ? (
-              // eslint-disable-next-line @next/next/no-img-element
-              <img
+              <Image
                 src={project.coverUrl}
                 alt=""
-                className="absolute inset-0 w-full h-full object-cover"
+                fill
+                sizes="(max-width: 640px) 100vw, (max-width: 1024px) 50vw, 33vw"
+                className="object-cover"
               />
             ) : (
               <ProjectCoverPlaceholder />

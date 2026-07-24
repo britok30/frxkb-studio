@@ -1,5 +1,6 @@
 "use client";
 
+import Image from "next/image";
 import { motion } from "motion/react";
 import { toast } from "sonner";
 import { Download } from "lucide-react";
@@ -36,12 +37,12 @@ export function ThumbnailCard({
     >
       <Card className="overflow-hidden p-0 group">
         <div className="relative aspect-video w-full bg-muted/30">
-          {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img
+          <Image
             src={thumbnail.url}
             alt={thumbnail.text}
-            className="absolute inset-0 w-full h-full object-cover"
-            loading="lazy"
+            fill
+            sizes="(max-width: 640px) 100vw, (max-width: 1024px) 50vw, 25vw"
+            className="object-cover"
           />
           <button
             type="button"
