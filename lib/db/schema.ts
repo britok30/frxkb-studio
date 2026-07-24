@@ -52,7 +52,7 @@ export const projects = pgTable(
      *  while the prompt supplies the room. Null = text-born project. */
     referenceImageUrls: jsonb("reference_image_urls").$type<string[]>(),
     /** Render-quality tier. standard = 2K stills + native 1080p video (the
-     *  Reels delivery ceiling). hero = 4K stills + Topaz 4K60 video pass —
+     *  Reels delivery ceiling). hero = 4K stills + full-tier seedance —
      *  for YouTube/portfolio work where viewers zoom or the platform serves
      *  true 4K. Drives resolution + upscale decisions in lib/projects.ts. */
     quality: text("quality", { enum: ["standard", "hero"] })

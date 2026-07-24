@@ -95,7 +95,7 @@ export type CreateProjectInput = {
    *  means GPT-5.5 chooses the light per concept, the pre-looks behavior. */
   lookId?: LookId;
   /** Render-quality tier. standard (default) = 2K stills + native 1080p
-   *  video. hero = 4K stills + Topaz 4K60 video pass. */
+   *  video. hero = 4K stills + full-tier 1080p seedance source. */
   quality?: "standard" | "hero";
   /** Moodboard / photo references (public Blob URLs, ≤5). When present:
    *  GPT-5.5 sees them while writing the brief, and every scene renders via
@@ -1144,7 +1144,9 @@ export async function animateAllScenes(
             videoUrl: seedanceResult.videoUrl,
             model: "Proteus",
             upscaleFactor: useFast ? 3 : 2,
-            targetFps: project.quality === "hero" ? 60 : 30,
+            // 30 across the board — the stitch renders 30fps output, so 60fps
+        // interpolation here would be synthesized and then discarded.
+        targetFps: 30,
           })
         ).videoUrl;
 
@@ -1159,7 +1161,7 @@ export async function animateAllScenes(
 
       await markSceneAnimated(scene.id, { videoUrl: stored.url });
       // Ledger: seedance bills the clamped 4-15s duration at 1080p; hero
-      // quality adds the Topaz 4K60 pass on top.
+      // Ledger: seedance tier per quality; Topaz 4K30 rides every clip.
       const billedSec = Math.min(15, Math.max(4, scene.durationSec || 5));
       await recordSpend({
         projectId,
@@ -1370,7 +1372,7 @@ export async function animatePlannedScene(
 ): Promise<{ ok: boolean }> {
   // Crisp-pipeline tiers (both end at ~4K sources, stitched to 1080p/30):
   //   standard reel: Seedance FAST 720p (~$0.24/s, quicker) → Topaz 3× → 4K30
-  //   hero reel:     Seedance full 1080p (~$0.68/s)         → Topaz 2× → 4K60
+  //   hero reel:     Seedance full 1080p (~$0.68/s)         → Topaz 2× → 4K30
   //   morphs:        always the full tier — end_image_url support on fast is
   //                  unverified (see lib/seedance.ts).
   const useFast = plan.quality !== "hero" && !plan.isMorph;
@@ -1398,7 +1400,9 @@ export async function animatePlannedScene(
         videoUrl: seedanceResult.videoUrl,
         model: "Proteus",
         upscaleFactor: useFast ? 3 : 2,
-        targetFps: plan.quality === "hero" ? 60 : 30,
+        // 30 across the board — the stitch renders 30fps output, so 60fps
+        // interpolation here would be synthesized and then discarded.
+        targetFps: 30,
       })
     ).videoUrl;
     const filename = `scene-${String(target.order).padStart(3, "0")}-${nanoid(6)}.mp4`;

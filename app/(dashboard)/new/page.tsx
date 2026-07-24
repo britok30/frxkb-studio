@@ -149,7 +149,7 @@ export default function NewProjectPage() {
   // choose the light per concept" — the pre-looks behavior.
   const [lookId, setLookId] = useState<string | null>(initialLookParam);
   // Render-quality tier (reel/carousel). standard = 2K stills + 1080p video;
-  // hero = 4K stills + Topaz 4K60 video for YouTube/portfolio use.
+  // hero = 4K stills + full-tier seedance video for YouTube/portfolio use.
   const [quality, setQuality] = useState<"standard" | "hero">(initialQuality);
   // Moodboard / photo references (reel/carousel, ≤5). Steer materials,
   // palette, and mood for every render; GPT-5.6 also sees them while
@@ -597,7 +597,7 @@ export default function NewProjectPage() {
                       label="Quality"
                       value={
                         quality === "hero"
-                          ? "Hero — 4K stills, 4K60 video"
+                          ? "Hero — 4K stills, full-tier video"
                           : "Standard — 2K stills, 1080p video"
                       }
                       onEdit={() => go(2)}
@@ -1144,7 +1144,7 @@ function QualityToggle({
       name: "Hero",
       detail:
         format === "reel"
-          ? "4K stills · Topaz 4K60 video — for YouTube and portfolio cuts"
+          ? "4K stills · full-tier Seedance video — for YouTube and portfolio cuts"
           : "4K stills — zoom-proof carousels, ~2× image cost",
     },
   ];

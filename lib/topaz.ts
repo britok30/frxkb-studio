@@ -30,9 +30,11 @@ export type TopazInput = {
   recoverDetail?: number;
   /** Target output frame rate. When set, fal auto-engages Apollo (Topaz's
    *  frame-interpolation model) alongside Proteus to interpolate from the
-   *  source FPS up to this. We default to 60 — seedance ships at 24fps,
-   *  which reads as janky on smooth pans. Doubles the per-second tier price
-   *  but worth it for the quality jump. Set to 0 to disable. */
+   *  source FPS up to this. Callers pass 30 (the delivery frame rate;
+   *  seedance ships 24fps,
+   *  which reads as janky on smooth pans). Delivery is always 30fps — the
+   *  stitch renders 30, so interpolating past that is money burned. Doubles
+   *  the per-second tier price. Set to 0 to disable. */
   targetFps?: number;
 };
 
@@ -66,7 +68,7 @@ export function __resetTopazForTests(): void {
  *
  * Pricing on fal: $0.01/sec up to 720p output, $0.02/sec for ≤1080p,
  * $0.08/sec for >1080p output. Per-second tier DOUBLES when target_fps is
- * set (Apollo interpolation surcharge), so our default 720p→1440p+60fps
+ * set (Apollo interpolation surcharge), so an interpolated >1080p output
  * lands in the $0.16/sec tier.
  */
 export async function upscaleVideo(input: TopazInput): Promise<TopazOutput> {
@@ -77,7 +79,7 @@ export async function upscaleVideo(input: TopazInput): Promise<TopazOutput> {
     upscaleFactor = 2,
     compression,
     recoverDetail,
-    targetFps = 60,
+    targetFps = 30,
   } = input;
 
   const result = await client.subscribe("fal-ai/topaz/upscale/video", {

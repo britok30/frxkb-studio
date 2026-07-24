@@ -34,7 +34,7 @@ const okResponse = {
 };
 
 describe("upscaleVideo", () => {
-  it("calls fal-ai/topaz/upscale/video with Proteus + 2× + 60fps interpolation by default", async () => {
+  it("calls fal-ai/topaz/upscale/video with Proteus + 2× + 30fps interpolation by default (delivery is 30)", async () => {
     subscribeMock.mockResolvedValue(okResponse);
 
     await withOperator(britok, () =>
@@ -49,7 +49,7 @@ describe("upscaleVideo", () => {
     expect(args.input.H264_output).toBe(true);
     // Apollo frame interp: bumps seedance's 24fps output to 60fps so motion
     // doesn't read as janky on smooth pans.
-    expect(args.input.target_fps).toBe(60);
+    expect(args.input.target_fps).toBe(30);
     expect(args.logs).toBe(false);
   });
 

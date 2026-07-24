@@ -51,7 +51,7 @@ export const FAL_TOPAZ_PER_SECOND_LE_720P = 0.01;
 export const FAL_TOPAZ_PER_SECOND_LE_1080P = 0.02;
 export const FAL_TOPAZ_PER_SECOND_GT_1080P = 0.08;
 /** Multiplier applied to the tier rate when target_fps is set. Default
- *  pipeline upscales 24fps → 60fps, so the multiplier always applies. */
+ *  pipeline interpolates 24fps → 30fps, so the multiplier always applies. */
 export const FAL_TOPAZ_FPS_INTERPOLATION_MULTIPLIER = 2;
 
 /** fal ffmpeg-api/compose (final-video stitch) — $0.0002 per second of
@@ -181,7 +181,7 @@ export function estimateSeedance(
 }
 
 /** Topaz upscale cost. Default path: 720p → 1440p (2× upscale → above 1080p)
- *  with frame interpolation to 60fps (target_fps in lib/topaz.ts), so the
+ *  with frame interpolation to 30fps (target_fps in lib/topaz.ts), so the
  *  per-second rate doubles via the Apollo surcharge. Pass interpolated=false
  *  to estimate without it. */
 export function estimateTopazUpscale(
@@ -210,7 +210,7 @@ export function estimateMotionPromptsGen(sceneCount: number): number {
 
 /** All-in cost of the animate step for N scenes at D seconds each.
  *  Standard: Seedance FAST 720p + Topaz 3×→4K30. Hero: Seedance full 1080p
- *  + Topaz 2×→4K60. Both stitch to a supersampled 1080p/30 (hero 60) final. */
+ *  + Topaz 2×→4K30. Both stitch to a supersampled 1080p/30 final. */
 export function estimateAnimateBatch(
   sceneCount: number,
   perSceneDurationSec: number,

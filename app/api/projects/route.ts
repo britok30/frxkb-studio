@@ -25,7 +25,7 @@ const CreateBody = z.object({
   /** Committed photographic look — an id from lib/prompts/looks.ts. */
   lookId: LookIdSchema.optional(),
   /** Render-quality tier: standard (2K stills, 1080p video) or hero
-   *  (4K stills, Topaz 4K60 video). */
+   *  (4K stills, full-tier seedance video). */
   quality: z.enum(["standard", "hero"]).optional(),
   /** Moodboard / photo references (Blob URLs from /api/upload, ≤5). Steer
    *  materials/palette/mood for every render; also shown to GPT-5.5 while
