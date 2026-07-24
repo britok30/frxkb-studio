@@ -248,6 +248,13 @@ export function StitchPanel({
                 : "Re-stitch to try again."}
             </p>
           )}
+          {stitchStatus === "ready" && stitchError && !stitching && (
+            <p className="rounded-md border border-amber-500/40 bg-amber-500/5 px-3 py-2 text-xs text-amber-600 dark:text-amber-400 leading-relaxed">
+              Heads up: this final rendered via the FALLBACK (hard cuts, lower
+              bitrate) — Shotstack failed with: {stitchError} Re-stitch to retry
+              the full-quality path.
+            </p>
+          )}
           {stitchStatus === "queued" || stitchStatus === "rendering" ? (
             <p className="rounded-md border border-dashed bg-muted/30 px-3 py-2 text-xs text-muted-foreground leading-relaxed">
               A stitch is {stitchStatus === "queued" ? "queued" : "rendering"} in the

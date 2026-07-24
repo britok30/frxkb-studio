@@ -13,6 +13,7 @@ import {
   renderStitch,
   transferStitchRehostParts,
   type AnimatePlan,
+  type RenderStitchResult,
   type StitchOpts,
   type StitchPrep,
 } from "@/lib/projects";
@@ -210,9 +211,10 @@ export async function handleStitch(
     withOperator(operator, () => prepareStitch(projectId, opts))
   )) as StitchPrep;
 
-  const renderedUrl = (await step.run("render", () =>
+  const rendered = (await step.run("render", () =>
     withOperator(operator, () => renderStitch(prep))
-  )) as string;
+  )) as RenderStitchResult;
+  const renderedUrl = rendered.videoUrl;
 
   // Re-host: full-quality long-forms run 1.5-2GB — one invocation can't
   // move that (observed platform kill 2026-07-24). Plan step decides:
@@ -225,7 +227,7 @@ export async function handleStitch(
 
   if (rehostPlan.mode === "simple") {
     return await step.run("finish", () =>
-      withOperator(operator, () => finishStitch(projectId, renderedUrl))
+      withOperator(operator, () => finishStitch(projectId, renderedUrl, rendered.degraded))
     );
   }
 
@@ -241,7 +243,7 @@ export async function handleStitch(
   }
 
   return await step.run("finish-large", () =>
-    withOperator(operator, () => completeStitchRehost(projectId, rehostPlan, parts))
+    withOperator(operator, () => completeStitchRehost(projectId, rehostPlan, parts, rendered.degraded))
   );
 }
 

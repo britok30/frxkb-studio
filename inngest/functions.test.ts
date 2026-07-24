@@ -272,7 +272,7 @@ describe("handleStitch", () => {
     hoisted.getOperator.mockReturnValue(stubOperator);
     const prep = { projectId: "p_1", format: "style-explorer", segments: [], totalMs: 616000, aspect: "16:9", opts: {} };
     hoisted.prepareStitch.mockResolvedValue(prep);
-    hoisted.renderStitch.mockResolvedValue("https://fal/out.mp4");
+    hoisted.renderStitch.mockResolvedValue({ videoUrl: "https://fal/out.mp4" });
     hoisted.finishStitch.mockResolvedValue({ finalVideoUrl: "https://blob/final.mp4" });
 
     const result = await handleStitch(
@@ -290,14 +290,14 @@ describe("handleStitch", () => {
 
     expect(hoisted.prepareStitch).toHaveBeenCalledWith("p_1", { perStillSec: 7, targetMinutes: 10 });
     expect(hoisted.renderStitch).toHaveBeenCalledWith(prep);
-    expect(hoisted.finishStitch).toHaveBeenCalledWith("p_1", "https://fal/out.mp4");
+    expect(hoisted.finishStitch).toHaveBeenCalledWith("p_1", "https://fal/out.mp4", undefined);
     expect(result).toEqual({ finalVideoUrl: "https://blob/final.mp4" });
   });
 
   it("large finals: chunked rehost — part batches in their own steps, then complete (no single-step finish)", async () => {
     hoisted.getOperator.mockReturnValue(stubOperator);
     hoisted.prepareStitch.mockResolvedValue({ projectId: "p_1", format: "style-explorer", segments: [], totalMs: 960000, aspect: "16:9", opts: {} });
-    hoisted.renderStitch.mockResolvedValue("https://shotstack/full.mp4");
+    hoisted.renderStitch.mockResolvedValue({ videoUrl: "https://shotstack/full.mp4" });
     const plan = {
       mode: "multipart" as const,
       pathname: "videos/p_1/final-x.mp4",
@@ -325,6 +325,7 @@ describe("handleStitch", () => {
     expect(hoisted.transferStitchRehostParts).toHaveBeenNthCalledWith(3, "https://shotstack/full.mp4", plan, 7, 7);
     expect(hoisted.finishStitch).not.toHaveBeenCalled();
     const parts = hoisted.completeStitchRehost.mock.calls[0][2];
+    expect(hoisted.completeStitchRehost.mock.calls[0][3]).toBeUndefined();
     expect(parts).toHaveLength(7);
     expect(parts[6]).toEqual({ etag: "e7", partNumber: 7 });
     expect(result).toEqual({ finalVideoUrl: "https://blob/final-big.mp4" });

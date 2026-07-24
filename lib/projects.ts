@@ -1625,11 +1625,21 @@ export async function prepareStitch(
  *  compose (hard cuts) otherwise — and as an automatic fallback if a
  *  Shotstack render errors, so stitch never hard-fails over the fancier
  *  backend. Returns the vendor-hosted URL. */
-export async function renderStitch(prep: StitchPrep): Promise<string> {
+export type RenderStitchResult = {
+  videoUrl: string;
+  /** Set when the premium Shotstack path failed and the fal fallback (hard
+   *  cuts, capped bitrate) produced this video — surfaced to the operator
+   *  so a silent quality downgrade can't happen (observed 2026-07-24:
+   *  Fremy's long-form shipped without transitions and nobody knew why). */
+  degraded?: string;
+};
+
+export async function renderStitch(prep: StitchPrep): Promise<RenderStitchResult> {
   const { projectId, format, segments, totalMs, aspect, opts } = prep;
   const cycles = prep.cycles ?? 1;
   const cycleMs = segments.reduce((n, s) => n + s.ms, 0);
   let renderedUrl: string | null = null;
+  let degraded: string | undefined;
   if (isShotstackConfigured()) {
     try {
       if (cycles > 1 && opts.fullQuality !== false) {
@@ -1684,9 +1694,12 @@ export async function renderStitch(prep: StitchPrep): Promise<string> {
         });
       }
     } catch (err) {
+      degraded = err instanceof Error ? err.message : String(err);
       console.warn("[stitch] Shotstack failed; falling back to fal compose:", err);
       renderedUrl = null;
     }
+  } else if (opts.fullQuality !== false && format === "style-explorer") {
+    degraded = "No Shotstack key configured for this operator.";
   }
   if (!renderedUrl) {
     // fal-only path (no Shotstack key, or Shotstack errored): hard cuts over
@@ -1703,7 +1716,7 @@ export async function renderStitch(prep: StitchPrep): Promise<string> {
       meta: { format, outputSec: Math.round(totalMs / 1000), backend: "fal" },
     });
   }
-  return renderedUrl;
+  return { videoUrl: renderedUrl, degraded };
 }
 
 /** Stitch step 3a (large finals): probe the rendered file and open a
@@ -1735,11 +1748,12 @@ export async function transferStitchRehostParts(
 export async function completeStitchRehost(
   projectId: string,
   plan: Extract<RehostPlan, { mode: "multipart" }>,
-  parts: RehostPart[]
+  parts: RehostPart[],
+  degradedNote?: string
 ): Promise<StitchResult> {
   const stored = await completeLargeRehost(plan, parts);
   await markProjectFinalVideo(projectId, stored.url);
-  await updateStitchState(projectId, "ready");
+  await updateStitchState(projectId, "ready", degradedNote ?? null);
   return { finalVideoUrl: stored.url };
 }
 
@@ -1747,7 +1761,8 @@ export async function completeStitchRehost(
  *  persist, and settle the lifecycle. */
 export async function finishStitch(
   projectId: string,
-  renderedUrl: string
+  renderedUrl: string,
+  degradedNote?: string
 ): Promise<StitchResult> {
   const stored = await storeFromUrl({
     url: renderedUrl,
@@ -1756,7 +1771,9 @@ export async function finishStitch(
     filename: `final-${nanoid(6)}.mp4`,
   });
   await markProjectFinalVideo(projectId, stored.url);
-  await updateStitchState(projectId, "ready");
+  // A degradation note rides stitchError alongside status "ready" — the
+  // panel renders it as a warning, not a failure.
+  await updateStitchState(projectId, "ready", degradedNote ?? null);
   return { finalVideoUrl: stored.url };
 }
 
@@ -1773,8 +1790,8 @@ export async function stitchFinalVideo(
   opts: StitchOpts = {}
 ): Promise<StitchResult> {
   const prep = await prepareStitch(projectId, opts);
-  const renderedUrl = await renderStitch(prep);
-  return await finishStitch(projectId, renderedUrl);
+  const rendered = await renderStitch(prep);
+  return await finishStitch(projectId, rendered.videoUrl, rendered.degraded);
 }
 
 /** One entry on the stitch timeline — backend-neutral. */
