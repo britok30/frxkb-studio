@@ -336,7 +336,13 @@ export async function markProjectFinalVideo(
 ): Promise<void> {
   await getDb()
     .update(projects)
-    .set({ finalVideoUrl, updatedAt: new Date() })
+    .set({
+      // Keep the outgoing final reachable — a worse re-stitch (or one that
+      // dropped the music) must never destroy a good render.
+      previousFinalVideoUrl: sql`${projects.finalVideoUrl}`,
+      finalVideoUrl,
+      updatedAt: new Date(),
+    })
     .where(eq(projects.id, id));
 }
 
@@ -436,11 +442,50 @@ export async function markSceneAnimated(
   await getDb()
     .update(scenes)
     .set({
+      // Shift the outgoing take into previousVideoUrl (one level of undo) —
+      // Postgres evaluates right-hand sides against the OLD row, so this
+      // captures the pre-update value.
+      previousVideoUrl: sql`${scenes.videoUrl}`,
       videoUrl: values.videoUrl,
       error: null,
       updatedAt: new Date(),
     })
     .where(eq(scenes.id, id));
+}
+
+/** Swap a scene's active clip with the take it replaced (re-animate undo).
+ *  Swapping twice restores the original order — nothing is ever lost. */
+export async function swapScenePreviousVideo(id: string): Promise<boolean> {
+  const rows = await getDb()
+    .update(scenes)
+    .set({
+      videoUrl: sql`${scenes.previousVideoUrl}`,
+      previousVideoUrl: sql`${scenes.videoUrl}`,
+      updatedAt: new Date(),
+    })
+    .where(and(eq(scenes.id, id), sql`${scenes.previousVideoUrl} IS NOT NULL`))
+    .returning();
+  return rows.length > 0;
+}
+
+/** Reset scenes stuck in "generating" from a crashed run WITHOUT requiring a
+ *  new batch trigger. Staleness-guarded: an actively rendering scene updates
+ *  within seconds-to-minutes, so anything older than STALE_LOCK_MS is dead.
+ *  Safe to call on page load — no-ops when nothing is stuck. */
+export async function recoverStaleGeneratingScenes(projectId: string): Promise<number> {
+  const staleThreshold = new Date(Date.now() - STALE_LOCK_MS);
+  const rows = await getDb()
+    .update(scenes)
+    .set({ status: "pending", error: null, updatedAt: new Date() })
+    .where(
+      and(
+        eq(scenes.projectId, projectId),
+        eq(scenes.status, "generating"),
+        lt(scenes.updatedAt, staleThreshold)
+      )
+    )
+    .returning();
+  return rows.length;
 }
 
 /**

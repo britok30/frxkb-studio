@@ -86,6 +86,9 @@ export const projects = pgTable(
      *  produced by fal ffmpeg compose. Null until the operator stitches.
      *  Re-stitching (e.g. with a music bed) overwrites. */
     finalVideoUrl: text("final_video_url"),
+    /** The stitched final this one replaced — re-stitching shifts the
+     *  outgoing URL here so a worse re-render never destroys a good final. */
+    previousFinalVideoUrl: text("previous_final_video_url"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },
@@ -127,6 +130,10 @@ export const scenes = pgTable(
     /** Public Vercel Blob URL of the upscaled mp4 (for reels — the seedance
      *  output passed through Topaz Proteus). Null for stills/non-reel formats. */
     videoUrl: text("video_url"),
+    /** The take this clip replaced (re-animate shifts the outgoing videoUrl
+     *  here instead of destroying it). One level of undo — swapping back
+     *  swaps the two. */
+    previousVideoUrl: text("previous_video_url"),
     /** The motion description GPT-5.5 generated for the seedance pass. Stored
      *  for transparency + so re-animation uses the same direction. */
     motionPrompt: text("motion_prompt"),

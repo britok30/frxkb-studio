@@ -6,7 +6,7 @@ import { PropertyTypeSchema, WorldTypeSchema } from "@/lib/prompts/types";
 import { storeOperatorUpload } from "@/lib/storage";
 import { withSessionOperator } from "@/lib/route-helpers";
 import { currentOperator } from "@/lib/operators";
-import { assertWithinDailyBudget, BudgetExceededError } from "@/lib/spend";
+import { assertWithinDailyBudget, BudgetExceededError, recordSpend } from "@/lib/spend";
 import { FAL_NANO_BANANA_PER_IMAGE } from "@/lib/pricing";
 
 export const runtime = "nodejs";
@@ -75,6 +75,13 @@ export async function POST(req: Request): Promise<Response> {
         buffer,
         ext,
         contentType,
+      });
+
+      // Ledger the render — base takes (and re-takes) are real spend.
+      await recordSpend({
+        kind: "image",
+        amountUsd: FAL_NANO_BANANA_PER_IMAGE,
+        meta: { stage: "style-base" },
       });
 
       return NextResponse.json({ url: stored.url, aspectRatio: "16:9" }, { status: 201 });

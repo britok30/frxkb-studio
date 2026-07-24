@@ -3,6 +3,7 @@ import Link from "next/link";
 import { auth } from "@/auth";
 import { getOperator } from "@/lib/operators";
 import { getProjectWithScenes } from "@/lib/projects";
+import { recoverStaleGeneratingScenes } from "@/lib/projects-db";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { ProjectActions } from "./project-actions";
@@ -47,6 +48,18 @@ export default async function ProjectPage({ params }: { params: Promise<{ id: st
     );
   }
   if (!data) notFound();
+
+  // Self-heal scenes orphaned in "generating" by a crashed batch — they used
+  // to spin forever until the operator happened to re-run Generate. Stale-
+  // guarded (10 min), so an actively rendering batch is never touched.
+  if (data.scenes.some((s) => s.status === "generating")) {
+    try {
+      const recovered = await recoverStaleGeneratingScenes(id);
+      if (recovered > 0) data = (await getProjectWithScenes(id)) ?? data;
+    } catch {
+      // Recovery is best-effort — never block the page on it.
+    }
+  }
 
   const { project, scenes } = data;
   // Actual recorded spend for this project (soft-fails to null).
@@ -241,6 +254,7 @@ export default async function ProjectPage({ params }: { params: Promise<{ id: st
           projectId={project.id}
           format={project.format}
           finalVideoUrl={project.finalVideoUrl}
+          previousFinalVideoUrl={project.previousFinalVideoUrl}
           hasShotstack={hasShotstack}
           isOwner={isOwner}
           stitchStatus={project.stitchStatus}
@@ -343,6 +357,7 @@ export default async function ProjectPage({ params }: { params: Promise<{ id: st
                     aspect="9:16"
                     projectId={project.id}
                     canReanimate={isOwner && !isBusy}
+                    hasPreviousTake={!!s.previousVideoUrl}
                     reanimateCostLabel={formatCost(
                       estimateAnimateBatch(
                         1,

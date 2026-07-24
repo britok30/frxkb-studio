@@ -37,6 +37,7 @@ import {
   estimateImageBatch,
   estimateMetadataGen,
   estimateSceneGen,
+  estimateStylesGen,
   estimateTopazUpscale,
   FAL_COMPOSE_PER_SECOND,
   FAL_NANO_BANANA_EDIT_PER_IMAGE,
@@ -79,6 +80,7 @@ import {
   tryAcquireFinalizationLock,
   tryAcquireGenerationLock,
   updateProjectStatus,
+  swapScenePreviousVideo,
 } from "@/lib/projects-db";
 import type { Project, Scene, SceneVersion } from "@/lib/db";
 
@@ -362,6 +364,15 @@ export async function createBeforeAfterProject(
     })),
   ]);
 
+  // LLM spend for creation (slim concept + the vision styles proposal) —
+  // estimate-based, mirroring createProject's scripting bookkeeping.
+  await recordSpend({
+    projectId,
+    kind: "llm",
+    amountUsd: estimateConceptGen() + estimateStylesGen(stylesResp.styles.length),
+    meta: { stage: "scripting", concepts: stylesResp.styles.length },
+  });
+
   return { project, scenes: insertedScenes };
 }
 
@@ -516,6 +527,14 @@ export async function createStyleExplorerProject(
     },
     ...styleScenes,
   ]);
+
+  // LLM spend for the styles proposal — estimate-based.
+  await recordSpend({
+    projectId,
+    kind: "llm",
+    amountUsd: estimateStylesGen(stylesResp.styles.length),
+    meta: { stage: "scripting", styles: stylesResp.styles.length },
+  });
 
   return { project, scenes: insertedScenes };
 }
@@ -746,7 +765,7 @@ export async function generateAllImages(
   }
 }
 
-export type SceneAction = "approve" | "reject" | "regenerate" | "set-motion";
+export type SceneAction = "approve" | "reject" | "regenerate" | "set-motion" | "restore-video";
 
 /** Optional per-call design direction layered on top of the stored prompt for
  *  a single regeneration. Only meaningful when action === "regenerate".
@@ -790,6 +809,12 @@ export async function applySceneAction(
         throw new Error(`Unknown camera move "${preset}".`);
       }
       await setSceneMotionPreset(sceneId, preset);
+      break;
+    }
+    case "restore-video": {
+      // Swap the active clip with the take it replaced (re-animate undo).
+      const swapped = await swapScenePreviousVideo(sceneId);
+      if (!swapped) throw new Error("No previous take to restore for this scene.");
       break;
     }
   }

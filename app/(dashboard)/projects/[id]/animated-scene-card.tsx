@@ -4,7 +4,7 @@ import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { motion } from "motion/react";
 import { toast } from "sonner";
-import { RotateCcw } from "lucide-react";
+import { RotateCcw, Undo2 } from "lucide-react";
 import { Card } from "@/components/ui/card";
 import { ease, staggerDelay } from "@/lib/motion";
 
@@ -27,6 +27,9 @@ export type AnimatedSceneCardProps = {
    *  precomputed from the server (pricing lives server-side). */
   canReanimate?: boolean;
   reanimateCostLabel?: string;
+  /** True when a re-animate shifted an older take into previousVideoUrl —
+   *  shows the free swap-back button. */
+  hasPreviousTake?: boolean;
 };
 
 const ASPECT_CLASS: Record<AnimatedSceneCardProps["aspect"], string> = {
@@ -43,6 +46,7 @@ export function AnimatedSceneCard({
   projectId,
   canReanimate = false,
   reanimateCostLabel,
+  hasPreviousTake = false,
 }: AnimatedSceneCardProps) {
   const router = useRouter();
   const [busy, setBusy] = useState(false);
@@ -81,6 +85,30 @@ export function AnimatedSceneCard({
     }
   }
 
+  async function restorePrevious() {
+    if (busy || !projectId) return;
+    setBusy(true);
+    const toastId = toast.loading("Swapping back to the previous take…");
+    try {
+      const res = await fetch(`/api/projects/${projectId}/scenes/${scene.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "restore-video" }),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.error ?? `HTTP ${res.status}`);
+      }
+      toast.success("Previous take restored — swap again to undo", { id: toastId });
+      startTransition(() => router.refresh());
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Unknown error";
+      toast.error("Couldn't restore", { id: toastId, description: message });
+    } finally {
+      setBusy(false);
+    }
+  }
+
   return (
     <motion.div
       initial={{ opacity: 0, y: 8 }}
@@ -104,6 +132,18 @@ export function AnimatedSceneCard({
               {scene.durationSec ? (
                 <span className="tabular-nums opacity-70">{scene.durationSec}s</span>
               ) : null}
+              {canReanimate && projectId && hasPreviousTake && (
+                <button
+                  type="button"
+                  onClick={() => void restorePrevious()}
+                  disabled={busy}
+                  title="Swap back to the previous take (free — swap again to undo)"
+                  className="inline-flex items-center gap-1 rounded px-1.5 py-0.5 hover:bg-white/15 transition-colors disabled:opacity-50"
+                >
+                  <Undo2 className="size-3" />
+                  Prev
+                </button>
+              )}
               {canReanimate && projectId && (
                 <button
                   type="button"

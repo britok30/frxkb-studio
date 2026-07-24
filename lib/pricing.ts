@@ -117,6 +117,12 @@ export function estimateMetadataGen(): number {
   return llmCost(LLM_INPUT_TOKENS.metadata, LLM_OUTPUT_TOKENS.metadata);
 }
 
+/** The vision styles-proposal call (style-explorer fan-out + before-after
+ *  concepts): bigger per-style output than scene gen. */
+export function estimateStylesGen(styleCount: number): number {
+  return llmCost(2400, 300 + Math.max(0, styleCount) * 350);
+}
+
 export function estimateSuggestWorld(): number {
   return llmCost(LLM_INPUT_TOKENS.suggestWorld, LLM_OUTPUT_TOKENS.suggestWorld);
 }
@@ -240,7 +246,7 @@ export function estimateProjectTotal(format: Format, sceneCount: number): number
     // concepts via /edit (10 images total), plus the two GPT calls (slim
     // concept + the vision styles proposal) and finalize metadata. No video.
     const afters = 9;
-    const conceptsGen = llmCost(2400, 300 + afters * 350);
+    const conceptsGen = estimateStylesGen(afters);
     return (
       estimateConceptGen() +
       conceptsGen +
@@ -253,7 +259,7 @@ export function estimateProjectTotal(format: Format, sceneCount: number): number
     // GPT-5.5 call (bigger per-style output than scene gen) + the YouTube
     // metadata GPT-5.5 call. No animation (static stills).
     const styles = Math.max(0, sceneCount);
-    const stylesGen = llmCost(2400, 300 + styles * 350);
+    const stylesGen = estimateStylesGen(styles);
     return (
       FAL_NANO_BANANA_PER_IMAGE + // base render
       styles * FAL_NANO_BANANA_EDIT_PER_IMAGE + // styled edits

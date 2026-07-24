@@ -10,7 +10,7 @@ export const dynamic = "force-dynamic";
 export const maxDuration = 120;
 
 const PatchBody = z.object({
-  action: z.enum(["approve", "reject", "regenerate", "set-motion"]),
+  action: z.enum(["approve", "reject", "regenerate", "set-motion", "restore-video"]),
   /** Optional design direction layered onto the stored scene prompt for one
    *  regen. Capped at 500 chars — enough for "tighter on the kitchen counter,
    *  shift to morning light, add more plants" without bloating the fal call. */

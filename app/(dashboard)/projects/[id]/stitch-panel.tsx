@@ -24,6 +24,7 @@ export function StitchPanel({
   projectId,
   format,
   finalVideoUrl,
+  previousFinalVideoUrl = null,
   aspect,
   hasShotstack = true,
   isOwner = true,
@@ -45,6 +46,9 @@ export function StitchPanel({
    *  here on page load, not only in the toast of a live polling session. */
   stitchStatus?: string | null;
   stitchError?: string | null;
+  /** The final this one replaced — re-stitching keeps one prior render
+   *  reachable so a worse re-render never destroys a good deliverable. */
+  previousFinalVideoUrl?: string | null;
 }) {
   const router = useRouter();
   const [stitching, setStitching] = useState(false);
@@ -259,6 +263,16 @@ export function StitchPanel({
                   <Download className="size-3.5" />
                   {downloading ? "Downloading…" : "Download final.mp4"}
                 </button>
+              )}
+              {isOwner && previousFinalVideoUrl && previousFinalVideoUrl !== finalVideoUrl && (
+                <a
+                  href={previousFinalVideoUrl}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="text-[10px] text-muted-foreground hover:text-foreground tracking-tight"
+                >
+                  Previous stitch still available — open
+                </a>
               )}
             </div>
           )}
