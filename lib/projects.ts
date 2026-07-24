@@ -81,6 +81,7 @@ import {
   tryAcquireGenerationLock,
   updateProjectStatus,
   swapScenePreviousVideo,
+  selectRecentStyleNames,
 } from "@/lib/projects-db";
 import type { Project, Scene, SceneVersion } from "@/lib/db";
 
@@ -298,13 +299,18 @@ export async function createBeforeAfterProject(
       transformationPrompt: input.transformationPrompt,
       worldType: input.worldType,
     }),
-    generateStyles({
-      baseImageUrl: input.beforeImageUrl,
-      worldType: input.worldType,
-      propertyType: "residential",
-      count: BEFORE_AFTER_CONCEPT_COUNT,
-      operatorNotes: input.transformationPrompt,
-    }),
+    selectRecentStyleNames()
+      .catch(() => [] as string[])
+      .then((recentStyleNames) =>
+        generateStyles({
+          baseImageUrl: input.beforeImageUrl,
+          worldType: input.worldType,
+          propertyType: "residential",
+          count: BEFORE_AFTER_CONCEPT_COUNT,
+          operatorNotes: input.transformationPrompt,
+          recentStyleNames,
+        })
+      ),
   ]);
   if (stylesResp.styles.length === 0) {
     throw new Error("Concept generation returned nothing. Try again or adjust the prompt.");
@@ -435,12 +441,16 @@ export async function createStyleExplorerProject(
 
   // Vision call: GPT-5.5 sees the uploaded base and proposes the styles before
   // any DB write, so a failure leaves no orphan project row.
+  // Avoid-list so consecutive videos don't ship the same style lineup —
+  // soft-fails to empty (freshness must never block creation).
+  const recentStyleNames = await selectRecentStyleNames().catch(() => [] as string[]);
   const stylesResp = await generateStyles({
     baseImageUrl: input.baseImageUrl,
     worldType: input.worldType,
     propertyType: input.propertyType,
     count: styleCount,
     operatorNotes: input.operatorNotes,
+    recentStyleNames,
   });
   if (stylesResp.styles.length === 0) {
     throw new Error("Style generation returned no styles. Try again or adjust the notes.");

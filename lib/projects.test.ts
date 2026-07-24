@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 
 const dbMocks = vi.hoisted(() => ({
   insertProject: vi.fn(),
+  selectRecentStyleNames: vi.fn(),
   insertScenes: vi.fn(),
   listProjectsRows: vi.fn(),
   selectProjectById: vi.fn(),
@@ -191,6 +192,7 @@ beforeEach(() => {
   dbMocks.resetOrphanedScenes.mockResolvedValue(0);
   dbMocks.heartbeatGenerationLock.mockResolvedValue(undefined);
   dbMocks.insertSceneVersion.mockResolvedValue(undefined);
+  dbMocks.selectRecentStyleNames.mockResolvedValue([]);
   dbMocks.setProjectSceneReferences.mockResolvedValue(undefined);
   dbMocks.markProjectFinalVideo.mockResolvedValue(undefined);
   dbMocks.updateStitchState.mockResolvedValue(undefined);

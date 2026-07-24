@@ -46,6 +46,9 @@ export type StyleInput = {
   /** Optional steering — location ("South Florida"), tier ("high-end"), or any
    *  angle the operator wants the SEO title to lean into. */
   operatorNotes?: string;
+  /** Style names used in the studio's recent videos (most recent first).
+   *  Fed as an avoid-list so consecutive videos don't repeat the lineup. */
+  recentStyleNames?: string[];
 };
 
 export function buildStylesSystem(): string {
@@ -67,6 +70,7 @@ What each style DOES change: furniture, finishes and materials, color palette, t
 - Each style is a REAL, NAMEABLE, recognisable design language — the kind of term a viewer would search ("Mid-Century Modern", "Japandi", "Industrial Loft", "Coastal Contemporary", "Art Deco"). Not invented mash-up names; not vague adjectives like "cozy" or "modern" on their own.
 - The styles are clearly DISTINCT from one another. Vary the era, the material family, the palette, and the formality so no two read as siblings. Don't ship two beige-minimalist variants.
 - Every style genuinely suits THIS space's program and vantage (see the brief below) — don't propose a style that fights the bones of the room.
+- **Go deeper than the obvious canon.** Every model defaults to the same dozen staples (Mid-Century Modern, Japandi, Industrial, Art Deco, Coastal, Scandinavian…) — a returning viewer should NOT see the same lineup video after video. Rotate across the full depth of nameable, searchable design languages: regional vernaculars (Provençal, Andalusian, Moroccan Riad, Mexican Hacienda, Kyoto Machiya, Alpine Chalet, British Colonial…), era-specific movements (Memphis, Postmodern, Bauhaus, Victorian, Hollywood Regency, 70s Conversation-Pit…), and current named directions (Organic Modern, Quiet Luxury, Dark Academia, Wabi-Sabi, Cottagecore, Maximalist Eclectic…). Aim for roughly one-third familiar search anchors and two-thirds fresher-but-still-searchable picks.
 
 **Every space must be fully furnished, distinctive, and editorial — never dull, never empty:**
 - FULLY dress the space for its style. A complete, considered scene: the right furniture and layout, rugs, textiles, art on the walls, lighting fixtures, plants, ceramics, books, and the small styling details that sell the look. An exterior gets its landscaping, planting, paving, outdoor furniture, and lighting. Never a bare, half-empty, or under-decorated room.
@@ -91,6 +95,13 @@ export function buildStylesUser(input: StyleInput): string {
   ];
   if (input.operatorNotes && input.operatorNotes.trim()) {
     lines.push("", `Operator notes (let these bias the style selection and the light/mood): ${input.operatorNotes.trim()}`);
+  }
+  if (input.recentStyleNames && input.recentStyleNames.length > 0) {
+    lines.push(
+      "",
+      `Already used in the studio's recent videos (most recent first): ${input.recentStyleNames.join(", ")}.`,
+      `Freshness rule: reuse AT MOST ${Math.max(1, Math.floor(input.count / 4))} of those, and only when they're a perfect fit for this space — fill the rest with directions NOT on that list.`
+    );
   }
   lines.push(
     "",

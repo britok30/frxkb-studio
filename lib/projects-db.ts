@@ -114,6 +114,29 @@ export async function selectRecentWorlds(limit = 50): Promise<
     .map((r) => ({ niche: r.niche, worldSignature: r.worldSignature, worldKeywords: r.worldKeywords }));
 }
 
+/** Style names used across recent style-explorer / before-after projects —
+ *  fed to the styles proposer as an avoid-list so consecutive videos don't
+ *  ship the same lineup. Excludes the base/before cards. Most recent first,
+ *  deduped, capped. */
+export async function selectRecentStyleNames(limit = 40): Promise<string[]> {
+  const rows = await getDb()
+    .select({ styleName: scenes.styleName, createdAt: scenes.createdAt })
+    .from(scenes)
+    .where(sql`${scenes.styleName} IS NOT NULL AND ${scenes.styleName} NOT IN ('Before', 'Original')`)
+    .orderBy(desc(scenes.createdAt))
+    .limit(300);
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const r of rows) {
+    const name = (r.styleName ?? "").trim();
+    if (!name || seen.has(name.toLowerCase())) continue;
+    seen.add(name.toLowerCase());
+    out.push(name);
+    if (out.length >= limit) break;
+  }
+  return out;
+}
+
 /** Cheap candidate query for dedupe: pull projects that either share the
  *  exact world signature or have at least one keyword in common. The fuzzy
  *  scoring happens in lib/world-dedupe.ts so it stays testable. */
