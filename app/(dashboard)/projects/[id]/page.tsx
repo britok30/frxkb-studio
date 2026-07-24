@@ -8,6 +8,7 @@ import { Badge } from "@/components/ui/badge";
 import { ProjectActions } from "./project-actions";
 import { SceneGrid } from "./scene-grid";
 import { AnimatedSceneCard } from "./animated-scene-card";
+import { FailedAnimateCard } from "./failed-animate-card";
 import { ExportPanel, type ExportPanelData } from "./export-panel";
 import { FlowBanner } from "./flow-banner";
 import { RegenerateAllLink } from "./regenerate-all-link";
@@ -77,6 +78,19 @@ export default async function ProjectPage({ params }: { params: Promise<{ id: st
   const counts = countByStatus(scenes);
   const exportData = buildExportData(project, scenes);
   const animatedCount = scenes.filter((s) => !!s.videoUrl).length;
+  // Animate-pipeline failures: the still survived (status stays generated/
+  // approved) but no video landed and an error was recorded. These used to
+  // vanish from the Animated grid entirely — surface them with a retry.
+  const animateFailedScenes =
+    project.format === "reel"
+      ? scenes.filter(
+          (s) =>
+            !s.videoUrl &&
+            !!s.error &&
+            !!s.imageUrl &&
+            (s.status === "generated" || s.status === "approved")
+        )
+      : [];
   // Per-scene duration is uniform across the project — pull from the first
   // scene with a value, fall back to 3 (reel default).
   const perSceneDurationSec = scenes[0]?.durationSec ?? 3;
@@ -298,7 +312,7 @@ export default async function ProjectPage({ params }: { params: Promise<{ id: st
         />
       </section>
 
-      {project.format === "reel" && animatedCount > 0 && (
+      {project.format === "reel" && (animatedCount > 0 || animateFailedScenes.length > 0) && (
           <section className="flex flex-col gap-4">
             <div className="flex items-baseline justify-between gap-4 border-b pb-3">
               <span className="text-xs uppercase tracking-[0.18em] text-muted-foreground">
@@ -306,6 +320,9 @@ export default async function ProjectPage({ params }: { params: Promise<{ id: st
               </span>
               <div className="text-xs text-muted-foreground tabular-nums">
                 {animatedCount}/{scenes.length} animated
+                {animateFailedScenes.length > 0 && (
+                  <span className="text-destructive"> · {animateFailedScenes.length} failed</span>
+                )}
               </div>
             </div>
             {/* Reels: 9:16 cards (the deliverable aspect). Before-after: use
@@ -335,6 +352,21 @@ export default async function ProjectPage({ params }: { params: Promise<{ id: st
                     )}
                   />
                 ))}
+              {animateFailedScenes.map((s2, i) => (
+                <FailedAnimateCard
+                  key={s2.id}
+                  projectId={project.id}
+                  scene={{
+                    id: s2.id,
+                    order: s2.order,
+                    posterUrl: s2.imageUrl,
+                    error: s2.error as string,
+                  }}
+                  aspect="9:16"
+                  canRetry={isOwner && !isBusy}
+                  index={i}
+                />
+              ))}
             </div>
           </section>
         )}

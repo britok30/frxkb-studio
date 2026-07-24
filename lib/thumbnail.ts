@@ -10,7 +10,7 @@ import { desc } from "drizzle-orm";
 import { currentOperator } from "@/lib/operators";
 import { getDb, thumbnails, type Thumbnail } from "@/lib/db";
 import { storeBuffer } from "@/lib/storage";
-import { recordSpend } from "@/lib/spend";
+import { assertWithinDailyBudget, recordSpend } from "@/lib/spend";
 import { GPT_IMAGE_2_THUMBNAIL_USD } from "@/lib/pricing";
 
 // One client per operator — same pattern as lib/llm.ts.
@@ -58,6 +58,9 @@ export async function generateThumbnail(input: {
   /** Optional extra art direction ("text top-left", "make it moodier", …). */
   notes?: string;
 }): Promise<ThumbnailResult> {
+  // Same daily cap as every other spend path.
+  await assertWithinDailyBudget(GPT_IMAGE_2_THUMBNAIL_USD);
+
   const res = await fetch(input.sourceImageUrl);
   if (!res.ok) {
     throw new Error(`Couldn't download the base image (${res.status}). Re-upload and try again.`);

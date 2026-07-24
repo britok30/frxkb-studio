@@ -20,6 +20,7 @@ const FORMAT_LABEL: Record<string, string> = {
   reel: "Reel / Short",
   carousel: "Carousel",
   "before-after": "Before / after",
+  "style-explorer": "Style explorer",
 };
 
 export function ProjectCard({
@@ -33,6 +34,10 @@ export function ProjectCard({
     format: string;
     worldType: string;
     status: string;
+    /** Background-stitch lifecycle — surfaces "Stitching…"/"Stitch failed"
+     *  on the card so long renders and failures are visible from the
+     *  dashboard, not just inside the project. */
+    stitchStatus?: string | null;
     targetDurationSec: number | null;
     /** Creator attribution (allowlist email). Null on legacy rows. */
     operatorEmail?: string | null;
@@ -44,6 +49,11 @@ export function ProjectCard({
   index: number;
 }) {
   const initials = operatorInitials(project.operatorEmail);
+  // Stitch lifecycle outranks the base status — a project can read "Ready"
+  // while a 15-minute long-form render is in flight (or has failed).
+  const stitching =
+    project.stitchStatus === "queued" || project.stitchStatus === "rendering";
+  const stitchFailed = project.stitchStatus === "failed";
   return (
     <motion.div
       initial={{ opacity: 0, y: 8 }}
@@ -79,8 +89,15 @@ export function ProjectCard({
           <CardHeader className="pt-4">
             <div className="flex items-center justify-between gap-2">
               <CardTitle className="text-base line-clamp-2">{project.title}</CardTitle>
-              <Badge variant="secondary" className="text-[10px] shrink-0">
-                {STATUS_LABEL[project.status] ?? project.status}
+              <Badge
+                variant={stitchFailed ? "destructive" : "secondary"}
+                className="text-[10px] shrink-0"
+              >
+                {stitchFailed
+                  ? "Stitch failed"
+                  : stitching
+                    ? "Stitching…"
+                    : (STATUS_LABEL[project.status] ?? project.status)}
               </Badge>
             </div>
             <CardDescription className="line-clamp-1">{project.niche}</CardDescription>

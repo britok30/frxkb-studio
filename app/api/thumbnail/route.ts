@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import { generateThumbnail } from "@/lib/thumbnail";
 import { withSessionOperator } from "@/lib/route-helpers";
+import { BudgetExceededError } from "@/lib/spend";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -44,6 +45,9 @@ export async function POST(req: Request): Promise<Response> {
       });
       return NextResponse.json(result);
     } catch (err) {
+      if (err instanceof BudgetExceededError) {
+        return NextResponse.json({ error: err.message }, { status: 402 });
+      }
       const message = err instanceof Error ? err.message : "Unknown error";
       console.error("[api/thumbnail] failed:", err);
       return NextResponse.json({ error: message }, { status: 500 });

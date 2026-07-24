@@ -876,6 +876,12 @@ async function regenerateScene(
     options.designDirection
   );
 
+  // Per-scene regens spend real money too — same daily cap as the batches.
+  // (Upper-bound estimate: a t2i at the project's quality tier.)
+  await assertWithinDailyBudget(
+    estimateImageBatch(1, project.quality === "hero" ? "hero" : "standard")
+  );
+
   await markSceneGenerating(scene.id);
   try {
     // Conditioning order mirrors generateAllImages: the frozen reference

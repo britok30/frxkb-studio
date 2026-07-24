@@ -6,6 +6,8 @@ import { PropertyTypeSchema, WorldTypeSchema } from "@/lib/prompts/types";
 import { storeOperatorUpload } from "@/lib/storage";
 import { withSessionOperator } from "@/lib/route-helpers";
 import { currentOperator } from "@/lib/operators";
+import { assertWithinDailyBudget, BudgetExceededError } from "@/lib/spend";
+import { FAL_NANO_BANANA_PER_IMAGE } from "@/lib/pricing";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -45,6 +47,8 @@ export async function POST(req: Request): Promise<Response> {
   return withSessionOperator(async () => {
     try {
       const { description, worldType, propertyType } = parsed.data;
+      // Base renders (and re-renders) count against the daily cap too.
+      await assertWithinDailyBudget(FAL_NANO_BANANA_PER_IMAGE);
       const prompt = buildBaseImagePrompt(description, worldType, propertyType);
       // Fresh seed each call so "Regenerate base" actually produces a different
       // take rather than re-landing on the same composition.
@@ -75,6 +79,9 @@ export async function POST(req: Request): Promise<Response> {
 
       return NextResponse.json({ url: stored.url, aspectRatio: "16:9" }, { status: 201 });
     } catch (err) {
+      if (err instanceof BudgetExceededError) {
+        return NextResponse.json({ error: err.message }, { status: 402 });
+      }
       const message = err instanceof Error ? err.message : "Unknown error";
       console.error("[api/style-base] failed:", err);
       return NextResponse.json({ error: message }, { status: 500 });

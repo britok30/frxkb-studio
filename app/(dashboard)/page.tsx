@@ -18,6 +18,7 @@ import { ProjectCard } from "./project-card";
 import { FeatureCard } from "./feature-card";
 import { ThumbnailCard } from "./thumbnail-card";
 import { TimeoutToggle } from "./timeout-toggle";
+import { AutoRefresh } from "./projects/[id]/auto-refresh";
 
 export const dynamic = "force-dynamic";
 
@@ -72,8 +73,19 @@ export default async function ProjectsPage() {
     spend = null;
   }
 
+  // Poll while any project has a background job in flight so status badges
+  // (Generating / Finalizing / Stitching…) advance without a manual reload.
+  const anyBusy = projects.some(
+    (p) =>
+      p.status === "generating" ||
+      p.status === "finalizing" ||
+      p.stitchStatus === "queued" ||
+      p.stitchStatus === "rendering"
+  );
+
   return (
     <div className="mx-auto max-w-6xl w-full px-6 pt-16 pb-20 flex flex-col gap-16">
+      <AutoRefresh active={anyBusy} />
       <header className="flex flex-col gap-4 max-w-2xl">
         <span className="text-[10px] uppercase tracking-[0.22em] text-muted-foreground">
           The studio

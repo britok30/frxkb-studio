@@ -3,6 +3,7 @@ import { z } from "zod";
 import { applySceneAction } from "@/lib/projects";
 import { LookIdSchema } from "@/lib/prompts/looks";
 import { requireProjectOwnership, withSessionOperator } from "@/lib/route-helpers";
+import { BudgetExceededError } from "@/lib/spend";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -57,6 +58,9 @@ export async function PATCH(
       });
       return NextResponse.json({ scene });
     } catch (err) {
+      if (err instanceof BudgetExceededError) {
+        return NextResponse.json({ error: err.message }, { status: 402 });
+      }
       const message = err instanceof Error ? err.message : "Unknown error";
       if (/not found/i.test(message)) {
         return NextResponse.json({ error: message }, { status: 404 });
