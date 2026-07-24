@@ -90,19 +90,22 @@ export function defaultsForFormat(format: Format): {
       // differentiator vs the 1-2s maximalist Reels norm.
       return { aspectRatio: "9:16", sceneCount: 3, sceneDurationSec: 5 };
     case "carousel":
-      return { aspectRatio: "1:1", sceneCount: 10, sceneDurationSec: 0 };
+      // 20 slides — Instagram raised the carousel cap from 10 to 20.
+      return { aspectRatio: "1:1", sceneCount: 20, sceneDurationSec: 0 };
     case "before-after":
-      // Stills-only (video retired 2026-07-24): the uploaded "before" + four
-      // AI-proposed "after" concepts. Aspect is overridden per-project from
-      // the uploaded image's actual dimensions (1:1 here is a placeholder;
-      // the real value lives on projects.aspectRatio).
-      return { aspectRatio: "1:1", sceneCount: 5, sceneDurationSec: 0 };
+      // Stills-only (video retired 2026-07-24): the uploaded "before" + nine
+      // AI-proposed "after" concepts (10 images total — a full IG carousel).
+      // Aspect is overridden per-project from the uploaded image's actual
+      // dimensions (1:1 here is a placeholder; the real value lives on
+      // projects.aspectRatio).
+      return { aspectRatio: "1:1", sceneCount: 10, sceneDurationSec: 0 };
     case "style-explorer":
       // N styled edits of one uploaded base, for a YouTube long-form "X styles
       // of this space" video. Like before-after, the real aspect comes from
       // the upload (stored on projects.aspectRatio); 16:9 here is the long-form
       // placeholder. Static stills (durationSec 0) — pacing/music/cards are
-      // done in CapCut. Default 10 styles → a ~10-minute SEO walkthrough.
-      return { aspectRatio: "16:9", sceneCount: 10, sceneDurationSec: 0 };
+      // done in CapCut. Default 15 styles → a longer SEO walkthrough with
+      // more chapter keywords per upload.
+      return { aspectRatio: "16:9", sceneCount: 15, sceneDurationSec: 0 };
   }
 }

@@ -6,7 +6,6 @@ import { sumSpendSince, sumSpendToday } from "@/lib/spend";
 import {
   estimateAnimateBatch,
   estimateProjectTotal,
-  FAL_NANO_BANANA_PER_IMAGE,
   formatCost,
   GPT_IMAGE_2_THUMBNAIL_USD,
 } from "@/lib/pricing";
@@ -90,14 +89,14 @@ export default async function ProjectsPage() {
           <span className="text-xs uppercase tracking-[0.18em] text-muted-foreground">
             Start something
           </span>
-          <span className="text-xs text-muted-foreground tabular-nums">6</span>
+          <span className="text-xs text-muted-foreground tabular-nums">5</span>
         </div>
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
           <FeatureCard
             href="/new?format=reel"
             kicker="Instagram · TikTok · YouTube Shorts"
             title="Reel"
-            hint="3 × 5s, each a fresh text-to-image, animated via Seedance + Topaz 4K, delivered as supersampled 1080p/30. Hero uses full-tier Seedance."
+            hint="3 × 5s clips with crossfades, animated via Seedance + Topaz 4K, delivered as supersampled 1080p/30 with your own music bed. Hero uses full-tier Seedance."
             cost={`~${formatCost(estimateProjectTotal("reel", 3) + estimateAnimateBatch(3, 5))}`}
             aspectClass="aspect-[9/16]"
           />
@@ -105,24 +104,24 @@ export default async function ProjectsPage() {
             href="/new?format=before-after"
             kicker="Instagram · TikTok"
             title="Before / after"
-            hint="Drop a real photo, describe the direction — 4 distinct AI “after” concepts on the same camera. Stills only."
-            cost={`~${formatCost(estimateProjectTotal("before-after", 5))}`}
+            hint="Drop a real photo, describe the direction — 9 distinct AI “after” concepts on the same camera. With the before: a ready-made 10-image carousel."
+            cost={`~${formatCost(estimateProjectTotal("before-after", 10))}`}
             aspectClass="aspect-square"
           />
           <FeatureCard
             href="/new?format=style-explorer"
             kicker="YouTube long-form"
             title="Style explorer"
-            hint="Describe a space, review the rendered base, then GPT-5.6 restyles that exact space into ~10 recognisable styles. SEO metadata + card copy included."
-            cost={`~${formatCost(estimateProjectTotal("style-explorer", 10))}`}
+            hint="Describe a space, review the rendered base, then GPT-5.6 restyles that exact space into ~15 recognisable styles. SEO metadata + chapter copy included."
+            cost={`~${formatCost(estimateProjectTotal("style-explorer", 15))}`}
             aspectClass="aspect-video"
           />
           <FeatureCard
             href="/new?format=carousel"
             kicker="Instagram"
             title="Carousel"
-            hint="10 still slides, no video."
-            cost={`~${formatCost(estimateProjectTotal("carousel", 10))}`}
+            hint="20 still slides on one anchored world — IG's new carousel cap. No video."
+            cost={`~${formatCost(estimateProjectTotal("carousel", 20))}`}
             aspectClass="aspect-square"
           />
           <FeatureCard
@@ -132,15 +131,6 @@ export default async function ProjectsPage() {
             hint="Upload a frame, type the hook text — gpt-image-2 restyles it into a 1280×720 thumbnail."
             cost={`~${formatCost(GPT_IMAGE_2_THUMBNAIL_USD)}`}
             aspectClass="aspect-video"
-          />
-          <FeatureCard
-            href="/scratch"
-            kicker="Free play"
-            title="Scratch image"
-            hint="One-off prompt → single nano-banana-pro image."
-            cost={`~${formatCost(FAL_NANO_BANANA_PER_IMAGE)}`}
-            aspectClass="aspect-square"
-            variant="ghost"
           />
         </div>
       </section>

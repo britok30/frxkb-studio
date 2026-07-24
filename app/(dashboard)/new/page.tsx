@@ -45,24 +45,24 @@ const FORMAT_PRESETS: Record<
   carousel: {
     label: "Carousel",
     kicker: "Instagram",
-    hint: "Static slides built for slow-swipe scroll. No video — one image per slide.",
-    sceneCount: 10,
+    hint: "20 static slides built for slow-swipe scroll (IG's new carousel cap). No video — one image per slide.",
+    sceneCount: 20,
     sceneDurationSec: 0,
     aspectClass: "aspect-square",
   },
   "before-after": {
     label: "Before / after",
     kicker: "Instagram · TikTok",
-    hint: "Drop a real photo, describe the direction — the studio proposes 4 distinct \"after\" concepts as stills. No video.",
-    sceneCount: 5, // before + 4 after concepts
+    hint: "Drop a real photo, describe the direction — the studio proposes 9 distinct \"after\" concepts as stills (10 images, a ready-made carousel). No video.",
+    sceneCount: 10, // before + 9 after concepts
     sceneDurationSec: 0,
     aspectClass: "aspect-square", // overridden by uploaded image's actual aspect
   },
   "style-explorer": {
     label: "Style explorer",
     kicker: "YouTube long-form",
-    hint: "Describe a space, render a base, then GPT-5.6 restyles that exact space into ~10 recognisable design styles. SEO metadata + card copy included.",
-    sceneCount: 10, // number of styles
+    hint: "Describe a space, render a base, then GPT-5.6 restyles that exact space into ~15 recognisable design styles. SEO metadata + card copy included.",
+    sceneCount: 15, // number of styles
     sceneDurationSec: 0, // static stills
     aspectClass: "aspect-video", // 16:9 for YouTube
   },
@@ -381,7 +381,7 @@ export default function NewProjectPage() {
                 }
                 hint={
                   format === "before-after"
-                    ? "Upload a real photo of an interior or exterior. Describe the direction — the studio proposes and renders 4 distinct after concepts on the exact same camera, ready to compare side by side."
+                    ? "Upload a real photo of an interior or exterior. Describe the direction — the studio proposes and renders 9 distinct after concepts on the exact same camera: with the before, a ready-made 10-image carousel."
                     : format === "style-explorer"
                       ? "Pick the program and vantage, describe the space, and render a base image. Review it here — then GPT-5.6 reimagines that exact space in distinct, recognisable design styles."
                       : "Describe a home a designer would screenshot — a place with strong identity, a quality of light, materials and the kind of objects (plants, art, books) that fill it. Or have the studio suggest one."

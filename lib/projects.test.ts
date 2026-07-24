@@ -492,18 +492,17 @@ describe("createBeforeAfterProject", () => {
     });
     // Vision styles call proposes the 4 "after" concepts.
     stylesMocks.generateStyles.mockResolvedValue({
-      styles: [
-        { styleName: "Japandi", styleSubtitle: "Warm minimal", editPrompt: "japandi restyle" },
-        { styleName: "Coastal", styleSubtitle: "Airy + salt-washed", editPrompt: "coastal restyle" },
-        { styleName: "Industrial", styleSubtitle: "Steel + patina", editPrompt: "industrial restyle" },
-        { styleName: "Art Deco", styleSubtitle: "Gloss + geometry", editPrompt: "deco restyle" },
-      ],
+      styles: Array.from({ length: 9 }, (_, i) => ({
+        styleName: `Concept ${i + 1}`,
+        styleSubtitle: `Direction ${i + 1}`,
+        editPrompt: `restyle direction ${i + 1}`,
+      })),
     });
     dbMocks.insertProject.mockImplementation(async (values) => ({ ...values }));
     dbMocks.insertScenes.mockImplementation(async (rows) => rows);
   });
 
-  it("persists the upload as the before scene + creates 4 pending after concepts", async () => {
+  it("persists the upload as the before scene + creates 9 pending after concepts", async () => {
     const out = await createBeforeAfterProject({
       beforeImageUrl: "https://blob.example/upload-abc.jpg",
       transformationPrompt:
@@ -523,7 +522,7 @@ describe("createBeforeAfterProject", () => {
     expect(stylesMocks.generateStyles).toHaveBeenCalledExactlyOnceWith(
       expect.objectContaining({
         baseImageUrl: "https://blob.example/upload-abc.jpg",
-        count: 4,
+        count: 9,
         operatorNotes: expect.stringContaining("Modernize"),
       })
     );
@@ -540,10 +539,10 @@ describe("createBeforeAfterProject", () => {
     // Stills-only: no target duration.
     expect(projectInsert.targetDurationSec).toBeNull();
 
-    // Five scenes: before (pre-generated) + 4 after concepts (pending,
-    // each pinned to the upload, static).
+    // Ten scenes: before (pre-generated) + 9 after concepts (pending,
+    // each pinned to the upload, static) — a full IG carousel.
     const sceneRows = dbMocks.insertScenes.mock.calls[0][0];
-    expect(sceneRows).toHaveLength(5);
+    expect(sceneRows).toHaveLength(10);
 
     const before = sceneRows.find((s: { order: number }) => s.order === 1);
     expect(before).toMatchObject({
@@ -554,7 +553,7 @@ describe("createBeforeAfterProject", () => {
       durationSec: 0,
     });
 
-    for (const order of [2, 3, 4, 5]) {
+    for (const order of [2, 3, 4, 5, 6, 7, 8, 9, 10]) {
       const after = sceneRows.find((s: { order: number }) => s.order === order);
       expect(after).toMatchObject({
         status: "pending",
@@ -567,7 +566,7 @@ describe("createBeforeAfterProject", () => {
     }
 
     expect(out.project.format).toBe("before-after");
-    expect(out.scenes).toHaveLength(5);
+    expect(out.scenes).toHaveLength(10);
   });
 
   it("does NOT call generateScenePrompts (concepts come from the styles call)", async () => {

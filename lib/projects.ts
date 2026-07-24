@@ -270,8 +270,9 @@ export type CreateBeforeAfterInput = {
   worldType: WorldType;
 };
 
-/** How many distinct "after" concepts a before-after explores. */
-const BEFORE_AFTER_CONCEPT_COUNT = 4;
+/** How many distinct "after" concepts a before-after explores — 9, so the
+ *  before + afters land as a full 10-image IG carousel. */
+const BEFORE_AFTER_CONCEPT_COUNT = 9;
 
 export async function createBeforeAfterProject(
   input: CreateBeforeAfterInput
@@ -287,7 +288,7 @@ export async function createBeforeAfterProject(
 
   // Two GPT calls before any DB write (a failure leaves no orphan row):
   //   1. Slim concept — workingTitle/hook/vibe for finalize metadata.
-  //   2. Vision styles call — GPT SEES the upload and proposes 4 distinct
+  //   2. Vision styles call — GPT SEES the upload and proposes 9 distinct
   //      "after" concepts steered by the operator's transformation prompt
   //      (same machinery as style-explorer, smaller fan-out).
   const [concept, stylesResp] = await Promise.all([
@@ -331,7 +332,7 @@ export async function createBeforeAfterProject(
   });
 
   // Scene 1 = the upload itself, persisted as already-generated. No fal call.
-  // Scenes 2..5 = the four "after" concepts — pending, each pinned to the
+  // Scenes 2..10 = the nine "after" concepts — pending, each pinned to the
   // upload via referenceImageUrl so generateAllImages routes them through
   // nano-banana /edit. ARCHITECTURE_LOCK keeps every concept on the exact
   // same camera so the before→after comparison reads honestly.
