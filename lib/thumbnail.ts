@@ -37,6 +37,10 @@ function buildPrompt(text: string, notes?: string): string {
     `Overlay EXACTLY this text and nothing else: "${text}".`,
     "Typography: large, thick, bold sans-serif — instantly readable at small sizes; high contrast against the scene (add a subtle outline or soft drop shadow if the background is busy).",
     "Keep the original scene as the visual base. Punch up color, contrast, and depth for thumbnail pop, but keep it photographic — no cartoon look.",
+    // gpt-image-2's only landscape canvas is 3:2; delivery is a 16:9 center
+    // crop, which removes the top and bottom ~8% each. Without this rule the
+    // model loves parking text at the very top — where the crop decapitates it.
+    "CRITICAL — safe area: this image will be CROPPED to 16:9 by trimming the top and bottom edges. Keep ALL text and every important element fully inside the vertical middle 80% of the canvas; treat the top 10% and bottom 10% as dead zones that will be cut off. Vertically center the composition's weight.",
     "Composition: the text must not cover the focal subject; keep clean margins so nothing important sits at the extreme edges.",
     "No watermarks, no logos, no extra words beyond the given text.",
     notes?.trim() ? `Operator direction: ${notes.trim()}` : "",
