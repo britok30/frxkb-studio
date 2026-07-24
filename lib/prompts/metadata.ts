@@ -549,7 +549,9 @@ export function assembleYouTubeMetadata(opts: {
   perStillSec?: number;
 }): YouTubeMetadata {
   const hashtags = opts.draft.hashtags.map((h) => h.replace(/^#/, ""));
-  const per = opts.perStillSec ?? 7;
+  // MUST match STYLE_EXPLORER_PER_STILL_SEC in lib/projects.ts — chapter
+  // timestamps assume the stitch's default hold.
+  const per = opts.perStillSec ?? 10;
   const stamp = (sec: number) =>
     `${String(Math.floor(sec / 60)).padStart(2, "0")}:${String(sec % 60).padStart(2, "0")}`;
   const chapterLines = [

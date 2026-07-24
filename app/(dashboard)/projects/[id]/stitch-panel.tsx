@@ -90,8 +90,10 @@ export function StitchPanel({
   const [musicDurationSec, setMusicDurationSec] = useState<number | null>(
     initialMusicDurationSec
   );
-  const [perStillSec, setPerStillSec] = useState(7);
-  const [targetMinutes, setTargetMinutes] = useState(10);
+  // Defaults tuned for the 15-style era: 10s holds (16 stills = 160s
+  // cycle) looped to ~15 min — comfortably past the 8-min mid-roll gate.
+  const [perStillSec, setPerStillSec] = useState(10);
+  const [targetMinutes, setTargetMinutes] = useState(15);
   const fileRef = useRef<HTMLInputElement | null>(null);
   const [, startTransition] = useTransition();
   const isSlideshow = format === "style-explorer";
@@ -308,7 +310,7 @@ export function StitchPanel({
                     max={15}
                     value={perStillSec}
                     onChange={(e) =>
-                      setPerStillSec(Math.max(3, Math.min(15, Number(e.target.value) || 7)))
+                      setPerStillSec(Math.max(3, Math.min(15, Number(e.target.value) || 10)))
                     }
                     className="w-16 h-9 rounded-md border bg-transparent px-2 text-sm text-foreground focus:border-foreground outline-none"
                   />
@@ -321,7 +323,7 @@ export function StitchPanel({
                     max={20}
                     value={targetMinutes}
                     onChange={(e) =>
-                      setTargetMinutes(Math.max(1, Math.min(20, Number(e.target.value) || 10)))
+                      setTargetMinutes(Math.max(1, Math.min(20, Number(e.target.value) || 15)))
                     }
                     className="w-16 h-9 rounded-md border bg-transparent px-2 text-sm text-foreground focus:border-foreground outline-none"
                   />

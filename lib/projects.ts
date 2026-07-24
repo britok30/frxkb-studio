@@ -1493,7 +1493,10 @@ export type StitchResult = {
 /** Default hold per still in the style-explorer long-form slideshow. Long
  *  enough to read the room and register the style, short enough that a
  *  10-style video stays in the 1-2 minute band YouTube retention likes. */
-const STYLE_EXPLORER_PER_STILL_SEC = 7;
+// 10s per still since 2026-07-25 (was 7): at 15 styles + base the video
+// needs room to breathe, and longer holds read better for ambient viewing.
+// MUST match the chapter-stamp default in lib/prompts/metadata.ts.
+const STYLE_EXPLORER_PER_STILL_SEC = 10;
 
 /**
  * Stitch a project's assets into ONE ready-to-post video — the CapCut

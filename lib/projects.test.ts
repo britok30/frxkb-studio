@@ -1549,10 +1549,10 @@ describe("stitchFinalVideo — style-explorer slideshow", () => {
     ]);
   });
 
-  it("defaults to 7s per still and clamps out-of-range values", async () => {
+  it("defaults to 10s per still and clamps out-of-range values", async () => {
     styleExplorerReady();
     await stitchFinalVideo("p_1");
-    expect(composeMocks.composeVideo.mock.calls[0][0][0].keyframes[1].timestamp).toBe(7000);
+    expect(composeMocks.composeVideo.mock.calls[0][0][0].keyframes[1].timestamp).toBe(10000);
 
     composeMocks.composeVideo.mockClear();
     styleExplorerReady();
