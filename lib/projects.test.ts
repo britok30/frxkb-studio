@@ -1501,8 +1501,9 @@ describe("stitchFinalVideo", () => {
     ]);
     storageMocks.storeFromUrl.mockResolvedValue({ url: "https://blob/final.mp4", pathname: "x" });
 
-    // 3 stills × 10s = 30s cycle; 2 min target → 4 cycles.
-    await stitchFinalVideo("p_1", { perStillSec: 10, targetMinutes: 2, fullQuality: true });
+    // 3 stills × 10s = 30s cycle; 2 min target → 4 cycles. No flag passed —
+    // full quality IS the default.
+    await stitchFinalVideo("p_1", { perStillSec: 10, targetMinutes: 2 });
 
     // ONE Shotstack render of the FULL 12-still timeline; fal never touches it.
     expect(shotstackMocks.renderShotstack).toHaveBeenCalledOnce();
@@ -1880,12 +1881,15 @@ describe("stitchFinalVideo — Shotstack backend (transitions)", () => {
     ]);
     storageMocks.storeFromUrl.mockResolvedValue({ url: "https://blob/final.mp4", pathname: "x" });
 
-    // 3 stills × 10s = 30s cycle; 10 min target → 20 cycles.
+    // 3 stills × 10s = 30s cycle; 10 min target → 20 cycles. Draft mode:
+    // fullQuality is the server default, so the cheap loop needs explicit
+    // opt-out.
     await stitchFinalVideo("p_1", {
       perStillSec: 10,
       targetMinutes: 10,
       musicUrl: "https://blob/song.mp3",
       musicDurationSec: 40,
+      fullQuality: false,
     });
 
     // Shotstack rendered the CYCLE only — 3 stills, not 60.
