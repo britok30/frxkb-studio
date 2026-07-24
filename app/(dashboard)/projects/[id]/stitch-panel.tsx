@@ -28,6 +28,7 @@ export function StitchPanel({
   aspect,
   hasShotstack = true,
   isOwner = true,
+  canDownload = isOwner,
   stitchStatus = null,
   stitchError = null,
   initialMusicUrl = null,
@@ -41,9 +42,11 @@ export function StitchPanel({
    *  one, stitching uses the fal fallback (hard cuts) and the panel shows
    *  the crossfade opt-in hint. */
   hasShotstack?: boolean;
-  /** Stitching and downloading the final video are owner-only (the stitch
-   *  route enforces this server-side too). Non-owners can still preview. */
+  /** Stitch controls are owner-only (the stitch route enforces this
+   *  server-side too). Non-owners can still preview. */
   isOwner?: boolean;
+  /** Download access — owner plus the admin (read-only oversight). */
+  canDownload?: boolean;
   /** Persisted stitch lifecycle — lets a failed background stitch surface
    *  here on page load, not only in the toast of a live polling session. */
   stitchStatus?: string | null;
@@ -263,7 +266,7 @@ export function StitchPanel({
                 className="w-full rounded-md border bg-muted/40"
                 style={{ aspectRatio: aspect.replace(":", " / ") }}
               />
-              {isOwner && (
+              {canDownload && (
                 <button
                   type="button"
                   onClick={() => void downloadFinal()}
@@ -274,7 +277,7 @@ export function StitchPanel({
                   {downloading ? "Downloading…" : "Download final.mp4"}
                 </button>
               )}
-              {isOwner && previousFinalVideoUrl && previousFinalVideoUrl !== finalVideoUrl && (
+              {canDownload && previousFinalVideoUrl && previousFinalVideoUrl !== finalVideoUrl && (
                 <a
                   href={previousFinalVideoUrl}
                   target="_blank"
@@ -288,7 +291,9 @@ export function StitchPanel({
           )}
           {!isOwner && (
             <p className="text-xs text-muted-foreground tracking-tight">
-              Only the project owner can stitch or download the final video.
+              {canDownload
+                ? "Stitch controls are owner-only — you can preview and download."
+                : "Only the project owner can stitch or download the final video."}
             </p>
           )}
           {isOwner && (

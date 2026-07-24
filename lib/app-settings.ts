@@ -42,3 +42,34 @@ export async function setTimeoutSetting(setting: TimeoutSetting): Promise<void> 
       set: { value: setting, updatedAt: new Date() },
     });
 }
+
+const BUDGETS_KEY = "daily-budgets";
+
+/** Runtime per-operator daily-cap overrides (USD), keyed by email. Absent
+ *  email = the operator's compiled-in default (lib/operators.ts, $50). */
+export async function getDailyBudgetOverrides(): Promise<Record<string, number>> {
+  const rows = await getDb()
+    .select()
+    .from(appSettings)
+    .where(eq(appSettings.key, BUDGETS_KEY))
+    .limit(1);
+  const value = rows[0]?.value;
+  if (!value) return {};
+  const out: Record<string, number> = {};
+  for (const [email, usd] of Object.entries(value)) {
+    if (typeof usd === "number" && usd > 0) out[email] = usd;
+  }
+  return out;
+}
+
+export async function setDailyBudgetOverride(email: string, usd: number): Promise<void> {
+  const current = await getDailyBudgetOverrides();
+  const next = { ...current, [email]: usd };
+  await getDb()
+    .insert(appSettings)
+    .values({ key: BUDGETS_KEY, value: next, updatedAt: new Date() })
+    .onConflictDoUpdate({
+      target: appSettings.key,
+      set: { value: next, updatedAt: new Date() },
+    });
+}

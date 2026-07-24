@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { auth, signOut } from "@/auth";
+import { ADMIN_EMAIL } from "@/lib/app-settings";
 
 export default async function DashboardLayout({ children }: { children: React.ReactNode }) {
   const session = await auth();
@@ -18,15 +19,25 @@ export default async function DashboardLayout({ children }: { children: React.Re
             frxkb&nbsp;<span className="text-muted-foreground font-normal">studio</span>
           </Link>
           {email && (
-            <form action={doSignOut}>
-              <button
-                type="submit"
-                title={email}
-                className="text-xs text-muted-foreground hover:text-foreground tracking-tight transition-colors"
-              >
-                Sign out
-              </button>
-            </form>
+            <div className="flex items-center gap-4">
+              {email === ADMIN_EMAIL && (
+                <Link
+                  href="/admin"
+                  className="text-xs text-muted-foreground hover:text-foreground tracking-tight transition-colors"
+                >
+                  Admin
+                </Link>
+              )}
+              <form action={doSignOut}>
+                <button
+                  type="submit"
+                  title={email}
+                  className="text-xs text-muted-foreground hover:text-foreground tracking-tight transition-colors"
+                >
+                  Sign out
+                </button>
+              </form>
+            </div>
           )}
         </div>
       </header>

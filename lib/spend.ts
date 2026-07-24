@@ -9,6 +9,7 @@ import { and, eq, gte, sql as dsql } from "drizzle-orm";
 import { nanoid } from "nanoid";
 import { getDb, spendEvents, type NewSpendEvent } from "@/lib/db";
 import { currentOperator } from "@/lib/operators";
+import { getDailyBudgetOverrides } from "@/lib/app-settings";
 import { formatCost } from "@/lib/pricing";
 
 export type SpendKind = NewSpendEvent["kind"];
@@ -91,7 +92,15 @@ export class BudgetExceededError extends Error {
  */
 export async function assertWithinDailyBudget(estimateUsd: number): Promise<void> {
   const op = currentOperator();
-  const budget = op.dailyBudgetUsd;
+  // Admin-editable runtime override (app_settings) wins over the compiled-in
+  // default; a settings read failure falls back to the default, not open.
+  let budget = op.dailyBudgetUsd;
+  try {
+    const overrides = await getDailyBudgetOverrides();
+    if (overrides[op.email]) budget = overrides[op.email];
+  } catch {
+    // keep the static default
+  }
   if (!budget || budget <= 0) return;
   let spentToday = 0;
   try {

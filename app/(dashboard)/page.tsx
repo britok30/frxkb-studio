@@ -13,11 +13,10 @@ import {
 } from "@/lib/pricing";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import type { Project } from "@/lib/db";
-import { ADMIN_EMAIL, getTimeoutSetting, type TimeoutSetting } from "@/lib/app-settings";
+import { getDailyBudgetOverrides } from "@/lib/app-settings";
 import { ProjectCard } from "./project-card";
 import { FeatureCard } from "./feature-card";
 import { ThumbnailCard } from "./thumbnail-card";
-import { TimeoutToggle } from "./timeout-toggle";
 import { AutoRefresh } from "./projects/[id]/auto-refresh";
 
 export const dynamic = "force-dynamic";
@@ -25,17 +24,6 @@ export const dynamic = "force-dynamic";
 export default async function ProjectsPage() {
   const session = await auth().catch(() => null);
   const sessionEmail = session?.user?.email ?? null;
-
-  // Kelvin's personal "time-out" toggle — enforcement lives in proxy.ts
-  // (every page + API for the target account); this read only feeds the
-  // admin card below. Soft-fails to null so a settings hiccup never blocks
-  // the dashboard.
-  let timeout: TimeoutSetting | null = null;
-  try {
-    timeout = await getTimeoutSetting();
-  } catch {
-    timeout = null;
-  }
 
   let projects: Array<Project & { coverUrl: string | null }> = [];
   let loadError: string | null = null;
@@ -63,11 +51,16 @@ export default async function ProjectsPage() {
       const monthStart = new Date();
       monthStart.setUTCDate(1);
       monthStart.setUTCHours(0, 0, 0, 0);
-      const [today, month] = await Promise.all([
+      const [today, month, overrides] = await Promise.all([
         sumSpendToday(operator.email),
         sumSpendSince(operator.email, monthStart),
+        getDailyBudgetOverrides().catch(() => ({}) as Record<string, number>),
       ]);
-      spend = { today, month, budget: operator.dailyBudgetUsd ?? null };
+      spend = {
+        today,
+        month,
+        budget: overrides[operator.email] ?? operator.dailyBudgetUsd ?? null,
+      };
     }
   } catch {
     spend = null;
@@ -213,20 +206,6 @@ export default async function ProjectsPage() {
         </section>
       )}
 
-      {/* Admin-only personal settings — rendered for Kelvin's session only. */}
-      {sessionEmail === ADMIN_EMAIL && (
-        <section className="flex flex-col gap-5">
-          <div className="flex items-baseline justify-between gap-4 border-b pb-3">
-            <span className="text-xs uppercase tracking-[0.18em] text-muted-foreground">
-              Personal
-            </span>
-          </div>
-          <TimeoutToggle
-            initialEnabled={timeout?.enabled ?? false}
-            initialMessage={timeout?.message ?? ""}
-          />
-        </section>
-      )}
     </div>
   );
 }

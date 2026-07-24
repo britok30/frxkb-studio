@@ -53,8 +53,8 @@ export function TimeoutToggle({
           <div>
             <CardTitle className="text-base">Time-out</CardTitle>
             <CardDescription>
-              Only you can see this. While on, Fremy&apos;s home shows your message
-              instead of the studio.
+              While on, Fremy is locked out of the whole app — every page
+              shows your message instead.
             </CardDescription>
           </div>
           <button

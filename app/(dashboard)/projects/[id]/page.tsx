@@ -4,6 +4,7 @@ import { auth } from "@/auth";
 import { getOperator } from "@/lib/operators";
 import { getProjectWithScenes } from "@/lib/projects";
 import { recoverStaleGeneratingScenes } from "@/lib/projects-db";
+import { ADMIN_EMAIL } from "@/lib/app-settings";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { ProjectActions } from "./project-actions";
@@ -85,8 +86,11 @@ export default async function ProjectPage({ params }: { params: Promise<{ id: st
   }
   // Export/download/finalize/stitch are owner-only (enforced server-side in
   // the finalize/stitch routes too). Legacy rows with no operatorEmail
-  // predate attribution and stay open to every operator.
+  // predate attribution and stay open to every operator. The admin can
+  // additionally VIEW/DOWNLOAD any project's exports (read-only — mutations
+  // stay owner-gated), one-directional by design.
   const isOwner = !project.operatorEmail || project.operatorEmail === sessionEmail;
+  const canViewExports = isOwner || sessionEmail === ADMIN_EMAIL;
   const concept = project.concept;
   const counts = countByStatus(scenes);
   const exportData = buildExportData(project, scenes);
@@ -259,6 +263,7 @@ export default async function ProjectPage({ params }: { params: Promise<{ id: st
           initialMusicDurationSec={project.lastMusicDurationSec}
           hasShotstack={hasShotstack}
           isOwner={isOwner}
+          canDownload={canViewExports}
           stitchStatus={project.stitchStatus}
           stitchError={project.stitchError}
           aspect={
@@ -269,8 +274,8 @@ export default async function ProjectPage({ params }: { params: Promise<{ id: st
         />
       )}
 
-      {/* Export bundle is owner-only — the zip is the deliverable. */}
-      {exportData && isOwner && <ExportPanel data={exportData} />}
+      {/* Export bundle: owner + admin (read side only). */}
+      {exportData && canViewExports && <ExportPanel data={exportData} />}
 
       <section className="flex flex-col gap-4">
         <div className="flex items-baseline justify-between gap-4 border-b pb-3">
