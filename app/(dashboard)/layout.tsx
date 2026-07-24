@@ -28,7 +28,9 @@ export default async function DashboardLayout({ children }: { children: React.Re
                   Admin
                 </Link>
               )}
-              <form action={doSignOut}>
+              {/* flex on the form so the button's baseline matches the Admin
+                  link — a bare form is display:block and sits a hair low. */}
+              <form action={doSignOut} className="flex items-center">
                 <button
                   type="submit"
                   title={email}
