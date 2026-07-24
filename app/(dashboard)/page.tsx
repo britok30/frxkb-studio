@@ -2,6 +2,8 @@ import Link from "next/link";
 import { auth } from "@/auth";
 import { getOperator } from "@/lib/operators";
 import { listProjectsForDashboard } from "@/lib/projects";
+import { listThumbnails } from "@/lib/thumbnail";
+import type { Thumbnail } from "@/lib/db";
 import { sumSpendSince, sumSpendToday } from "@/lib/spend";
 import {
   estimateAnimateBatch,
@@ -14,6 +16,7 @@ import type { Project } from "@/lib/db";
 import { ADMIN_EMAIL, getTimeoutSetting, type TimeoutSetting } from "@/lib/app-settings";
 import { ProjectCard } from "./project-card";
 import { FeatureCard } from "./feature-card";
+import { ThumbnailCard } from "./thumbnail-card";
 import { TimeoutToggle } from "./timeout-toggle";
 
 export const dynamic = "force-dynamic";
@@ -39,6 +42,15 @@ export default async function ProjectsPage() {
     projects = await listProjectsForDashboard();
   } catch (err) {
     loadError = err instanceof Error ? err.message : "Failed to load projects";
+  }
+
+  // Finished thumbnails from the /thumbnail tool — soft-fails to empty so a
+  // hiccup never blocks the dashboard.
+  let recentThumbnails: Thumbnail[] = [];
+  try {
+    recentThumbnails = await listThumbnails();
+  } catch {
+    recentThumbnails = [];
   }
 
   // Operator spend readout — actuals from the ledger, not estimates. Soft-
@@ -166,6 +178,26 @@ export default async function ProjectsPage() {
           ) : (
             <ProjectsEmptyState />
           )}
+        </section>
+      )}
+
+      {/* Finished YouTube thumbnails — under Projects so past generations
+          stay reachable/downloadable. Hidden entirely until one exists. */}
+      {recentThumbnails.length > 0 && (
+        <section className="flex flex-col gap-5">
+          <div className="flex items-baseline justify-between gap-4 border-b pb-3">
+            <span className="text-xs uppercase tracking-[0.18em] text-muted-foreground">
+              Thumbnails
+            </span>
+            <span className="text-xs text-muted-foreground tabular-nums">
+              {recentThumbnails.length}
+            </span>
+          </div>
+          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+            {recentThumbnails.map((t, i) => (
+              <ThumbnailCard key={t.id} thumbnail={t} index={i} />
+            ))}
+          </div>
         </section>
       )}
 

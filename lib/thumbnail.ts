@@ -6,7 +6,9 @@
 import OpenAI, { toFile } from "openai";
 import sharp from "sharp";
 import { nanoid } from "nanoid";
+import { desc } from "drizzle-orm";
 import { currentOperator } from "@/lib/operators";
+import { getDb, thumbnails, type Thumbnail } from "@/lib/db";
 import { storeBuffer } from "@/lib/storage";
 import { recordSpend } from "@/lib/spend";
 import { GPT_IMAGE_2_THUMBNAIL_USD } from "@/lib/pricing";
@@ -94,5 +96,30 @@ export async function generateThumbnail(input: {
     meta: { tool: "thumbnail", model: "gpt-image-2" },
   });
 
+  // Persist so past thumbnails stay reachable (dashboard lists them under
+  // Projects). Best-effort like the spend ledger — the operator already has
+  // the URL in hand, so a DB hiccup must not fail the generation.
+  try {
+    await getDb().insert(thumbnails).values({
+      id: nanoid(12),
+      operatorEmail: currentOperator().email,
+      url: stored.url,
+      sourceImageUrl: input.sourceImageUrl,
+      text: input.text,
+    });
+  } catch (err) {
+    console.warn("[thumbnail] failed to persist thumbnail row:", err);
+  }
+
   return { url: stored.url };
+}
+
+/** Recent thumbnails, newest first — the studio is a shared workspace, so
+ *  both operators see all of them (same as the project list). */
+export async function listThumbnails(limit = 24): Promise<Thumbnail[]> {
+  return await getDb()
+    .select()
+    .from(thumbnails)
+    .orderBy(desc(thumbnails.createdAt))
+    .limit(limit);
 }

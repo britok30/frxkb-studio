@@ -224,6 +224,25 @@ export const exports_ = pgTable("exports", {
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
+/** Finished YouTube thumbnails from the /thumbnail tool. Standalone (no
+ *  project FK) — the tool takes any uploaded frame. Listed on the dashboard
+ *  under Projects so past thumbnails stay reachable. */
+export const thumbnails = pgTable(
+  "thumbnails",
+  {
+    id: text("id").primaryKey(),
+    operatorEmail: text("operator_email").notNull(),
+    /** Public Blob URL of the finished 1280×720 JPEG. */
+    url: text("url").notNull(),
+    /** The uploaded base image the thumbnail was generated from. */
+    sourceImageUrl: text("source_image_url").notNull(),
+    /** The overlay text that was burned in. */
+    text: text("text").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index("thumbnails_created_idx").on(t.createdAt)]
+);
+
 /** Tiny key/value store for studio-level settings that need a runtime
  *  toggle (no redeploy). One row per setting key, JSONB payload. */
 export const appSettings = pgTable("app_settings", {
@@ -265,3 +284,4 @@ export type SpendEvent = typeof spendEvents.$inferSelect;
 export type NewSpendEvent = typeof spendEvents.$inferInsert;
 export type Asset = typeof assets.$inferSelect;
 export type Export = typeof exports_.$inferSelect;
+export type Thumbnail = typeof thumbnails.$inferSelect;
