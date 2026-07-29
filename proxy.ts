@@ -38,7 +38,9 @@ export const proxy = auth(async (req) => {
       const signInUrl = req.nextUrl.clone();
       signInUrl.pathname = "/signin";
       signInUrl.search = "";
-      signInUrl.searchParams.set("callbackUrl", req.nextUrl.href);
+      // Relative path only — /signin refuses off-origin callbacks, and this
+      // keeps the value valid across preview/prod domains.
+      signInUrl.searchParams.set("callbackUrl", `${path}${req.nextUrl.search}`);
       return NextResponse.redirect(signInUrl);
     }
 

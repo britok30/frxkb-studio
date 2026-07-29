@@ -45,8 +45,14 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
       return session;
     },
     /**
-     * Authorize callback runs on every request through middleware.
-     * Returning a boolean tells next-auth whether the request is allowed.
+     * NOT THE ENFORCEMENT POINT — see proxy.ts.
+     *
+     * next-auth only honors this callback's boolean when `auth` is exported
+     * directly as the middleware. proxy.ts WRAPS it (the time-out feature
+     * needs to run code per request), and in that mode next-auth calls this
+     * but discards a `false` result. It is kept only so the gate still works
+     * if the proxy is ever un-wrapped; the real allowlist check lives in
+     * proxy.ts and must stay there.
      */
     authorized({ auth: a, request: { nextUrl } }) {
       const path = nextUrl.pathname;

@@ -6,6 +6,12 @@ const projectsMocks = vi.hoisted(() => ({
 
 vi.mock("@/lib/projects", () => projectsMocks);
 
+// Stub the operator wrapper so route tests don't pull next-auth into the
+// import graph (same pattern as the other route tests).
+vi.mock("@/lib/route-helpers", () => ({
+  withSessionOperator: (fn: () => Promise<Response>) => fn(),
+}));
+
 import { GET } from "./route";
 
 function ctx(id: string) {
