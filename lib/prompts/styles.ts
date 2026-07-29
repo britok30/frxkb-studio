@@ -1,5 +1,10 @@
 import { z } from "zod";
 import { generateJSON } from "@/lib/llm";
+import {
+  laneKey,
+  MAINSTREAM_CANON,
+  pickStyleLenses,
+} from "./style-catalogue";
 import type { PropertyType, WorldType } from "./types";
 
 // ── Style explorer ───────────────────────────────────────────────────────────
@@ -164,6 +169,24 @@ export function buildStylesUser(input: StyleInput): string {
         : `Operator notes (let these bias the style selection and the light/mood): ${input.operatorNotes.trim()}`
     );
   }
+  // ── Rotating lenses (styles mode) ───────────────────────────────────────
+  // The real anti-recycling mechanism: each project is dealt a different
+  // subset of the catalogue's axes, so consecutive videos are pushed into
+  // structurally different territory instead of relying on the model to
+  // diversify itself (it doesn't — see style-catalogue.ts).
+  if (!isConcepts) {
+    const lenses = pickStyleLenses(laneKey(input.propertyType, input.worldType));
+    const fromLenses = Math.max(1, Math.ceil(input.count * 0.7));
+    lines.push(
+      "",
+      `THIS VIDEO'S EXPLORATION LENSES — at least ${fromLenses} of your ${input.count} picks must come from these axes. The example names are PROMPTS, not a menu: pick from them, or name something else that genuinely belongs to the same axis.`,
+      ...lenses.map(
+        (l) => `  · ${l.name} (${l.hint}) — e.g. ${l.examples.join(", ")}`
+      ),
+      "",
+      `MAINSTREAM CANON CAP — at most 3 of your ${input.count} picks may come from this over-used set, and only where one genuinely suits the space: ${MAINSTREAM_CANON.join(", ")}. A lineup built mostly from those names is the generic answer this brief exists to avoid.`
+    );
+  }
   if (input.recentStyleNames && input.recentStyleNames.length > 0) {
     lines.push(
       "",
@@ -188,29 +211,20 @@ function programBrief(
   worldType: WorldType,
   omitStyleFamilies = false
 ): string {
-  if (omitStyleFamilies) {
-    // Concepts mode: naming the canonical families here is exactly what
-    // produced the same nine textbook styles on every before-after.
-    const space =
-      propertyType === "residential"
-        ? worldType === "interior"
-          ? "a room inside a home"
-          : "a home seen from outside (facade, entry, yard)"
-        : worldType === "interior"
-          ? "a commercial interior — workspace, lobby, retail, restaurant or hospitality space (NOT a home)"
-          : "a commercial exterior — storefront, facade or mixed-use frontage (NOT a home)";
-    return `Program: ${propertyType.toUpperCase()} ${worldType.toUpperCase()} — ${space}. Read the photograph for what the space actually is and design for it.`;
-  }
-  if (propertyType === "residential" && worldType === "interior") {
-    return "Program: RESIDENTIAL INTERIOR — a room inside a home. Style families to draw from (not a fixed menu): Scandinavian, Mid-Century Modern, Japandi, Industrial Loft, Bohemian, Coastal Contemporary, Minimalist, Modern Farmhouse, Art Deco, Mediterranean, Traditional, Contemporary Luxe.";
-  }
-  if (propertyType === "residential" && worldType === "exterior") {
-    return "Program: RESIDENTIAL EXTERIOR — a home seen from outside (facade, entry, yard). Style families to draw from (not a fixed menu): Modern, Mediterranean, Spanish Revival, Mid-Century Modern, Contemporary, Coastal/Tropical, Modern Farmhouse, Colonial, Tudor, Desert Contemporary.";
-  }
-  if (propertyType === "commercial" && worldType === "interior") {
-    return "Program: COMMERCIAL INTERIOR — a workspace, lobby, retail floor, restaurant, café, or hospitality space (NOT a home). Style families to draw from (not a fixed menu): Boutique Hotel, Scandinavian Workspace, Industrial Café, Luxury Retail, Biophilic Office, Art Deco Bar, Minimalist Gallery, Warm Contemporary Office, Speakeasy, Mediterranean Restaurant.";
-  }
-  return "Program: COMMERCIAL EXTERIOR — a storefront, commercial facade, or mixed-use frontage (NOT a home). Style families to draw from (not a fixed menu): Modern Glass, Industrial Brick, Mediterranean Plaza, Contemporary Mixed-Use, Boutique Storefront, Art Deco Facade, Minimalist Concrete, Coastal Hospitality.";
+  // NOTE: this used to end with "Style families to draw from: Scandinavian,
+  // Mid-Century Modern, Japandi, Industrial Loft, …" — a 12-name menu that
+  // became the answer on every residential-interior project. The lenses in
+  // style-catalogue.ts replace it; this line now only states the program.
+  void omitStyleFamilies;
+  const space =
+    propertyType === "residential"
+      ? worldType === "interior"
+        ? "a room inside a home"
+        : "a home seen from outside (facade, entry, yard)"
+      : worldType === "interior"
+        ? "a workspace, lobby, retail floor, restaurant, café or hospitality space (NOT a home)"
+        : "a storefront, commercial facade or mixed-use frontage (NOT a home)";
+  return `Program: ${propertyType.toUpperCase()} ${worldType.toUpperCase()} — ${space}. Read the photograph for what the space actually is and design for it.`;
 }
 
 /** Static parts of the tool schema. The styles array's min/max items are set
