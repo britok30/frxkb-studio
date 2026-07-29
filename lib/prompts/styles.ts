@@ -174,6 +174,22 @@ export function buildStylesUser(input: StyleInput): string {
   // subset of the catalogue's axes, so consecutive videos are pushed into
   // structurally different territory instead of relying on the model to
   // diversify itself (it doesn't — see style-catalogue.ts).
+  if (isConcepts) {
+    // Concepts mode gets rotation too — otherwise the SAME brief twice
+    // ("modernize this kitchen") yields the same nine directions. These are
+    // starting points to spread the options across, NOT labels to reuse:
+    // the brief still governs, and names stay material/palette/feeling-led.
+    const lenses = pickStyleLenses(laneKey(input.propertyType, input.worldType), {
+      axisCount: 3,
+      examplesPerAxis: 6,
+    });
+    lines.push(
+      "",
+      `STARTING POINTS — spread your ${input.count} directions across these territories so no two feel like siblings. Treat them as raw material to ADAPT to the brief, never as style labels to hand back:`,
+      ...lenses.map((l) => `  · ${l.name} (${l.hint}) — e.g. ${l.examples.join(", ")}`),
+      `If the brief rules one of these out, drop it — the brief always wins.`
+    );
+  }
   if (!isConcepts) {
     const lenses = pickStyleLenses(laneKey(input.propertyType, input.worldType));
     const fromLenses = Math.max(1, Math.ceil(input.count * 0.7));
