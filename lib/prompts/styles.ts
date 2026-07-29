@@ -59,9 +59,15 @@ export type StyleInput = {
   /** Style names used in the studio's recent videos (most recent first).
    *  Fed as an avoid-list so consecutive videos don't repeat the lineup. */
   recentStyleNames?: string[];
+  /** "styles" (default) = the YouTube long-form job: a tour of NAMED design
+   *  movements. "concepts" = before-after: distinct design DIRECTIONS for
+   *  one operator brief, which must obey that brief rather than march
+   *  through the textbook canon. */
+  mode?: "styles" | "concepts";
 };
 
-export function buildStylesSystem(): string {
+export function buildStylesSystem(mode: StyleInput["mode"] = "styles"): string {
+  if (mode === "concepts") return buildConceptsSystem();
   return `You are an art director producing a YouTube long-form video that shows ONE real space reimagined in several distinct interior/architectural design styles. The operator describes the space and the studio renders a neutral base image of it; you propose the styles.
 
 You can SEE the base space in this message (a rendered image of the space). Study it first: read its architecture, geometry, camera angle, window and door positions, ceiling, proportions, and the light already in the room.
@@ -96,15 +102,67 @@ For EACH style return three fields:
 Honor the operator's notes (location, tier, any angle) as a bias on style selection and on the light/mood — don't water them down.`;
 }
 
+/**
+ * Before-after mode. Same inviolable camera/architecture lock as the styles
+ * job, but a different brief: the operator has a real space and a real ask,
+ * and wants to SEE several ways it could go. Naming textbook movements here
+ * produced the same nine staples on every project (Art Deco even when the
+ * brief said "nothing too flamboyant") — so this prompt asks for design
+ * directions that answer the brief instead.
+ */
+function buildConceptsSystem(): string {
+  return `You are an interior/architectural designer presenting options to a client. They have sent you a photograph of a REAL space and a brief. You propose several genuinely different directions that space could go — the kind of options a designer pins on a board, each one a real answer to what the client asked for.
+
+You can SEE the space in this message. Study it first: read its architecture, geometry, camera angle, window and door positions, ceiling, proportions, existing materials, and the light already in the room.
+
+**The one inviolable rule: the space's ARCHITECTURE and the CAMERA never change.** Every direction is the SAME photograph of the SAME space, re-dressed. Across all directions these stay identical to the photo:
+- the camera position, angle, height, lens/focal length, framing, and crop
+- the perspective and vanishing point
+- the room's footprint, wall positions, ceiling height, and overall geometry
+- the size and placement of every window, door, and structural opening
+
+What each direction DOES change: furniture, finishes and materials, colour palette, textiles, decor and art, lighting fixtures, surface treatments, and the overall mood and quality of light. The client must instantly recognise their own space — dressed differently.
+
+**What makes a good SET of directions:**
+- THE BRIEF RULES. Every direction must satisfy every constraint the client gave. If they said "nothing too flamboyant", none of your options may be theatrical — not even one "for contrast". If they named a budget, a mood, a must-keep feature, or something to avoid, obey it in all of them. Violating the brief is the single worst failure here.
+- They are options, not a museum tour. Do NOT march through the textbook canon (Mid-Century Modern, Japandi, Industrial Loft, Art Deco, Coastal, Scandinavian, Modern Farmhouse…). A client seeing nine famous style labels knows they got a generic answer. Differentiate by the decisions a designer actually makes: material family, palette temperature and depth, formality, era of the furniture, how much pattern, how the light is handled.
+- They are genuinely distinct from each other — a client should be able to say "that one, not that one". Two warm-minimal variants with different names is a failed set.
+- Every direction suits THIS space's program, proportions and existing light — no option that fights the bones of the room.
+
+**Every direction must be fully furnished, distinctive, and editorial — never dull, never empty:**
+- FULLY dress the space: the right furniture and layout, rugs, textiles, art on the walls, lighting fixtures, plants, ceramics, books, the small styling details that sell it. An exterior gets landscaping, planting, paving, outdoor furniture and lighting. Never a bare, half-empty, or under-decorated room.
+- Name characterful, specific pieces and materials — "burled oak sideboard", "unlacquered brass sconce", "limewash in bone", not "modern furniture".
+- Avoid the generic-AI default: the beige sofa, grey walls, one sad fiddle-leaf fig. Each render should read like an editorial interiors shoot with a point of view.
+
+For EACH direction return three fields:
+- styleName: the on-screen card TITLE. Short (2-4 words), Title Case. Name the DIRECTION, not a movement from the canon — lead with the material, palette or feeling that defines it ("Warm Oak Minimal", "Bone & Brass", "Deep Green Study", "Soft Plaster Calm"). It should read like a designer's board label a client would repeat back.
+- styleSubtitle: the on-screen card SUBTITLE — one short line (4-10 words, max ~120 chars) naming the feeling plus a material or two. Sentence case, no trailing period needed.
+- editPrompt: a single instruction describing ONLY the restyle. It MUST read as a re-dressing of the EXISTING space — start with a restyle verb ("Restyle…", "Re-dress…", "Refinish…"). NEVER write "Create a…", "Design a…", "Build a…" or "A [style] room with…": those read as instructions to generate a NEW space and the model will rebuild it and move the camera. Never describe massing, rooflines, added volumes or new openings. A fixed instruction locking the camera, framing, perspective and architecture is prepended automatically — so DO NOT write about the camera, framing, viewpoint, walls, windows, doors, or layout. Spend every word on the restyle: the materials, the palette, 5-8 specific furniture/decor pieces that fully furnish the space, textiles and rugs, wall art, lighting fixtures, plants/objects, and the quality and mood of the light. Keep it free of people and of any on-screen text, signage, or branding — richly inhabited and lived-in, never staged-showroom-empty.
+
+Honor the client's brief above everything else.`;
+}
+
 export function buildStylesUser(input: StyleInput): string {
-  const programLine = programBrief(input.propertyType, input.worldType);
-  const lines = [
-    `Propose exactly ${input.count} distinct styles for the base space shown above.`,
-    "",
-    programLine,
-  ];
+  const isConcepts = input.mode === "concepts";
+  const programLine = programBrief(input.propertyType, input.worldType, isConcepts);
+  const lines = isConcepts
+    ? [
+        `Propose exactly ${input.count} distinct design directions for the REAL space photographed above.`,
+        "",
+        programLine,
+      ]
+    : [
+        `Propose exactly ${input.count} distinct styles for the base space shown above.`,
+        "",
+        programLine,
+      ];
   if (input.operatorNotes && input.operatorNotes.trim()) {
-    lines.push("", `Operator notes (let these bias the style selection and the light/mood): ${input.operatorNotes.trim()}`);
+    lines.push(
+      "",
+      isConcepts
+        ? `THE BRIEF — this governs every direction you propose. Obey it literally: any constraint here ("nothing too flamboyant", "no pets", "keep the fireplace", a budget, a mood, a target buyer) is a HARD requirement, and a direction that violates it is a failed answer:\n${input.operatorNotes.trim()}`
+        : `Operator notes (let these bias the style selection and the light/mood): ${input.operatorNotes.trim()}`
+    );
   }
   if (input.recentStyleNames && input.recentStyleNames.length > 0) {
     lines.push(
@@ -115,7 +173,9 @@ export function buildStylesUser(input: StyleInput): string {
   }
   lines.push(
     "",
-    `Return ${input.count} styles, each clearly different from the others, each a real searchable design name, each genuinely flattering to the space you can see above.`
+    isConcepts
+      ? `Return ${input.count} directions, each clearly different from the others, each obeying the brief, each genuinely achievable in the real space you can see above.`
+      : `Return ${input.count} styles, each clearly different from the others, each a real searchable design name, each genuinely flattering to the space you can see above.`
   );
   return lines.join("\n");
 }
@@ -123,7 +183,24 @@ export function buildStylesUser(input: StyleInput): string {
 /** One-line brief describing the program (residential/commercial) × vantage
  *  (interior/exterior), with example style families so GPT-5.5 stays in the
  *  right lane. Examples are guidance, NOT a fixed menu. */
-function programBrief(propertyType: PropertyType, worldType: WorldType): string {
+function programBrief(
+  propertyType: PropertyType,
+  worldType: WorldType,
+  omitStyleFamilies = false
+): string {
+  if (omitStyleFamilies) {
+    // Concepts mode: naming the canonical families here is exactly what
+    // produced the same nine textbook styles on every before-after.
+    const space =
+      propertyType === "residential"
+        ? worldType === "interior"
+          ? "a room inside a home"
+          : "a home seen from outside (facade, entry, yard)"
+        : worldType === "interior"
+          ? "a commercial interior — workspace, lobby, retail, restaurant or hospitality space (NOT a home)"
+          : "a commercial exterior — storefront, facade or mixed-use frontage (NOT a home)";
+    return `Program: ${propertyType.toUpperCase()} ${worldType.toUpperCase()} — ${space}. Read the photograph for what the space actually is and design for it.`;
+  }
   if (propertyType === "residential" && worldType === "interior") {
     return "Program: RESIDENTIAL INTERIOR — a room inside a home. Style families to draw from (not a fixed menu): Scandinavian, Mid-Century Modern, Japandi, Industrial Loft, Bohemian, Coastal Contemporary, Minimalist, Modern Farmhouse, Art Deco, Mediterranean, Traditional, Contemporary Luxe.";
   }
@@ -242,7 +319,7 @@ export function buildBaseImagePrompt(
 
 export async function generateStyles(input: StyleInput): Promise<StylesResponse> {
   const raw = await generateJSON<unknown>({
-    system: buildStylesSystem(),
+    system: buildStylesSystem(input.mode),
     user: buildStylesUser(input),
     images: [input.baseImageUrl],
     schema: buildStylesToolSchema(input.count),

@@ -19,6 +19,9 @@ export type ConceptInput = {
    *  materials, palette, and mood of the refs — the same images later
    *  condition every nano-banana /edit call. */
   referenceImageUrls?: string[];
+  /** Titles this studio has already published (most recent first). Fed as an
+   *  avoid-list so the concept voice stops converging on one vocabulary. */
+  recentTitles?: string[];
 };
 
 export function buildConceptSystem(): string {
@@ -54,6 +57,12 @@ Material palette, region, era, and named lineage follow from the emotional ancho
 
 You will return seven fields. **Length matters — these are HARD caps, not soft suggestions:**
 - workingTitle: a short evocative title (3-7 words, max 120 chars) for the operator's reference. Lead with the feeling or the place, not the formula.
+
+**VOICE FRESHNESS — read this before you write a word.** Left alone, every model writing "calm design content" collapses into one vocabulary. This studio's own back-catalogue proves it: across ~40 pieces, "hush" appeared in 14 titles, "quiet" in 5, "dusk" in 5, "rain" in 4; hooks leaned on "light" 16 times, "where" 15, "across" 13. That is a house style nobody chose. Rules:
+- Do NOT use these words in the title at all: hush, hushed, quiet, stillness, dusk, afterglow, rain (unless rain is literally the subject of the piece). Treat them as burned.
+- Do NOT write the title as "[Atmospheric Noun] [preposition] [Place]" — "Hush Above Gramercy", "Rain Hush in Ubud", "Stillness Beyond the Glass". That exact shape is most of the catalogue. Vary the grammar: a concrete noun phrase, a fragment of a sentence, an object, a time, an action, a contradiction.
+- Do not open the hook with "Where…" or lean on "light" and "across" as connective crutches. Name what is actually in the room instead.
+- The title should be unmistakably about THIS place and no other — swap in a different city and it should stop making sense.
 - hook: ONE sentence (max 240 chars) that captures the essence — what makes it screenshot-worthy.
 - vibe: ONE concrete paragraph (max 1500 chars — count yourself, do not overshoot) describing the emotional register, the place, the materials, the light, the atmosphere. Be concrete: name the materials, the time of day, the color cast, the feeling. NOT multiple paragraphs.
 - notes: 3-8 short bullet lines (max ~100 chars each, max 2000 chars total) of visual rules to lock the scene generator onto. Things that must stay consistent across all scenes (e.g. "warm afternoon light, low sun angle in every scene" or "always shoot at human-eye height"). Phrase every rule AFFIRMATIVELY — name what must appear, not what must be absent; these lines flow into image prompts, and an image model renders the words it reads. BE TERSE — these are constraints, not prose.
@@ -79,6 +88,14 @@ export function buildConceptUser(input: ConceptInput): string {
   }
   if (input.operatorNotes && input.operatorNotes.trim()) {
     lines.push(`Operator notes: ${input.operatorNotes.trim()}`);
+  }
+  if (input.recentTitles && input.recentTitles.length > 0) {
+    lines.push(
+      "",
+      `Titles this studio has ALREADY published (most recent first):`,
+      ...input.recentTitles.map((t) => `  · ${t}`),
+      `Your title must not reuse their vocabulary or their grammatical shape. If your first instinct rhymes with anything on that list, throw it out and write a different kind of title.`
+    );
   }
   if (input.referenceImageUrls && input.referenceImageUrls.length > 0) {
     lines.push(
@@ -288,6 +305,9 @@ export type BeforeAfterConceptInput = {
    *  walnut cabinets and terrazzo floor"). Used as the niche-equivalent. */
   transformationPrompt: string;
   worldType: WorldType;
+  /** Recently published titles — same voice avoid-list as the main concept
+   *  writer (see VOICE FRESHNESS in buildConceptSystem). */
+  recentTitles?: string[];
 };
 
 function buildBeforeAfterConceptSystem(): string {
@@ -327,6 +347,13 @@ function buildBeforeAfterConceptUser(input: BeforeAfterConceptInput): string {
     worldLine,
     "",
     "Lean into the operator's intent and anchor it in a specific emotional register and quality of light. If they said 'modernize', go specific (which materials, what era of modern). If they said 'warmer', name the light source and the feeling. Don't water it down.",
+    ...(input.recentTitles && input.recentTitles.length > 0
+      ? [
+          "",
+          "Titles this studio has ALREADY published — do not reuse their vocabulary or their shape:",
+          ...input.recentTitles.map((t) => `  · ${t}`),
+        ]
+      : []),
   ].join("\n");
 }
 

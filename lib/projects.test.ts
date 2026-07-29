@@ -3,6 +3,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 const dbMocks = vi.hoisted(() => ({
   insertProject: vi.fn(),
   selectRecentStyleNames: vi.fn(),
+  selectRecentTitles: vi.fn(),
   insertScenes: vi.fn(),
   listProjectsRows: vi.fn(),
   selectProjectById: vi.fn(),
@@ -193,6 +194,7 @@ beforeEach(() => {
   dbMocks.heartbeatGenerationLock.mockResolvedValue(undefined);
   dbMocks.insertSceneVersion.mockResolvedValue(undefined);
   dbMocks.selectRecentStyleNames.mockResolvedValue([]);
+  dbMocks.selectRecentTitles.mockResolvedValue([]);
   dbMocks.setProjectSceneReferences.mockResolvedValue(undefined);
   dbMocks.markProjectFinalVideo.mockResolvedValue(undefined);
   dbMocks.updateStitchState.mockResolvedValue(undefined);
@@ -252,12 +254,17 @@ describe("createProject", () => {
     // Both GPT-5.5 calls must complete before any DB write — no orphan rows on LLM failure.
     expect(callOrder).toEqual(["concept", "scenes", "insertProject", "insertScenes"]);
 
-    expect(claudeMocks.generateConcept).toHaveBeenCalledWith({
-      niche: "modernist living rooms",
-      format: "reel", worldType: "interior",
-      targetDurationSec: 10,
-      operatorNotes: undefined,
-    });
+    expect(claudeMocks.generateConcept).toHaveBeenCalledWith(
+      expect.objectContaining({
+        niche: "modernist living rooms",
+        format: "reel",
+        worldType: "interior",
+        targetDurationSec: 10,
+        operatorNotes: undefined,
+        // Voice avoid-list rides along (empty in tests).
+        recentTitles: [],
+      })
+    );
     expect(claudeMocks.generateScenePrompts).toHaveBeenCalledWith({
       concept,
       aspectRatio: "9:16",

@@ -114,6 +114,19 @@ export async function selectRecentWorlds(limit = 50): Promise<
     .map((r) => ({ niche: r.niche, worldSignature: r.worldSignature, worldKeywords: r.worldKeywords }));
 }
 
+/** Titles (and their hooks) from recent projects — fed to the concept
+ *  writer as an avoid-list. The world-dedupe already stops repeated
+ *  SUBJECTS; this stops the repeated VOICE (14 of the first ~40 titles
+ *  contained the word "hush"). Most recent first. */
+export async function selectRecentTitles(limit = 25): Promise<string[]> {
+  const rows = await getDb()
+    .select({ title: projects.title })
+    .from(projects)
+    .orderBy(desc(projects.createdAt))
+    .limit(limit);
+  return rows.map((r) => r.title).filter((t): t is string => !!t);
+}
+
 /** Style names used across recent style-explorer / before-after projects —
  *  fed to the styles proposer as an avoid-list so consecutive videos don't
  *  ship the same lineup. Excludes the base/before cards. Most recent first,

@@ -90,6 +90,7 @@ import {
   updateProjectStatus,
   swapScenePreviousVideo,
   selectRecentStyleNames,
+  selectRecentTitles,
 } from "@/lib/projects-db";
 import type { Project, Scene, SceneVersion } from "@/lib/db";
 
@@ -178,6 +179,10 @@ export async function createProject(input: CreateProjectInput): Promise<CreatePr
 
   // Run BOTH GPT-5.5 calls before any DB writes. If either fails we leave no
   // orphan project row to clean up.
+  // Voice avoid-list: what this studio has already titled. The world-dedupe
+  // below stops repeated SUBJECTS; this stops the repeated VOICE. Soft-fails
+  // to empty so freshness never blocks creation.
+  const recentTitles = await selectRecentTitles().catch(() => [] as string[]);
   const concept = await generateConcept({
     niche: input.niche,
     format: input.format,
@@ -185,6 +190,7 @@ export async function createProject(input: CreateProjectInput): Promise<CreatePr
     targetDurationSec: targetDurationSec || undefined,
     operatorNotes: input.operatorNotes,
     referenceImageUrls: referenceImageUrls.length > 0 ? referenceImageUrls : undefined,
+    recentTitles,
   });
 
   // Soft-fail dedupe: if it errors for any reason, skip and create the project
@@ -279,6 +285,10 @@ export type CreateBeforeAfterInput = {
    *  /api/upload). Persisted on the project so downstream calls inherit it. */
   aspectRatio: AspectRatio;
   worldType: WorldType;
+  /** Residential vs commercial. Optional — the /new flow doesn't collect it
+   *  for this format yet, so it defaults to residential (the prior
+   *  hardcoded value). */
+  propertyType?: PropertyType;
 };
 
 /** How many distinct "after" concepts a before-after explores — 9, so the
@@ -302,10 +312,14 @@ export async function createBeforeAfterProject(
   //   2. Vision styles call — GPT SEES the upload and proposes 9 distinct
   //      "after" concepts steered by the operator's transformation prompt
   //      (same machinery as style-explorer, smaller fan-out).
+  // Voice avoid-list: what this studio has already titled. Soft-fails to
+  // empty — freshness must never block creation.
+  const recentTitles = await selectRecentTitles().catch(() => [] as string[]);
   const [concept, stylesResp] = await Promise.all([
     generateBeforeAfterConcept({
       transformationPrompt: input.transformationPrompt,
       worldType: input.worldType,
+      recentTitles,
     }),
     selectRecentStyleNames()
       .catch(() => [] as string[])
@@ -313,10 +327,13 @@ export async function createBeforeAfterProject(
         generateStyles({
           baseImageUrl: input.beforeImageUrl,
           worldType: input.worldType,
-          propertyType: "residential",
+          propertyType: input.propertyType ?? "residential",
           count: BEFORE_AFTER_CONCEPT_COUNT,
+          // The transformation brief GOVERNS these concepts — concepts mode
+          // treats it as hard constraints, not a gentle bias.
           operatorNotes: input.transformationPrompt,
           recentStyleNames,
+          mode: "concepts",
         })
       ),
   ]);
