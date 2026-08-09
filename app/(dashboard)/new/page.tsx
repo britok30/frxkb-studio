@@ -95,8 +95,6 @@ export default function NewProjectPage() {
   // or rejected at submit.
   const initialNiche = searchParams.get("niche") ?? "";
   const initialLookParam = searchParams.get("look");
-  const initialQuality: "standard" | "hero" =
-    searchParams.get("quality") === "hero" ? "hero" : "standard";
   const initialVideoModel: "seedance-2.0" | "seedance-2.5" =
     searchParams.get("videoModel") === "seedance-2.5" ? "seedance-2.5" : "seedance-2.0";
   const initialWorldParam = searchParams.get("world");
@@ -153,7 +151,10 @@ export default function NewProjectPage() {
   const [lookId, setLookId] = useState<string | null>(initialLookParam);
   // Render-quality tier (reel/carousel). standard = 2K stills + 1080p video;
   // hero = 4K stills + full-tier seedance video for YouTube/portfolio use.
-  const [quality, setQuality] = useState<"standard" | "hero">(initialQuality);
+  // Quality tier retired from the wizard 2026-08-09: everything delivers at
+  // 1080p (IG re-compresses; the stitch renders 1080p from supersampled 4K
+  // sources), so hero's 4K stills bought nothing in the shipped video. Every
+  // new project is standard; legacy hero projects still render fine.
   // Seedance generation for the animate step (reel only). 2.0 = proven
   // default; 2.5 = newest model, better motion, ~2× the standard video cost.
   const [videoModel, setVideoModel] = useState<"seedance-2.0" | "seedance-2.5">(
@@ -293,7 +294,6 @@ export default function NewProjectPage() {
           sceneDurationSec,
           operatorNotes: operatorNotes.trim() || undefined,
           lookId: lookId ?? undefined,
-          quality,
           videoModel: format === "reel" ? videoModel : undefined,
           referenceImageUrls: referenceImageUrls.length > 0 ? referenceImageUrls : undefined,
         }),
@@ -467,7 +467,6 @@ export default function NewProjectPage() {
                       value={lookId}
                       onChange={setLookId}
                     />
-                    <QualityToggle value={quality} onChange={setQuality} format={format} />
                     {format === "reel" && (
                       <VideoEngineToggle value={videoModel} onChange={setVideoModel} />
                     )}
@@ -616,15 +615,6 @@ export default function NewProjectPage() {
                     <ReviewRow
                       label="Look"
                       value={getLook(lookId)?.name ?? "GPT-5.6's choice"}
-                      onEdit={() => go(2)}
-                    />
-                    <ReviewRow
-                      label="Quality"
-                      value={
-                        quality === "hero"
-                          ? "Hero — 4K stills, full-tier video"
-                          : "Standard — 2K stills, 1080p video"
-                      }
                       onEdit={() => go(2)}
                     />
                     {format === "reel" && (
@@ -1157,67 +1147,8 @@ function LookPicker({
   );
 }
 
-function QualityToggle({
-  value,
-  onChange,
-  format,
-}: {
-  value: "standard" | "hero";
-  onChange: (q: "standard" | "hero") => void;
-  format: Format;
-}) {
-  const tiers = [
-    {
-      id: "standard" as const,
-      name: "Standard",
-      detail:
-        format === "reel"
-          ? "2K stills · native 1080p video — the Reels delivery ceiling"
-          : "2K stills — crisp on every feed",
-    },
-    {
-      id: "hero" as const,
-      name: "Hero",
-      detail:
-        format === "reel"
-          ? "4K stills · full-tier Seedance video — for YouTube and portfolio cuts"
-          : "4K stills — zoom-proof carousels, ~2× image cost",
-    },
-  ];
-  return (
-    <div className="flex flex-col gap-2">
-      <div className="flex items-baseline justify-between gap-4">
-        <span className="text-[10px] uppercase tracking-[0.22em] text-muted-foreground">
-          Quality
-        </span>
-      </div>
-      <div className="grid grid-cols-2 gap-3">
-        {tiers.map((t) => (
-          <motion.button
-            key={t.id}
-            type="button"
-            onClick={() => onChange(t.id)}
-            whileTap={{ scale: 0.98 }}
-            transition={{ duration: 0.16, ease }}
-            className={`text-left rounded-xl border px-3 py-2.5 flex flex-col gap-0.5 transition-colors ${
-              value === t.id ? "border-foreground bg-foreground/[0.03]" : "hover:border-foreground/30"
-            }`}
-          >
-            <span className="text-xs font-semibold tracking-tight">{t.name}</span>
-            <span className="text-[10px] text-muted-foreground tracking-tight leading-snug">
-              {t.detail}
-            </span>
-          </motion.button>
-        ))}
-      </div>
-    </div>
-  );
-}
-
 /** Seedance generation picker (reel only) — which model animates the stills.
- *  Orthogonal to Quality: quality drives still resolution + 2.0's video tier,
- *  this picks the video model itself. On 2.5 both quality tiers render video
- *  at 720p (its ceiling) and Topaz recovers 4K. */
+ *  (The old Quality tier retired 2026-08-09 — everything ships standard/1080p.) */
 function VideoEngineToggle({
   value,
   onChange,

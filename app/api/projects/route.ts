@@ -24,8 +24,9 @@ const CreateBody = z.object({
   operatorNotes: z.string().max(2000).optional(),
   /** Committed photographic look — an id from lib/prompts/looks.ts. */
   lookId: LookIdSchema.optional(),
-  /** Render-quality tier: standard (2K stills, 1080p video) or hero
-   *  (4K stills, full-tier seedance video). */
+  /** DEPRECATED 2026-08-09: the quality tier was retired from the wizard —
+   *  everything ships standard (the stitch delivers 1080p regardless).
+   *  Still accepted for backwards compat; new clients omit it. */
   quality: z.enum(["standard", "hero"]).optional(),
   /** Seedance generation for the animate step (reels). 2.0 = proven default;
    *  2.5 = better motion, 720p-only, ~2× the standard video cost. */

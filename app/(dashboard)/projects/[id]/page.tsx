@@ -491,14 +491,14 @@ function duplicateHref(project: {
   niche: string;
   worldType: string;
   lookId: string | null;
-  quality: string;
   videoModel: string;
 }): string {
+  // quality intentionally NOT carried: the tier was retired from the wizard
+  // 2026-08-09 — duplicating a legacy hero project creates a standard one.
   const params = new URLSearchParams({
     format: project.format,
     niche: project.niche,
     world: project.worldType,
-    quality: project.quality,
     videoModel: project.videoModel,
   });
   if (project.lookId) params.set("look", project.lookId);
