@@ -114,7 +114,7 @@ export default async function ProjectsPage() {
             href="/new?format=reel"
             kicker="Instagram · TikTok · YouTube Shorts"
             title="Reel"
-            hint="3 × 5s clips with crossfades, animated via Seedance + Topaz 4K, delivered as supersampled 1080p/30 with your own music bed. Hero uses full-tier Seedance."
+            hint="3 × 5s clips with crossfades, animated via Seedance (2.0 or 2.5 — your pick) + Topaz 4K, delivered as supersampled 1080p/30 with your own music bed."
             cost={`~${formatCost(estimateProjectTotal("reel", 3) + estimateAnimateBatch(3, 5))}`}
             aspectClass="aspect-[9/16]"
           />
