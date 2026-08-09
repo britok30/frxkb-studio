@@ -16,7 +16,11 @@ import {
 import { NICHE_POOL, sampleN } from "@/lib/prompts/niche-pool";
 import { uploadImage } from "@/lib/upload-client";
 import { getLook, looksForWorld, type Look } from "@/lib/prompts/looks";
-import { SHOWCASE_REEL_MAX_SHOTS } from "@/lib/prompts/types";
+import {
+  SHOWCASE_REEL_MAX_TOTAL_SEC,
+  SHOWCASE_SHOT_MAX_SEC,
+  SHOWCASE_SHOT_MIN_SEC,
+} from "@/lib/prompts/types";
 
 type Format = "reel" | "carousel" | "before-after" | "style-explorer" | "showcase";
 type WorldType = "interior" | "exterior";
@@ -68,7 +72,7 @@ const FORMAT_PRESETS: Record<
   showcase: {
     label: "Showcase",
     kicker: "Your images · IG · YouTube",
-    hint: "Bring your own photos or renders of one property. GPT names every shot, Seedance animates each into a cinematic clip — your best 3 as a 15s reel, or up to 20 as a chaptered YouTube tour.",
+    hint: "Bring your own photos or renders of one property. GPT names every shot, Seedance animates each into a cinematic clip — a paced reel (up to 90s, you direct each shot's seconds) or a chaptered YouTube tour.",
     sceneCount: 10,
     sceneDurationSec: 5,
     aspectClass: "aspect-[9/16]",
@@ -255,7 +259,9 @@ export default function NewProjectPage() {
         : format === "showcase"
           ? !!worldType &&
             showcaseImageUrls.length >= 2 &&
-            (deliverable !== "reel" || showcaseImageUrls.length <= SHOWCASE_REEL_MAX_SHOTS)
+            (deliverable !== "reel" ||
+              showcaseImageUrls.reduce((n, _, i) => n + (showcaseDurations[i] ?? 5), 0) <=
+                SHOWCASE_REEL_MAX_TOTAL_SEC)
           : !!worldType && niche.trim().length >= 2;
 
   async function submit() {
@@ -1469,12 +1475,13 @@ function ShowcaseStep({
 }) {
   const [uploading, setUploading] = useState(false);
   const inputRef = useRef<HTMLInputElement | null>(null);
-  // Reels are the studio's fixed 15s cut — best 3 shots only. The long-form
-  // takes the full set (chapter per shot).
-  const maxShots = deliverable === "reel" ? SHOWCASE_REEL_MAX_SHOTS : 20;
-  const overCap = urls.length > maxShots;
+  // Reels budget TIME, not shots (researched 2026-08: IG stops recommending
+  // reels >3min to non-followers and favors <90s for discovery). Up to 20
+  // shots either way; a reel's pacing just has to fit the 90s ceiling.
+  const maxShots = 20;
   const isReel = deliverable === "reel";
   const totalSec = urls.reduce((n, _, i) => n + (durations[i] ?? 5), 0);
+  const overBudget = isReel && totalSec > SHOWCASE_REEL_MAX_TOTAL_SEC;
 
   async function upload(files: FileList) {
     const room = maxShots - urls.length;
@@ -1502,27 +1509,17 @@ function ShowcaseStep({
     onDurationsChange(durations.filter((_, k) => k !== i));
   }
 
-  /** Reel pacing: +1s on a shot steals a second from the last other shot
-   *  still above the 3s floor once the 15s budget is spent — "give the hero
-   *  shot 6, another becomes 4". −1s just frees budget (floor 3s). */
+  /** Reel pacing: each shot 3-10s; + stops when the shot hits 10s or the
+   *  90s total budget is spent. − just frees budget (floor 3s). */
   function bump(i: number, delta: 1 | -1) {
     const next = urls.map((_, k) => durations[k] ?? 5);
     if (delta === -1) {
-      if (next[i] <= 3) return;
+      if (next[i] <= SHOWCASE_SHOT_MIN_SEC) return;
       next[i] -= 1;
     } else {
+      if (next[i] >= SHOWCASE_SHOT_MAX_SEC) return;
       const total = next.reduce((n, s) => n + s, 0);
-      if (total >= 15) {
-        let j = -1;
-        for (let k = next.length - 1; k >= 0; k--) {
-          if (k !== i && next[k] > 3) {
-            j = k;
-            break;
-          }
-        }
-        if (j === -1) return;
-        next[j] -= 1;
-      }
+      if (total >= SHOWCASE_REEL_MAX_TOTAL_SEC) return;
       next[i] += 1;
     }
     onDurationsChange(next);
@@ -1532,7 +1529,7 @@ function ShowcaseStep({
     {
       id: "reel" as const,
       name: "Reel",
-      detail: `9:16 · your best ${SHOWCASE_REEL_MAX_SHOTS} shots as 5s animated clips — the 15s cut`,
+      detail: `9:16 · each shot a ${SHOWCASE_SHOT_MIN_SEC}-${SHOWCASE_SHOT_MAX_SEC}s animated clip · up to ${SHOWCASE_REEL_MAX_TOTAL_SEC}s (7-30s reaches best)`,
     },
     {
       id: "long-form" as const,
@@ -1581,12 +1578,11 @@ function ShowcaseStep({
             Upload in play order — shot 1 opens the {deliverable === "reel" ? "reel" : "video"}
           </span>
         </div>
-        {overCap && (
+        {overBudget && (
           <p className="rounded-md border border-amber-500/40 bg-amber-500/5 px-3 py-2 text-xs text-amber-600 dark:text-amber-400 leading-relaxed">
-            A reel caps at {SHOWCASE_REEL_MAX_SHOTS} shots (the 15s cut). Remove{" "}
-            {urls.length - SHOWCASE_REEL_MAX_SHOTS} image
-            {urls.length - SHOWCASE_REEL_MAX_SHOTS === 1 ? "" : "s"} — or switch to the
-            YouTube long-form to keep the full set.
+            {totalSec}s total — reels cap at {SHOWCASE_REEL_MAX_TOTAL_SEC}s (IG stops
+            recommending longer to non-followers). Tighten the pacing, drop shots, or
+            switch to the YouTube long-form for the full set.
           </p>
         )}
         <div className="flex flex-wrap gap-2">
@@ -1606,7 +1602,7 @@ function ShowcaseStep({
                   Remove
                 </button>
               </div>
-              {isReel && !overCap && (
+              {isReel && (
                 <div className="flex items-center justify-center gap-1">
                   <button
                     type="button"
@@ -1654,10 +1650,12 @@ function ShowcaseStep({
             e.target.value = "";
           }}
         />
-        {isReel && urls.length > 0 && !overCap && (
+        {isReel && urls.length > 0 && !overBudget && (
           <span className="text-[11px] text-muted-foreground tracking-tight tabular-nums">
             Pacing: {urls.map((_, i) => `${durations[i] ?? 5}s`).join(" · ")} — {totalSec}s
-            of 15s. Give a hero shot more; no shot goes under 3s.
+            of {SHOWCASE_REEL_MAX_TOTAL_SEC}s max. Give a hero shot more (up to{" "}
+            {SHOWCASE_SHOT_MAX_SEC}s); no shot goes under {SHOWCASE_SHOT_MIN_SEC}s. 7-30s
+            reels reach the most non-followers.
           </span>
         )}
       </div>

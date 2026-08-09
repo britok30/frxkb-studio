@@ -11,7 +11,9 @@ import {
 } from "@/lib/prompts/metadata";
 import {
   defaultsForFormat,
-  SHOWCASE_REEL_MAX_SHOTS,
+  SHOWCASE_REEL_MAX_TOTAL_SEC,
+  SHOWCASE_SHOT_MAX_SEC,
+  SHOWCASE_SHOT_MIN_SEC,
   STYLE_EXPLORER_HOLD_SEC,
   type Format,
   type AspectRatio,
@@ -612,7 +614,7 @@ export type CreateShowcaseInput = {
   videoModel?: "seedance-2.0" | "seedance-2.5";
   /** Reel only: per-shot clip lengths in seconds, parallel to imageUrls —
    *  the operator's pacing (e.g. [6, 4, 5] to let the hero shot breathe).
-   *  Each ≥ 3, total ≤ 15 (the reel cut). Omitted = 5s each. */
+   *  Each 3-10s, total ≤ 90s (the IG discovery ceiling). Omitted = 5s each. */
   shotDurationsSec?: number[];
   /** Steering for the copy pass — location, tier, what to emphasise. */
   operatorNotes?: string;
@@ -631,13 +633,10 @@ export async function createShowcaseProject(
   if (imageUrls.length < 2) {
     throw new Error("Showcase needs at least 2 images.");
   }
-  if (input.deliverable === "reel" && imageUrls.length > SHOWCASE_REEL_MAX_SHOTS) {
-    throw new Error(
-      `A showcase reel caps at ${SHOWCASE_REEL_MAX_SHOTS} shots (${SHOWCASE_REEL_MAX_SHOTS * 5}s — the studio's reel length). Pick your best ${SHOWCASE_REEL_MAX_SHOTS}, or switch to the YouTube long-form for the full set.`
-    );
-  }
-  // Operator pacing (reel only): each shot ≥ 3s, total ≤ 15s. Long-form
-  // ignores it — chapters depend on the uniform hold.
+  // Operator pacing (reel only): each shot 3-10s, total ≤ 90s (the IG
+  // discovery ceiling — see SHOWCASE_REEL_MAX_TOTAL_SEC). Long-form ignores
+  // it — chapters depend on the uniform hold. The default 5s/shot means a
+  // full 20-shot set lands at 100s, so big sets need explicit pacing.
   const shotDurations =
     input.deliverable === "reel" && input.shotDurationsSec
       ? input.shotDurationsSec
@@ -648,12 +647,23 @@ export async function createShowcaseProject(
         `shotDurationsSec has ${shotDurations.length} entries for ${imageUrls.length} images.`
       );
     }
-    if (shotDurations.some((s) => !Number.isInteger(s) || s < 3)) {
-      throw new Error("Every shot needs at least 3 seconds.");
+    if (
+      shotDurations.some(
+        (s) =>
+          !Number.isInteger(s) || s < SHOWCASE_SHOT_MIN_SEC || s > SHOWCASE_SHOT_MAX_SEC
+      )
+    ) {
+      throw new Error(
+        `Every shot needs ${SHOWCASE_SHOT_MIN_SEC}-${SHOWCASE_SHOT_MAX_SEC} seconds.`
+      );
     }
-    const total = shotDurations.reduce((n, s) => n + s, 0);
-    if (total > 15) {
-      throw new Error(`Shot timings total ${total}s — the reel cut caps at 15s.`);
+  }
+  if (input.deliverable === "reel") {
+    const total = (shotDurations ?? imageUrls.map(() => 5)).reduce((n, s) => n + s, 0);
+    if (total > SHOWCASE_REEL_MAX_TOTAL_SEC) {
+      throw new Error(
+        `Shot timings total ${total}s — reels cap at ${SHOWCASE_REEL_MAX_TOTAL_SEC}s (IG stops recommending longer to non-followers). Tighten the pacing or switch to the YouTube long-form.`
+      );
     }
   }
 

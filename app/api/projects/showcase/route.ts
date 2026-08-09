@@ -3,7 +3,9 @@ import { z } from "zod";
 import { createShowcaseProject } from "@/lib/projects";
 import {
   PropertyTypeSchema,
-  SHOWCASE_REEL_MAX_SHOTS,
+  SHOWCASE_REEL_MAX_TOTAL_SEC,
+  SHOWCASE_SHOT_MAX_SEC,
+  SHOWCASE_SHOT_MIN_SEC,
   WorldTypeSchema,
 } from "@/lib/prompts/types";
 import { withSessionOperator } from "@/lib/route-helpers";
@@ -16,8 +18,8 @@ export const maxDuration = 300;
 
 const Body = z
   .object({
-  /** Public Blob URLs from /api/upload, in presentation order. Reels cap
-   *  lower (SHOWCASE_REEL_MAX_SHOTS) — refined below. */
+  /** Public Blob URLs from /api/upload, in presentation order. Reels are
+   *  additionally capped by TOTAL seconds — refined below. */
   imageUrls: z.array(z.string().url()).min(2).max(20),
   /** reel = 9:16 crossfaded clips; long-form = 16:9 chaptered YouTube tour. */
   deliverable: z.enum(["reel", "long-form"]),
@@ -26,26 +28,29 @@ const Body = z
   /** Seedance generation for the animate step. */
   videoModel: z.enum(["seedance-2.0", "seedance-2.5"]).optional(),
   operatorNotes: z.string().max(2000).optional(),
-  /** Reel only: per-shot seconds, parallel to imageUrls. Each ≥ 3, total ≤ 15. */
-  shotDurationsSec: z.array(z.number().int().min(3).max(15)).max(20).optional(),
+  /** Reel only: per-shot seconds, parallel to imageUrls. Each 3-10s. */
+  shotDurationsSec: z
+    .array(z.number().int().min(SHOWCASE_SHOT_MIN_SEC).max(SHOWCASE_SHOT_MAX_SEC))
+    .max(20)
+    .optional(),
   })
   .refine(
     (b) =>
       !b.shotDurationsSec ||
-      (b.deliverable === "reel" &&
-        b.shotDurationsSec.length === b.imageUrls.length &&
-        b.shotDurationsSec.reduce((n, s) => n + s, 0) <= 15),
+      (b.deliverable === "reel" && b.shotDurationsSec.length === b.imageUrls.length),
     {
       path: ["shotDurationsSec"],
-      message:
-        "Shot timings are reel-only, must match the image count, and total at most 15s.",
+      message: "Shot timings are reel-only and must match the image count.",
     }
   )
   .refine(
-    (b) => b.deliverable !== "reel" || b.imageUrls.length <= SHOWCASE_REEL_MAX_SHOTS,
+    (b) =>
+      b.deliverable !== "reel" ||
+      (b.shotDurationsSec ?? b.imageUrls.map(() => 5)).reduce((n, s) => n + s, 0) <=
+        SHOWCASE_REEL_MAX_TOTAL_SEC,
     {
-      path: ["imageUrls"],
-      message: `A showcase reel caps at ${SHOWCASE_REEL_MAX_SHOTS} shots — pick your best ${SHOWCASE_REEL_MAX_SHOTS} or switch to the long-form.`,
+      path: ["shotDurationsSec"],
+      message: `A showcase reel caps at ${SHOWCASE_REEL_MAX_TOTAL_SEC}s total — IG stops recommending longer reels to non-followers. Tighten the pacing or switch to the long-form.`,
     }
   );
 

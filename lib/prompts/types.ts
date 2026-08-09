@@ -78,11 +78,15 @@ export const ScenePromptsResponseSchema = z.object({
 });
 export type ScenePromptsResponse = z.infer<typeof ScenePromptsResponseSchema>;
 
-/** Showcase reel shot cap. 3 × 5s = the 15s reel — the studio's reel length
- *  (AI reels lock at exactly 3 × 5s). More shots than this belong in the
- *  long-form deliverable (up to 20 chapters), not a reel; the cost curve
- *  agrees (~$2.85/clip of Seedance 2.5 + Topaz). */
-export const SHOWCASE_REEL_MAX_SHOTS = 3;
+/** Showcase reel pacing bounds. Researched 2026-08: IG distributes reels up
+ *  to 3 min but the algorithm favors <90s for discovery (7-30s is the reach
+ *  sweet spot); YT Shorts caps at 3 min. So the budget is TIME, not shots:
+ *  total ≤ 90s, each shot 3-10s (10s max also keeps 2.0's 15s clip ceiling
+ *  clear of the +1s crossfade pad). AI reels stay locked at 3 × 5s — that's
+ *  an editorial choice, not a platform cap. */
+export const SHOWCASE_REEL_MAX_TOTAL_SEC = 90;
+export const SHOWCASE_SHOT_MIN_SEC = 3;
+export const SHOWCASE_SHOT_MAX_SEC = 10;
 
 /** Uniform chapter hold for the style-explorer long-form: every still — and,
  *  when the styles are animated, every clip — occupies exactly this many

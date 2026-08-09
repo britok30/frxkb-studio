@@ -699,7 +699,7 @@ describe("createShowcaseProject", () => {
     expect(storageMocks.ensurePngStill).toHaveBeenCalledTimes(3);
   });
 
-  it("reel pacing: per-shot durations land on the scenes (≥3s each, ≤15s total)", async () => {
+  it("reel pacing: per-shot durations land on the scenes (3-10s each)", async () => {
     await createShowcaseProject({
       imageUrls: uploads,
       deliverable: "reel",
@@ -710,7 +710,7 @@ describe("createShowcaseProject", () => {
     expect(rows.map((r: { durationSec: number }) => r.durationSec)).toEqual([6, 4, 5]);
     expect(dbMocks.insertProject.mock.calls[0][0].targetDurationSec).toBe(15);
 
-    // Floor and budget are enforced before any GPT spend.
+    // Per-shot bounds are enforced before any GPT spend.
     showcaseMocks.generateShowcaseCopy.mockClear();
     await expect(
       createShowcaseProject({
@@ -719,39 +719,53 @@ describe("createShowcaseProject", () => {
         worldType: "interior",
         shotDurationsSec: [2, 8, 5],
       })
-    ).rejects.toThrow(/at least 3 seconds/);
+    ).rejects.toThrow(/3-10 seconds/);
     await expect(
       createShowcaseProject({
         imageUrls: uploads,
         deliverable: "reel",
         worldType: "interior",
-        shotDurationsSec: [8, 5, 5],
+        shotDurationsSec: [11, 5, 5],
       })
-    ).rejects.toThrow(/caps at 15s/);
+    ).rejects.toThrow(/3-10 seconds/);
     expect(showcaseMocks.generateShowcaseCopy).not.toHaveBeenCalled();
   });
 
-  it("caps reels at 3 shots (the 15s cut) — long-form takes the full set", async () => {
-    const ten = Array.from({ length: 10 }, (_, i) => `https://blob.example/s${i}.jpg`);
+  it("caps reels by TOTAL time (90s), not shot count — long-form takes the full set", async () => {
+    // 19 shots at the 5s default = 95s > the 90s discovery ceiling.
+    const nineteen = Array.from({ length: 19 }, (_, i) => `https://blob.example/s${i}.jpg`);
     await expect(
-      createShowcaseProject({ imageUrls: ten, deliverable: "reel", worldType: "interior" })
-    ).rejects.toThrow(/caps at 3 shots/);
+      createShowcaseProject({ imageUrls: nineteen, deliverable: "reel", worldType: "interior" })
+    ).rejects.toThrow(/cap at 90s/);
     expect(showcaseMocks.generateShowcaseCopy).not.toHaveBeenCalled();
 
-    // Same set is fine as a long-form.
-    storageMocks.ensurePngStill.mockImplementation(async ({ url }) => url);
-    showcaseMocks.generateShowcaseCopy.mockResolvedValue({
-      workingTitle: "Ten Shot Tour",
-      vibe: "A full walk through the property.",
-      shots: ten.map((_, i) => ({
+    const shotsFor = (n: number) =>
+      Array.from({ length: n }, (_, i) => ({
         index: i + 1,
         name: `Room ${i + 1}`,
         subtitle: `Space ${i + 1}`,
         description: `A generously described view of room number ${i + 1} with visible furniture and light.`,
-      })),
+      }));
+
+    // Same 19 shots fit as a reel when the pacing squeezes under 90s…
+    showcaseMocks.generateShowcaseCopy.mockResolvedValue({
+      workingTitle: "Nineteen Shot Cut",
+      vibe: "A brisk walk through the property.",
+      shots: shotsFor(19),
     });
     await expect(
-      createShowcaseProject({ imageUrls: ten, deliverable: "long-form", worldType: "interior" })
+      createShowcaseProject({
+        imageUrls: nineteen,
+        deliverable: "reel",
+        worldType: "interior",
+        shotDurationsSec: Array.from({ length: 19 }, () => 4), // 76s
+      })
+    ).resolves.toBeTruthy();
+
+    // …and as a long-form with no time cap at all.
+    storageMocks.ensurePngStill.mockImplementation(async ({ url }) => url);
+    await expect(
+      createShowcaseProject({ imageUrls: nineteen, deliverable: "long-form", worldType: "interior" })
     ).resolves.toBeTruthy();
   });
 
