@@ -8,6 +8,7 @@ import { sumSpendSince, sumSpendToday } from "@/lib/spend";
 import {
   estimateAnimateBatch,
   estimateProjectTotal,
+  estimateShowcaseCopy,
   formatCost,
   GPT_IMAGE_2_THUMBNAIL_USD,
 } from "@/lib/pricing";
@@ -106,7 +107,7 @@ export default async function ProjectsPage() {
           <span className="text-xs uppercase tracking-[0.18em] text-muted-foreground">
             Start something
           </span>
-          <span className="text-xs text-muted-foreground tabular-nums">5</span>
+          <span className="text-xs text-muted-foreground tabular-nums">6</span>
         </div>
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
           <FeatureCard
@@ -132,6 +133,14 @@ export default async function ProjectsPage() {
             hint="Describe a space, review the rendered base, then GPT-5.6 restyles that exact space into ~15 recognisable styles. SEO metadata + chapter copy included."
             cost={`~${formatCost(estimateProjectTotal("style-explorer", 15))}`}
             aspectClass="aspect-video"
+          />
+          <FeatureCard
+            href="/new?format=showcase"
+            kicker="Your images · Instagram · YouTube"
+            title="Showcase"
+            hint="Bring your own photos or renders of one property. GPT names every shot, Seedance animates each — a paced reel (you direct each shot's seconds) or a chaptered YouTube tour."
+            cost={`~${formatCost(estimateShowcaseCopy(4))} + animate`}
+            aspectClass="aspect-[9/16]"
           />
           <FeatureCard
             href="/new?format=carousel"
