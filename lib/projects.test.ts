@@ -99,6 +99,13 @@ const dedupeMocks = vi.hoisted(() => ({
 }));
 vi.mock("@/lib/world-dedupe", () => dedupeMocks);
 
+const showcaseMocks = vi.hoisted(() => ({
+  generateShowcaseCopy: vi.fn(),
+}));
+vi.mock("@/lib/prompts/showcase", () => ({
+  generateShowcaseCopy: showcaseMocks.generateShowcaseCopy,
+}));
+
 const composeMocks = vi.hoisted(() => ({
   composeVideo: vi.fn(),
 }));
@@ -128,6 +135,7 @@ import {
   applySceneAction,
   createBeforeAfterProject,
   createProject,
+  createShowcaseProject,
   finalizeProject,
   generateAllImages,
   getProjectWithScenes,
@@ -614,6 +622,128 @@ describe("createBeforeAfterProject", () => {
     // No DB writes happen on rejection.
     expect(dbMocks.insertProject).not.toHaveBeenCalled();
     expect(dbMocks.insertScenes).not.toHaveBeenCalled();
+  });
+});
+
+describe("createShowcaseProject", () => {
+  const uploads = [
+    "https://blob.example/shot-1.jpg",
+    "https://blob.example/shot-2.jpg",
+    "https://blob.example/shot-3.jpg",
+  ];
+
+  beforeEach(() => {
+    showcaseMocks.generateShowcaseCopy.mockReset();
+    showcaseMocks.generateShowcaseCopy.mockResolvedValue({
+      workingTitle: "Coral Gables Courtyard House",
+      vibe: "Sun-washed stucco and deep shade around a central courtyard.",
+      shots: [
+        { index: 1, name: "Courtyard Entry", subtitle: "The arrival moment", description: "A stucco archway frames a shaded courtyard with a small fountain and climbing bougainvillea catching afternoon light." },
+        { index: 2, name: "Living Room", subtitle: "Double-height calm", description: "A double-height living room with linen sofas, a limestone fireplace, and tall windows onto the courtyard greenery." },
+        { index: 3, name: "Pool Terrace", subtitle: "The closer", description: "A rectangular pool reflects the house facade at dusk, loungers under a mature ficus, warm lights glowing inside." },
+      ],
+    });
+    dbMocks.insertProject.mockImplementation(async (values) => ({ ...values }));
+    dbMocks.insertScenes.mockImplementation(async (rows) => rows);
+  });
+
+  it("reel: format reel, 9:16, 5s pre-generated scenes from the uploads (no PNG conversion)", async () => {
+    const out = await createShowcaseProject({
+      imageUrls: uploads,
+      deliverable: "reel",
+      worldType: "exterior",
+      videoModel: "seedance-2.5",
+    });
+
+    expect(showcaseMocks.generateShowcaseCopy).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({ imageUrls: uploads, deliverable: "reel", worldType: "exterior" })
+    );
+    const projectInsert = dbMocks.insertProject.mock.calls[0][0];
+    expect(projectInsert.format).toBe("reel");
+    expect(projectInsert.aspectRatio).toBe("9:16");
+    expect(projectInsert.uploadSourced).toBe(true);
+    expect(projectInsert.videoModel).toBe("seedance-2.5");
+    expect(projectInsert.status).toBe("ready");
+
+    const rows = dbMocks.insertScenes.mock.calls[0][0];
+    expect(rows).toHaveLength(3);
+    expect(rows[0]).toMatchObject({
+      order: 1,
+      imageUrl: uploads[0],
+      status: "generated",
+      durationSec: 5,
+      styleName: "Courtyard Entry",
+    });
+    // Uploads pass through untouched for reels — no fal image track ever
+    // sees them (the stitch consumes clips only).
+    expect(storageMocks.ensurePngStill).not.toHaveBeenCalled();
+    expect(out.scenes).toHaveLength(3);
+  });
+
+  it("long-form: format style-explorer, 16:9, 0s scenes, every upload normalized to PNG", async () => {
+    storageMocks.ensurePngStill.mockImplementation(async ({ url }) => `${url}.png`);
+
+    await createShowcaseProject({
+      imageUrls: uploads,
+      deliverable: "long-form",
+      worldType: "interior",
+    });
+
+    const projectInsert = dbMocks.insertProject.mock.calls[0][0];
+    expect(projectInsert.format).toBe("style-explorer");
+    expect(projectInsert.aspectRatio).toBe("16:9");
+    expect(projectInsert.uploadSourced).toBe(true);
+
+    const rows = dbMocks.insertScenes.mock.calls[0][0];
+    expect(rows[1]).toMatchObject({ durationSec: 0, imageUrl: `${uploads[1]}.png` });
+    expect(storageMocks.ensurePngStill).toHaveBeenCalledTimes(3);
+  });
+
+  it("refuses fewer than 2 images before any GPT spend", async () => {
+    await expect(
+      createShowcaseProject({
+        imageUrls: [uploads[0]],
+        deliverable: "reel",
+        worldType: "interior",
+      })
+    ).rejects.toThrow(/at least 2/);
+    expect(showcaseMocks.generateShowcaseCopy).not.toHaveBeenCalled();
+  });
+});
+
+describe("upload-sourced regeneration guards", () => {
+  it("generateAllImages hard-refuses a showcase project", async () => {
+    dbMocks.selectProjectById.mockResolvedValue({
+      id: "p_1",
+      format: "reel",
+      worldType: "exterior",
+      status: "ready",
+      uploadSourced: true,
+    });
+
+    await expect(generateAllImages("p_1")).rejects.toThrow(/uploaded images/);
+    expect(falMocks.generateImage).not.toHaveBeenCalled();
+    expect(falMocks.editImage).not.toHaveBeenCalled();
+  });
+
+  it("per-scene regenerate hard-refuses on a showcase project", async () => {
+    dbMocks.selectSceneById.mockResolvedValue({
+      ...fakeScene({ id: "s_1", order: 1, status: "generated" }),
+      imageUrl: "https://blob/upload.jpg",
+    });
+    dbMocks.selectProjectById.mockResolvedValue({
+      id: "p_1",
+      format: "reel",
+      worldType: "exterior",
+      status: "ready",
+      uploadSourced: true,
+    });
+
+    await expect(applySceneAction("p_1", "s_1", "regenerate")).rejects.toThrow(
+      /can't be regenerated/
+    );
+    expect(falMocks.generateImage).not.toHaveBeenCalled();
+    expect(falMocks.editImage).not.toHaveBeenCalled();
   });
 });
 

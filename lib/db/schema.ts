@@ -1,4 +1,4 @@
-import { pgTable, text, integer, real, timestamp, jsonb, index } from "drizzle-orm/pg-core";
+import { pgTable, text, integer, real, timestamp, jsonb, index, boolean } from "drizzle-orm/pg-core";
 import { relations } from "drizzle-orm";
 import type { Metadata } from "@/lib/prompts/metadata";
 
@@ -65,6 +65,11 @@ export const projects = pgTable(
     videoModel: text("video_model", { enum: ["seedance-2.0", "seedance-2.5"] })
       .notNull()
       .default("seedance-2.0"),
+    /** Showcase projects: the scenes' stills are the OPERATOR'S OWN uploads
+     *  (client photos / renders), not AI generations. Regeneration paths are
+     *  hard-blocked — a regen would overwrite the client's photo with an AI
+     *  render of its description. */
+    uploadSourced: boolean("upload_sourced").notNull().default(false),
     targetDurationSec: integer("target_duration_sec"),
     concept: jsonb("concept").$type<{
       workingTitle: string;

@@ -49,6 +49,9 @@ export type SceneCardProps = {
    *  that scene's video, and re-running Animate only re-renders scenes
    *  without a videoUrl. */
   hideActions?: boolean;
+  /** False for showcase projects — the scene is the operator's own upload,
+   *  so regeneration is blocked (server-side too). */
+  allowRegen?: boolean;
   /** The project's visual lane. Filters which look chips the regen dialog
    *  offers; when omitted the look row is hidden entirely. */
   worldType?: "interior" | "exterior";
@@ -84,6 +87,7 @@ export function SceneCard({
   scene,
   format,
   hideActions = false,
+  allowRegen = true,
   worldType,
   focused = false,
 }: SceneCardProps) {
@@ -241,12 +245,14 @@ export function SceneCard({
                 onClick={() => run("approve")}
               />
             )}
-            <ActionButton
-              label="Regenerate"
-              icon={<RotateCw className={`size-3.5 ${busy === "regenerate" ? "animate-spin" : ""}`} />}
-              disabled={!!busy || isGenerating}
-              onClick={() => setRegenDialogOpen(true)}
-            />
+            {allowRegen && (
+              <ActionButton
+                label="Regenerate"
+                icon={<RotateCw className={`size-3.5 ${busy === "regenerate" ? "animate-spin" : ""}`} />}
+                disabled={!!busy || isGenerating}
+                onClick={() => setRegenDialogOpen(true)}
+              />
+            )}
             {hasImage && (
               <ActionButton
                 label="History"
@@ -279,9 +285,10 @@ export function SceneCard({
           {scene.styleSubtitle && (
             <p className="text-xs text-muted-foreground tracking-tight">{scene.styleSubtitle}</p>
           )}
-          {/* Camera-move lock (reels, pre-animate): the Higgsfield pattern —
-              pick the move by name instead of trusting GPT's roulette. */}
-          {format === "reel" && !hideActions && (
+          {/* Camera-move lock (animatable formats, pre-animate): the
+              Higgsfield pattern — pick the move by name instead of trusting
+              GPT's roulette. Style-explorer joined when its Animate shipped. */}
+          {(format === "reel" || format === "style-explorer") && !hideActions && (
             <label className="flex items-center gap-2 pt-1 text-[11px] text-muted-foreground tracking-tight">
               Camera
               <select

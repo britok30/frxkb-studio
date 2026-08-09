@@ -397,10 +397,18 @@ export type YouTubeMetadataInput = {
   propertyType: PropertyType;
   /** Ordered style names featured in the video (excludes the "Original" intro). */
   styleNames: string[];
+  /** What the video IS. "styles" (default) = one space reimagined in N
+   *  design styles (style-explorer). "tour" = a cinematic chapter-per-room
+   *  tour of ONE real property (showcase — the operator's own images). */
+  mode?: "styles" | "tour";
 };
 
-function buildYouTubeSystem(): string {
-  return `You write YouTube metadata for a long-form video that takes ONE real space and reimagines it in several named interior/architectural design styles — a "styles of this space" walkthrough. The video is a visual montage; you are NOT writing a voiceover.
+function buildYouTubeSystem(mode: "styles" | "tour" = "styles"): string {
+  const premise =
+    mode === "tour"
+      ? `You write YouTube metadata for a long-form cinematic tour of ONE real property — chapter by chapter through its rooms and vantages (the chapter names are the actual spaces). The video is a visual montage; you are NOT writing a voiceover. Where the rules below mention "styles", read them as the tour's chapters/spaces: the payoff is seeing the WHOLE property, space by space.`
+      : `You write YouTube metadata for a long-form video that takes ONE real space and reimagines it in several named interior/architectural design styles — a "styles of this space" walkthrough. The video is a visual montage; you are NOT writing a voiceover.`;
+  return `${premise}
 
 Optimise for YouTube search AND click-through. Follow every rule below — these reflect current YouTube SEO best practice.
 
@@ -436,10 +444,14 @@ HASHTAGS:
 function buildYouTubeUser(input: YouTubeMetadataInput): string {
   const space = `${input.propertyType} ${input.worldType}`;
   const lines = [
-    `The video takes ONE specific space and reimagines it in ${input.styleNames.length} distinct interior/architectural design styles — the same space, restyled each time.`,
+    input.mode === "tour"
+      ? `The video tours ONE real property across ${input.styleNames.length + 1} chapters — each chapter a room or vantage of the same property.`
+      : `The video takes ONE specific space and reimagines it in ${input.styleNames.length} distinct interior/architectural design styles — the same space, restyled each time.`,
     `THE SPACE — ground the title, thumbnail, and description in THIS, the operator's own words. Name the actual room/space type when it's clear (living room, kitchen, bedroom, facade, lobby…); do NOT default to a generic "${space}":`,
     `"${input.spaceDescription.trim()}"`,
-    `Styles featured, in order: ${input.styleNames.join(", ")}.`,
+    input.mode === "tour"
+      ? `Chapters, in order: ${input.styleNames.join(", ")}.`
+      : `Styles featured, in order: ${input.styleNames.join(", ")}.`,
   ];
   if (input.notes && input.notes.trim()) {
     lines.push(
@@ -523,7 +535,7 @@ function coerceYouTubeDraft(raw: unknown): unknown {
 
 export async function generateYouTubeMetadata(input: YouTubeMetadataInput): Promise<YouTubeDraft> {
   const raw = await generateJSON<unknown>({
-    system: buildYouTubeSystem(),
+    system: buildYouTubeSystem(input.mode ?? "styles"),
     user: buildYouTubeUser(input),
     schema: YOUTUBE_TOOL_SCHEMA as unknown as Record<string, unknown>,
     toolName: "submit_youtube_metadata",
@@ -550,6 +562,10 @@ export function assembleYouTubeMetadata(opts: {
   /** Seconds each still holds in the stitched long-form. Defaults to the
    *  stitch default (7s). */
   perStillSec?: number;
+  /** Chapter label for the 00:00 scene. Style-explorer's scene 1 is the
+   *  "Original" base → default "Intro"; showcase's scene 1 is a real shot
+   *  and passes its own name. */
+  introLabel?: string;
 }): YouTubeMetadata {
   const hashtags = opts.draft.hashtags.map((h) => h.replace(/^#/, ""));
   // MUST match STYLE_EXPLORER_PER_STILL_SEC in lib/projects.ts — chapter
@@ -558,7 +574,7 @@ export function assembleYouTubeMetadata(opts: {
   const stamp = (sec: number) =>
     `${String(Math.floor(sec / 60)).padStart(2, "0")}:${String(sec % 60).padStart(2, "0")}`;
   const chapterLines = [
-    "00:00 Intro",
+    `00:00 ${opts.introLabel ?? "Intro"}`,
     ...opts.styleNames.map((s, i) => `${stamp((i + 1) * per)} ${s}`),
   ].join("\n");
   const cta = [

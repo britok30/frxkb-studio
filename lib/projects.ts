@@ -18,6 +18,7 @@ import {
   type WorldType,
 } from "@/lib/prompts/types";
 import { editImage, generateImage, type Resolution } from "@/lib/fal";
+import { generateShowcaseCopy } from "@/lib/prompts/showcase";
 import { composeVideo, type ComposeKeyframe, type ComposeTrack } from "@/lib/compose";
 import {
   isShotstackConfigured,
@@ -46,6 +47,7 @@ import {
   estimateImageBatch,
   estimateMetadataGen,
   estimateSceneGen,
+  estimateShowcaseCopy,
   estimateStylesGen,
   estimateTopazUpscale,
   FAL_COMPOSE_PER_SECOND,
@@ -586,6 +588,127 @@ export async function createStyleExplorerProject(
   return { project, scenes: insertedScenes };
 }
 
+// ── Showcase: the operator's OWN images → reel or long-form ────────────────
+//
+// No image generation at all: the uploads ARE the stills. One GPT vision
+// pass names + describes every shot (names → YouTube chapters / card copy,
+// descriptions → the prompts that later drive motion generation), then the
+// scenes insert pre-"generated" and the project drops straight into the
+// existing Animate → Stitch → Finalize flow of its target format:
+//   reel      → format "reel"           (9:16, 5s clips, crossfade stitch)
+//   long-form → format "style-explorer" (16:9, chapter holds, loop + music)
+// uploadSourced=true hard-blocks every regeneration path — a regen would
+// overwrite the client's photo with an AI render of its description.
+
+export type CreateShowcaseInput = {
+  /** Public Blob URLs from /api/upload, in presentation order (2–20). */
+  imageUrls: string[];
+  deliverable: "reel" | "long-form";
+  worldType: WorldType;
+  /** Long-form metadata grounding; defaults to residential. */
+  propertyType?: PropertyType;
+  /** Seedance generation for the animate step. */
+  videoModel?: "seedance-2.0" | "seedance-2.5";
+  /** Steering for the copy pass — location, tier, what to emphasise. */
+  operatorNotes?: string;
+};
+
+export async function createShowcaseProject(
+  input: CreateShowcaseInput
+): Promise<ProjectWithScenes> {
+  const op = currentOperator();
+  if (!op.worldTypes.includes(input.worldType)) {
+    throw new Error(
+      `Operator ${op.email} doesn't cover ${input.worldType} content. Allowed: ${op.worldTypes.join(", ")}.`
+    );
+  }
+  const imageUrls = input.imageUrls.slice(0, 20);
+  if (imageUrls.length < 2) {
+    throw new Error("Showcase needs at least 2 images.");
+  }
+
+  const projectId = nanoid(12);
+  const isReel = input.deliverable === "reel";
+  const format: Format = isReel ? "reel" : "style-explorer";
+  const aspectRatio: AspectRatio = isReel ? "9:16" : "16:9";
+
+  // Vision pass BEFORE any DB write — a failure leaves no orphan row.
+  const copy = await generateShowcaseCopy({
+    imageUrls,
+    worldType: input.worldType,
+    deliverable: input.deliverable,
+    operatorNotes: input.operatorNotes,
+  });
+
+  // Long-form slideshows can hit fal's image track on the stitch fallback,
+  // which silently corrupts on mixed JPEG/PNG inputs (see ensurePngStill) —
+  // normalize every upload. Reels never stitch stills (clips only), and
+  // seedance takes JPEG fine, so they keep the original uploads.
+  const stills = isReel
+    ? imageUrls
+    : await Promise.all(
+        imageUrls.map((url, i) =>
+          ensurePngStill({
+            url,
+            projectId,
+            filename: `shot-${String(i + 1).padStart(2, "0")}.png`,
+          })
+        )
+      );
+
+  const project = await insertProject({
+    id: projectId,
+    title: copy.workingTitle,
+    niche: input.operatorNotes?.trim() || copy.workingTitle,
+    format,
+    worldType: input.worldType,
+    propertyType: input.propertyType ?? "residential",
+    aspectRatio,
+    // Stills already exist — the project is born ready to Animate.
+    status: "ready",
+    operatorEmail: op.email,
+    videoModel: input.videoModel ?? "seedance-2.0",
+    uploadSourced: true,
+    targetDurationSec: isReel ? imageUrls.length * 5 : null,
+    concept: {
+      workingTitle: copy.workingTitle,
+      hook: `${imageUrls.length} shots of one real ${input.worldType === "interior" ? "interior" : "property"}, presented as a cinematic ${isReel ? "reel" : "tour"}.`,
+      vibe: copy.vibe,
+      notes: input.operatorNotes?.trim() ?? "",
+      objectSet: [],
+    },
+    // No dedupe — every property is unique.
+    worldSignature: null,
+    worldKeywords: null,
+  });
+
+  const insertedScenes = await insertScenes(
+    copy.shots.map((shot, i) => ({
+      id: nanoid(12),
+      projectId,
+      order: i + 1,
+      // The description is what the motion-prompt call reads — it must
+      // describe THIS image so seedance animates what's actually in frame.
+      prompt: shot.description,
+      styleName: shot.name,
+      styleSubtitle: shot.subtitle,
+      durationSec: isReel ? 5 : 0,
+      status: "generated" as const,
+      imageUrl: stills[i],
+      referenceImageUrl: null,
+    }))
+  );
+
+  await recordSpend({
+    projectId,
+    kind: "llm",
+    amountUsd: estimateShowcaseCopy(imageUrls.length),
+    meta: { stage: "showcase-copy", shots: imageUrls.length },
+  });
+
+  return { project, scenes: insertedScenes };
+}
+
 export async function listProjects(): Promise<Project[]> {
   return await listProjectsRows();
 }
@@ -620,6 +743,13 @@ export async function generateAllImages(
 ): Promise<GenerateAllImagesResult> {
   const project = await selectProjectById(projectId);
   if (!project) throw new Error(`Project ${projectId} not found`);
+  // Showcase projects: the stills ARE the operator's uploads — generating
+  // would overwrite a client's photo with an AI render of its description.
+  if (project.uploadSourced) {
+    throw new Error(
+      "This showcase uses your uploaded images — there is nothing to generate. Animate or stitch instead."
+    );
+  }
 
   // Project-level aspectRatio (set by before-after from the upload's actual
   // dimensions) wins over the format default. Lets per-call opts override
@@ -847,9 +977,16 @@ export async function applySceneAction(
     case "reject":
       await markSceneRejected(sceneId);
       break;
-    case "regenerate":
+    case "regenerate": {
+      // Showcase scenes are the operator's own uploads — regenerating would
+      // replace a client's photo with an AI render of its description.
+      const project = await selectProjectById(projectId);
+      if (project?.uploadSourced) {
+        throw new Error("This scene is your uploaded image — it can't be regenerated.");
+      }
       await regenerateScene(projectId, scene, options);
       break;
+    }
     case "set-motion": {
       const preset = options.motionPreset ?? null;
       if (preset && !getCameraMove(preset)) {
@@ -2115,11 +2252,15 @@ async function finalizeStyleExplorer(project: Project, scenes: Scene[]): Promise
   if (!acquired) throw new ProjectBusyError(project.id, "finalizing");
 
   try {
-    // Styles in running order, excluding the uploaded "Original" intro scene —
-    // these become the chapter list and feed the title/description.
-    const styleNames = scenes
-      .filter((s) => !!s.styleName && s.styleName !== "Original")
-      .sort((a, b) => a.order - b.order)
+    // Chapters mirror the stitched timeline: scene 1 plays at 00:00 (its
+    // chapter label below), every later scene at k × hold. Style-explorer's
+    // scene 1 is the "Original" base → labeled "Intro"; showcase's scene 1
+    // is a real shot → its own name.
+    const ordered = [...scenes].sort((a, b) => a.order - b.order);
+    const firstName = ordered[0]?.styleName;
+    const styleNames = ordered
+      .slice(1)
+      .filter((s) => !!s.styleName)
       .map((s) => s.styleName as string);
 
     const op = currentOperator();
@@ -2132,11 +2273,15 @@ async function finalizeStyleExplorer(project: Project, scenes: Scene[]): Promise
       worldType: project.worldType,
       propertyType: project.propertyType,
       styleNames,
+      // Showcase long-forms are property TOURS (the operator's own images,
+      // chapter per room) — not style walkthroughs.
+      mode: project.uploadSourced ? "tour" : "styles",
     });
 
     const metadata = assembleYouTubeMetadata({
       draft,
       styleNames,
+      introLabel: firstName && firstName !== "Original" ? firstName : undefined,
       appName: op.apps[0]?.name ?? "our app",
       instagram: op.socials.instagram,
       website: op.socials.website,

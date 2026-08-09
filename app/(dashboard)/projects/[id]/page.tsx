@@ -165,7 +165,8 @@ export default async function ProjectPage({ params }: { params: Promise<{ id: st
             )}
             <span aria-hidden>·</span>
             <Badge variant="secondary" className="text-[10px]">{project.status}</Badge>
-            {(project.format === "reel" || project.format === "carousel") && (
+            {(project.format === "reel" || project.format === "carousel") &&
+              !project.uploadSourced && (
               <>
                 <span aria-hidden>·</span>
                 <Link
@@ -308,7 +309,7 @@ export default async function ProjectPage({ params }: { params: Promise<{ id: st
               {counts.generated + counts.approved}/{scenes.length} ready ·{" "}
               {counts.pending} pending · {counts.rejected} failed
             </div>
-            {!animateStarted && isOwner && (
+            {!animateStarted && isOwner && !project.uploadSourced && (
               <BatchActions
                 projectId={project.id}
                 generatedCount={counts.generated}
@@ -321,7 +322,7 @@ export default async function ProjectPage({ params }: { params: Promise<{ id: st
                 }
               />
             )}
-            {scenes.length > 0 && isOwner && (
+            {scenes.length > 0 && isOwner && !project.uploadSourced && (
               <RegenerateAllLink
                 projectId={project.id}
                 totalScenes={scenes.length}
@@ -350,6 +351,7 @@ export default async function ProjectPage({ params }: { params: Promise<{ id: st
           }))}
           format={project.format}
           hideActions={animateStarted || !isOwner}
+          allowRegen={!project.uploadSourced}
           worldType={project.worldType}
         />
       </section>

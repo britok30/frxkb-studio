@@ -20,12 +20,15 @@ export function SceneGrid({
   scenes,
   format,
   hideActions,
+  allowRegen = true,
   worldType,
 }: {
   projectId: string;
   scenes: SceneRow[];
   format?: string;
   hideActions: boolean;
+  /** False for showcase projects (upload-sourced stills can't regen). */
+  allowRegen?: boolean;
   worldType?: "interior" | "exterior";
 }) {
   const router = useRouter();
@@ -39,6 +42,7 @@ export function SceneGrid({
       const scene = scenes[focusedIndex];
       if (!scene) return;
       if (hideActions && action !== "regenerate") return;
+      if (action === "regenerate" && !allowRegen) return;
       busyRef.current = true;
       const verbing =
         action === "regenerate" ? "Regenerating" : action === "approve" ? "Approving" : "Rejecting";
@@ -57,7 +61,7 @@ export function SceneGrid({
         busyRef.current = false;
       }
     },
-    [focusedIndex, scenes, projectId, hideActions, router]
+    [focusedIndex, scenes, projectId, hideActions, allowRegen, router]
   );
 
   useEffect(() => {
@@ -116,6 +120,7 @@ export function SceneGrid({
           scene={s}
           format={format}
           hideActions={hideActions}
+          allowRegen={allowRegen}
           worldType={worldType}
           focused={focusedIndex === i}
         />

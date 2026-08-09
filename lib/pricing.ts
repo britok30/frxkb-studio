@@ -129,6 +129,13 @@ export function estimateStylesGen(styleCount: number): number {
   return llmCost(2400, 300 + Math.max(0, styleCount) * 350);
 }
 
+/** The showcase vision pass — ONE call that sees all N uploads and writes
+ *  the concept + per-shot names/descriptions. Image tokens dominate input. */
+export function estimateShowcaseCopy(imageCount: number): number {
+  const n = Math.max(0, imageCount);
+  return llmCost(1200 + n * 800, 300 + n * 120);
+}
+
 export function estimateSuggestWorld(): number {
   return llmCost(LLM_INPUT_TOKENS.suggestWorld, LLM_OUTPUT_TOKENS.suggestWorld);
 }

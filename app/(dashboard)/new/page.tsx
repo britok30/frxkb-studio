@@ -7,12 +7,17 @@ import Link from "next/link";
 import { motion, AnimatePresence } from "motion/react";
 import { toast } from "sonner";
 import { ease } from "@/lib/motion";
-import { estimateProjectTotal, estimateSuggestWorld, formatCost } from "@/lib/pricing";
+import {
+  estimateProjectTotal,
+  estimateShowcaseCopy,
+  estimateSuggestWorld,
+  formatCost,
+} from "@/lib/pricing";
 import { NICHE_POOL, sampleN } from "@/lib/prompts/niche-pool";
 import { uploadImage } from "@/lib/upload-client";
 import { getLook, looksForWorld, type Look } from "@/lib/prompts/looks";
 
-type Format = "reel" | "carousel" | "before-after" | "style-explorer";
+type Format = "reel" | "carousel" | "before-after" | "style-explorer" | "showcase";
 type WorldType = "interior" | "exterior";
 type PropertyType = "residential" | "commercial";
 type AspectRatio = "16:9" | "9:16" | "1:1" | "4:3" | "3:4";
@@ -59,6 +64,14 @@ const FORMAT_PRESETS: Record<
     sceneDurationSec: 0,
     aspectClass: "aspect-square", // overridden by uploaded image's actual aspect
   },
+  showcase: {
+    label: "Showcase",
+    kicker: "Your images · IG · YouTube",
+    hint: "Bring 2–20 of your own photos or renders of one property. GPT names every shot, Seedance animates each into a cinematic clip, and the studio stitches a reel or a chaptered YouTube tour.",
+    sceneCount: 10,
+    sceneDurationSec: 5,
+    aspectClass: "aspect-[9/16]",
+  },
   "style-explorer": {
     label: "Style explorer",
     kicker: "YouTube long-form",
@@ -76,7 +89,11 @@ const STEPS = ["Format", "World", "Review"] as const;
 
 function isFormat(v: string | null): v is Format {
   return (
-    v === "reel" || v === "carousel" || v === "before-after" || v === "style-explorer"
+    v === "reel" ||
+    v === "carousel" ||
+    v === "before-after" ||
+    v === "style-explorer" ||
+    v === "showcase"
   );
 }
 
@@ -176,6 +193,11 @@ export default function NewProjectPage() {
   const [beforeAspect, setBeforeAspect] = useState<AspectRatio | null>(null);
   const [transformationPrompt, setTransformationPrompt] = useState("");
 
+  // Showcase-only state: the operator's own images (presentation order) and
+  // the target deliverable shape.
+  const [showcaseImageUrls, setShowcaseImageUrls] = useState<string[]>([]);
+  const [deliverable, setDeliverable] = useState<"reel" | "long-form">("reel");
+
   // Style-explorer-only state. baseDescription drives the text-to-image base;
   // baseImageUrl is the rendered + reviewed base (cleared whenever an input
   // that shapes it changes, so styles never fan out from a stale render).
@@ -226,7 +248,9 @@ export default function NewProjectPage() {
       ? !!worldType && !!beforeImageUrl && transformationPrompt.trim().length >= 8
       : format === "style-explorer"
         ? !!worldType && !!propertyType && !!baseImageUrl
-        : !!worldType && niche.trim().length >= 2;
+        : format === "showcase"
+          ? !!worldType && showcaseImageUrls.length >= 2
+          : !!worldType && niche.trim().length >= 2;
 
   async function submit() {
     setSubmitting(true);
@@ -279,6 +303,29 @@ export default function NewProjectPage() {
         }
         const data = await res.json();
         toast.success("Styles ready — generate the images on the next screen");
+        router.push(`/projects/${data.project.id}`);
+        return;
+      }
+
+      if (format === "showcase") {
+        if (showcaseImageUrls.length < 2) throw new Error("Upload at least 2 images first.");
+        const res = await fetch("/api/projects/showcase", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            imageUrls: showcaseImageUrls,
+            deliverable,
+            worldType,
+            videoModel,
+            operatorNotes: operatorNotes.trim() || undefined,
+          }),
+        });
+        if (!res.ok) {
+          const err = await res.json().catch(() => ({}));
+          throw new Error(err.error ?? `HTTP ${res.status}`);
+        }
+        const data = await res.json();
+        toast.success("Shots named — animate them from the project page");
         router.push(`/projects/${data.project.id}`);
         return;
       }
@@ -364,7 +411,11 @@ export default function NewProjectPage() {
                           ? `${FORMAT_PRESETS[f].sceneCount} styles`
                           : `${FORMAT_PRESETS[f].sceneCount} × ${FORMAT_PRESETS[f].sceneDurationSec}s`
                     }
-                    cost={`~${formatCost(estimateProjectTotal(f, FORMAT_PRESETS[f].sceneCount))} all-in`}
+                    cost={
+                      f === "showcase"
+                        ? `~${formatCost(estimateShowcaseCopy(FORMAT_PRESETS[f].sceneCount))} + animate`
+                        : `~${formatCost(estimateProjectTotal(f, FORMAT_PRESETS[f].sceneCount))} all-in`
+                    }
                   />
                 ))}
               </div>
@@ -387,14 +438,18 @@ export default function NewProjectPage() {
                     ? "Drop the before, describe the after."
                     : format === "style-explorer"
                       ? "Describe the space, render a base."
-                      : "What's the world?"
+                      : format === "showcase"
+                        ? "Drop your shots, in order."
+                        : "What's the world?"
                 }
                 hint={
                   format === "before-after"
                     ? "Upload a real photo of an interior or exterior. Describe the direction — the studio proposes and renders 9 distinct after concepts on the exact same camera: with the before, a ready-made 10-image carousel."
                     : format === "style-explorer"
                       ? "Pick the program and vantage, describe the space, and render a base image. Review it here — then GPT-5.6 reimagines that exact space in distinct, recognisable design styles."
-                      : "Describe a home a designer would screenshot — a place with strong identity, a quality of light, materials and the kind of objects (plants, art, books) that fill it. Or have the studio suggest one."
+                      : format === "showcase"
+                        ? "Upload 2–20 photos or renders of ONE property in the order they should play. GPT-5.6 names and describes every shot; you animate them on the next screen."
+                        : "Describe a home a designer would screenshot — a place with strong identity, a quality of light, materials and the kind of objects (plants, art, books) that fill it. Or have the studio suggest one."
                 }
               />
 
@@ -451,6 +506,18 @@ export default function NewProjectPage() {
                   />
                   <VideoEngineToggle value={videoModel} onChange={setVideoModel} />
                 </>
+              ) : format === "showcase" ? (
+                <>
+                  <ShowcaseStep
+                    urls={showcaseImageUrls}
+                    onChange={setShowcaseImageUrls}
+                    deliverable={deliverable}
+                    onDeliverableChange={setDeliverable}
+                    notes={operatorNotes}
+                    onNotesChange={setOperatorNotes}
+                  />
+                  <VideoEngineToggle value={videoModel} onChange={setVideoModel} />
+                </>
               ) : (
                 worldType && (
                   <>
@@ -479,7 +546,7 @@ export default function NewProjectPage() {
               )}
 
               <div className="flex flex-col gap-3">
-                {format !== "before-after" && format !== "style-explorer" && (
+                {format !== "before-after" && format !== "style-explorer" && format !== "showcase" && (
                 <button
                   type="button"
                   onClick={() => setShowCustomize((v) => !v)}
@@ -609,6 +676,32 @@ export default function NewProjectPage() {
                       onEdit={() => go(2)}
                     />
                   </>
+                ) : format === "showcase" ? (
+                  <>
+                    <ReviewRow
+                      label="Deliverable"
+                      value={
+                        deliverable === "reel"
+                          ? "Reel — 9:16, every shot animated"
+                          : "YouTube long-form — 16:9, chapter per shot"
+                      }
+                      onEdit={() => go(2)}
+                    />
+                    <ReviewRow
+                      label="Images"
+                      value={`${showcaseImageUrls.length} uploaded`}
+                      onEdit={() => go(2)}
+                    />
+                    <ReviewRow
+                      label="Video engine"
+                      value={
+                        videoModel === "seedance-2.5"
+                          ? "Seedance 2.5 — newest motion, ~2× video cost"
+                          : "Seedance 2.0 — proven pipeline"
+                      }
+                      onEdit={() => go(2)}
+                    />
+                  </>
                 ) : (
                   <>
                     <ReviewRow label="Niche" value={niche.trim()} onEdit={() => go(2)} />
@@ -646,7 +739,11 @@ export default function NewProjectPage() {
                 )}
                 <ReviewRow
                   label="Est. cost"
-                  value={`~${formatCost(estimateProjectTotal(format, sceneCount))} all-in`}
+                  value={
+                    format === "showcase"
+                      ? `~${formatCost(estimateShowcaseCopy(showcaseImageUrls.length))} now + animate on the next screen`
+                      : `~${formatCost(estimateProjectTotal(format, sceneCount))} all-in`
+                  }
                 />
                 {format !== "before-after" && operatorNotes.trim() && (
                   <ReviewRow label="Notes" value={operatorNotes.trim()} onEdit={() => go(2)} />
@@ -1320,6 +1417,156 @@ function LookCard({
         </span>
       </div>
     </motion.button>
+  );
+}
+
+// ── Showcase step (your own images → reel or long-form) ────────────────────
+
+function ShowcaseStep({
+  urls,
+  onChange,
+  deliverable,
+  onDeliverableChange,
+  notes,
+  onNotesChange,
+}: {
+  urls: string[];
+  onChange: (urls: string[]) => void;
+  deliverable: "reel" | "long-form";
+  onDeliverableChange: (d: "reel" | "long-form") => void;
+  notes: string;
+  onNotesChange: (s: string) => void;
+}) {
+  const [uploading, setUploading] = useState(false);
+  const inputRef = useRef<HTMLInputElement | null>(null);
+
+  async function upload(files: FileList) {
+    const room = 20 - urls.length;
+    const picked = Array.from(files).slice(0, room);
+    if (picked.length === 0) return;
+    setUploading(true);
+    try {
+      const uploaded: string[] = [];
+      for (const file of picked) {
+        const img = await uploadImage(file);
+        uploaded.push(img.url);
+      }
+      onChange([...urls, ...uploaded]);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Unknown error";
+      toast.error("Upload failed", { description: message });
+    } finally {
+      setUploading(false);
+    }
+  }
+
+  const deliverables = [
+    {
+      id: "reel" as const,
+      name: "Reel",
+      detail: "9:16 · every shot becomes a 5s animated clip, crossfaded with music",
+    },
+    {
+      id: "long-form" as const,
+      name: "YouTube long-form",
+      detail: "16:9 · chapter per shot (10s holds), looped to length, SEO metadata",
+    },
+  ];
+
+  return (
+    <div className="flex flex-col gap-6">
+      <div className="flex flex-col gap-2">
+        <div className="flex items-baseline justify-between gap-4">
+          <span className="text-[10px] uppercase tracking-[0.22em] text-muted-foreground">
+            Deliverable
+          </span>
+        </div>
+        <div className="grid grid-cols-2 gap-3">
+          {deliverables.map((d) => (
+            <motion.button
+              key={d.id}
+              type="button"
+              onClick={() => onDeliverableChange(d.id)}
+              whileTap={{ scale: 0.98 }}
+              transition={{ duration: 0.16, ease }}
+              className={`text-left rounded-xl border px-3 py-2.5 flex flex-col gap-0.5 transition-colors ${
+                deliverable === d.id
+                  ? "border-foreground bg-foreground/[0.03]"
+                  : "hover:border-foreground/30"
+              }`}
+            >
+              <span className="text-xs font-semibold tracking-tight">{d.name}</span>
+              <span className="text-[10px] text-muted-foreground tracking-tight leading-snug">
+                {d.detail}
+              </span>
+            </motion.button>
+          ))}
+        </div>
+      </div>
+
+      <div className="flex flex-col gap-2">
+        <div className="flex items-baseline justify-between gap-4">
+          <span className="text-[10px] uppercase tracking-[0.22em] text-muted-foreground">
+            Your images ({urls.length}/20)
+          </span>
+          <span className="text-[11px] text-muted-foreground tracking-tight">
+            Upload in play order — shot 1 opens the {deliverable === "reel" ? "reel" : "video"}
+          </span>
+        </div>
+        <div className="flex flex-wrap gap-2">
+          {urls.map((url, i) => (
+            <div key={url} className="relative size-24 rounded-md overflow-hidden border group/shot">
+              <Image src={url} alt={`Shot ${i + 1}`} fill sizes="96px" className="object-cover" />
+              <span className="absolute left-1 top-1 rounded bg-black/60 px-1.5 text-[10px] text-white tabular-nums">
+                {i + 1}
+              </span>
+              <button
+                type="button"
+                aria-label="Remove shot"
+                onClick={() => onChange(urls.filter((u) => u !== url))}
+                className="absolute inset-0 hidden group-hover/shot:flex items-center justify-center bg-black/50 text-white text-xs"
+              >
+                Remove
+              </button>
+            </div>
+          ))}
+          {urls.length < 20 && (
+            <button
+              type="button"
+              onClick={() => inputRef.current?.click()}
+              disabled={uploading}
+              className="size-24 rounded-md border border-dashed text-xs text-muted-foreground hover:text-foreground hover:border-foreground/40 transition-colors disabled:opacity-50"
+            >
+              {uploading ? "…" : "+ Add"}
+            </button>
+          )}
+        </div>
+        <input
+          ref={inputRef}
+          type="file"
+          accept="image/jpeg,image/png,image/webp"
+          multiple
+          className="hidden"
+          onChange={(e) => {
+            if (e.target.files) void upload(e.target.files);
+            e.target.value = "";
+          }}
+        />
+      </div>
+
+      <label className="flex flex-col gap-1.5">
+        <span className="text-xs text-muted-foreground tracking-tight">
+          Notes for GPT-5.6 (optional)
+        </span>
+        <textarea
+          value={notes}
+          onChange={(e) => onNotesChange(e.target.value)}
+          rows={2}
+          placeholder="e.g. New-build in Coral Gables, high-end; lead with the pool terrace."
+          className="w-full rounded-md border bg-transparent px-3 py-2 text-sm focus:border-foreground outline-none resize-none tracking-tight"
+        />
+      </label>
+    </div>
   );
 }
 
