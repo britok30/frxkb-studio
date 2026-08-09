@@ -1509,6 +1509,23 @@ function ShowcaseStep({
     onDurationsChange(durations.filter((_, k) => k !== i));
   }
 
+  // Drag-to-reorder (HTML5 DnD — desktop is the operator surface). The
+  // duration travels WITH its shot so pacing survives a reshuffle.
+  const [dragIndex, setDragIndex] = useState<number | null>(null);
+  const [overIndex, setOverIndex] = useState<number | null>(null);
+
+  function reorder(from: number, to: number) {
+    if (from === to) return;
+    const nextUrls = [...urls];
+    const nextDur = urls.map((_, k) => durations[k] ?? 5);
+    const [movedUrl] = nextUrls.splice(from, 1);
+    const [movedDur] = nextDur.splice(from, 1);
+    nextUrls.splice(to, 0, movedUrl);
+    nextDur.splice(to, 0, movedDur);
+    onChange(nextUrls);
+    onDurationsChange(nextDur);
+  }
+
   /** Reel pacing: each shot 3-10s; + stops when the shot hits 10s or the
    *  90s total budget is spent. − just frees budget (floor 3s). */
   function bump(i: number, delta: 1 | -1) {
@@ -1575,7 +1592,7 @@ function ShowcaseStep({
             Your images ({urls.length}/{maxShots})
           </span>
           <span className="text-[11px] text-muted-foreground tracking-tight">
-            Upload in play order — shot 1 opens the {deliverable === "reel" ? "reel" : "video"}
+            Drag to reorder — shot 1 opens the {deliverable === "reel" ? "reel" : "video"}
           </span>
         </div>
         {overBudget && (
@@ -1587,8 +1604,35 @@ function ShowcaseStep({
         )}
         <div className="flex flex-wrap gap-2">
           {urls.map((url, i) => (
-            <div key={url} className="flex flex-col gap-1">
-              <div className="relative size-24 rounded-md overflow-hidden border group/shot">
+            <div
+              key={url}
+              draggable
+              onDragStart={() => setDragIndex(i)}
+              onDragOver={(e) => {
+                e.preventDefault();
+                if (overIndex !== i) setOverIndex(i);
+              }}
+              onDragLeave={() => setOverIndex((v) => (v === i ? null : v))}
+              onDrop={() => {
+                if (dragIndex !== null) reorder(dragIndex, i);
+                setDragIndex(null);
+                setOverIndex(null);
+              }}
+              onDragEnd={() => {
+                setDragIndex(null);
+                setOverIndex(null);
+              }}
+              className={`flex flex-col gap-1 cursor-grab active:cursor-grabbing transition-opacity ${
+                dragIndex === i ? "opacity-40" : ""
+              }`}
+            >
+              <div
+                className={`relative size-24 rounded-md overflow-hidden border group/shot ${
+                  overIndex === i && dragIndex !== null && dragIndex !== i
+                    ? "ring-2 ring-foreground"
+                    : ""
+                }`}
+              >
                 <Image src={url} alt={`Shot ${i + 1}`} fill sizes="96px" className="object-cover" />
                 <span className="absolute left-1 top-1 rounded bg-black/60 px-1.5 text-[10px] text-white tabular-nums">
                   {i + 1}
