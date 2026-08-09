@@ -51,6 +51,7 @@ import {
   FAL_NANO_BANANA_EDIT_PER_IMAGE,
   FAL_NANO_BANANA_PER_IMAGE,
   FAL_NANO_BANANA_PER_IMAGE_4K,
+  FAL_SEEDANCE_25_720P_PER_SECOND,
   FAL_SEEDANCE_FAST_720P_PER_SECOND,
   FAL_SEEDANCE_PER_SECOND,
 } from "@/lib/pricing";
@@ -109,6 +110,10 @@ export type CreateProjectInput = {
   /** Render-quality tier. standard (default) = 2K stills + native 1080p
    *  video. hero = 4K stills + full-tier 1080p seedance source. */
   quality?: "standard" | "hero";
+  /** Seedance generation for the animate step (reels). Defaults to 2.0 —
+   *  the proven pipeline. 2.5 = better motion, 720p-only, ~2× the standard
+   *  video cost; both quality tiers ride 720p + Topaz 3× on 2.5. */
+  videoModel?: "seedance-2.0" | "seedance-2.5";
   /** Moodboard / photo references (public Blob URLs, ≤5). When present:
    *  GPT-5.5 sees them while writing the brief, and every scene renders via
    *  /edit conditioned on them so materials, palette, and mood match the
@@ -226,6 +231,7 @@ export async function createProject(input: CreateProjectInput): Promise<CreatePr
     lookId: look?.id ?? null,
     operatorEmail: op.email,
     quality: input.quality ?? "standard",
+    videoModel: input.videoModel ?? "seedance-2.0",
     referenceImageUrls: referenceImageUrls.length > 0 ? referenceImageUrls : null,
     targetDurationSec: targetDurationSec || null,
     concept: {
@@ -1160,7 +1166,8 @@ export async function animateAllScenes(
       estimateAnimateBatch(
         targets.length,
         targets[0]?.durationSec || 5,
-        project.quality === "hero" ? "hero" : "standard"
+        project.quality === "hero" ? "hero" : "standard",
+        project.videoModel === "seedance-2.5" ? "seedance-2.5" : "seedance-2.0"
       )
     );
 
@@ -1197,15 +1204,19 @@ export async function animateAllScenes(
         // Reels render one extra second of footage per clip: the stitch's
         // 1s crossfades consume overlap, and without the pad a 3×5s reel
         // lands at 13s instead of 15s.
-        // Tiering matches animatePlannedScene: standard reels ride the fast
-        // 720p endpoint + Topaz 3×; hero rides full 1080p + Topaz 2×.
-        const useFast = project.quality !== "hero";
+        // Tiering matches animatePlannedScene: 2.0 standard reels ride the
+        // fast 720p endpoint + Topaz 3×; 2.0 hero rides full 1080p + Topaz
+        // 2×; 2.5 always rides 720p (its ceiling) + Topaz 3×.
+        const is25 = project.videoModel === "seedance-2.5";
+        const useFast = !is25 && project.quality !== "hero";
+        const at720 = is25 || useFast;
         const seedanceResult = await generateVideo({
           imageUrl: scene.imageUrl as string,
           motionPrompt: motion,
           durationSec: (scene.durationSec || 5) + XFADE_SEC,
-          resolution: useFast ? "720p" : "1080p",
+          resolution: at720 ? "720p" : "1080p",
           fast: useFast,
+          model: is25 ? "seedance-2.5" : "seedance-2.0",
           aspectRatio: animateAspect,
           seed: freshSeed(),
         });
@@ -1216,7 +1227,7 @@ export async function animateAllScenes(
           await upscaleVideo({
             videoUrl: seedanceResult.videoUrl,
             model: "Proteus",
-            upscaleFactor: useFast ? 3 : 2,
+            upscaleFactor: at720 ? 3 : 2,
             // 30 across the board — the stitch renders 30fps output, so 60fps
         // interpolation here would be synthesized and then discarded.
         targetFps: 30,
@@ -1233,15 +1244,20 @@ export async function animateAllScenes(
       });
 
       await markSceneAnimated(scene.id, { videoUrl: stored.url });
-      // Ledger: seedance bills the clamped 4-15s duration at 1080p; hero
-      // Ledger: seedance tier per quality; Topaz 4K30 rides every clip.
-      const billedSec = Math.min(15, Math.max(4, scene.durationSec || 5));
+      // Ledger: seedance tier per quality/model; Topaz 4K30 rides every clip.
+      // Bill what was actually requested — durationSec + the crossfade pad,
+      // same as animatePlannedScene (this path used to under-bill by the pad).
+      const billedSec = Math.min(is25 ? 30 : 15, Math.max(4, (scene.durationSec || 5) + XFADE_SEC));
       await recordSpend({
         projectId,
         kind: "video",
         amountUsd:
           billedSec *
-          (useFast ? FAL_SEEDANCE_FAST_720P_PER_SECOND : FAL_SEEDANCE_PER_SECOND["1080p"]),
+          (is25
+            ? FAL_SEEDANCE_25_720P_PER_SECOND
+            : useFast
+              ? FAL_SEEDANCE_FAST_720P_PER_SECOND
+              : FAL_SEEDANCE_PER_SECOND["1080p"]),
         meta: { sceneOrder: scene.order, durationSec: billedSec },
       });
       await recordSpend({
@@ -1323,6 +1339,10 @@ export type AnimatePlanTarget = {
 export type AnimatePlan = {
   projectId: string;
   quality: "standard" | "hero";
+  /** Seedance generation for every clip in this batch. Optional so plans
+   *  serialized by Inngest before the field existed still replay — absent
+   *  means 2.0, the only model that existed then. */
+  videoModel?: "seedance-2.0" | "seedance-2.5";
   aspectRatio: AspectRatio;
   skipped: number;
   targets: AnimatePlanTarget[];
@@ -1384,14 +1404,16 @@ export async function planAnimate(
     }
     const skipped = candidates.length - targetsRaw.length;
     const quality: "standard" | "hero" = project.quality === "hero" ? "hero" : "standard";
+    const videoModel: "seedance-2.0" | "seedance-2.5" =
+      project.videoModel === "seedance-2.5" ? "seedance-2.5" : "seedance-2.0";
 
     if (targetsRaw.length === 0) {
       await updateProjectStatus(projectId, "ready");
-      return { projectId, quality, aspectRatio, skipped, targets: [] };
+      return { projectId, quality, videoModel, aspectRatio, skipped, targets: [] };
     }
 
     await assertWithinDailyBudget(
-      estimateAnimateBatch(targetsRaw.length, targetsRaw[0]?.durationSec || 5, quality)
+      estimateAnimateBatch(targetsRaw.length, targetsRaw[0]?.durationSec || 5, quality, videoModel)
     );
 
     const motionByOrder = new Map(
@@ -1417,7 +1439,7 @@ export async function planAnimate(
         motion: motionByOrder.get(s.order) as string,
       }));
 
-    return { projectId, quality, aspectRatio, skipped, targets };
+    return { projectId, quality, videoModel, aspectRatio, skipped, targets };
   } catch (err) {
     await updateProjectStatus(projectId, "ready");
     throw err;
@@ -1431,13 +1453,16 @@ export async function planAnimate(
  * completes and the batch keeps its per-scene independence.
  */
 export async function animatePlannedScene(
-  plan: Pick<AnimatePlan, "projectId" | "quality" | "aspectRatio">,
+  plan: Pick<AnimatePlan, "projectId" | "quality" | "videoModel" | "aspectRatio">,
   target: AnimatePlanTarget
 ): Promise<{ ok: boolean }> {
-  // Crisp-pipeline tiers (both end at ~4K sources, stitched to 1080p/30):
-  //   standard reel: Seedance FAST 720p (~$0.24/s, quicker) → Topaz 3× → 4K30
-  //   hero reel:     Seedance full 1080p (~$0.68/s)         → Topaz 2× → 4K30
-  const useFast = plan.quality !== "hero";
+  // Crisp-pipeline tiers (all end at ~4K sources, stitched to 1080p/30):
+  //   2.0 standard reel: Seedance FAST 720p (~$0.24/s, quicker) → Topaz 3× → 4K30
+  //   2.0 hero reel:     Seedance full 1080p (~$0.68/s)         → Topaz 2× → 4K30
+  //   2.5 (any quality): Seedance 2.5 720p (~$0.47/s, no 1080p) → Topaz 3× → 4K30
+  const is25 = plan.videoModel === "seedance-2.5";
+  const useFast = !is25 && plan.quality !== "hero";
+  const at720 = is25 || useFast;
 
   const attempt = async () => {
     await heartbeatGenerationLock(plan.projectId);
@@ -1448,8 +1473,9 @@ export async function animatePlannedScene(
       imageUrl: target.imageUrl,
       motionPrompt: target.motion,
       durationSec: target.durationSec + XFADE_SEC,
-      resolution: useFast ? "720p" : "1080p",
+      resolution: at720 ? "720p" : "1080p",
       fast: useFast,
+      model: is25 ? "seedance-2.5" : "seedance-2.0",
       aspectRatio: plan.aspectRatio,
       seed: freshSeed(),
     });
@@ -1460,7 +1486,7 @@ export async function animatePlannedScene(
       await upscaleVideo({
         videoUrl: seedanceResult.videoUrl,
         model: "Proteus",
-        upscaleFactor: useFast ? 3 : 2,
+        upscaleFactor: at720 ? 3 : 2,
         // 30 across the board — the stitch renders 30fps output, so 60fps
         // interpolation here would be synthesized and then discarded.
         targetFps: 30,
@@ -1474,14 +1500,22 @@ export async function animatePlannedScene(
       filename,
     });
     await markSceneAnimated(target.sceneId, { videoUrl: stored.url });
-    const billedSec = Math.min(15, Math.max(4, target.durationSec + XFADE_SEC));
+    const billedSec = Math.min(is25 ? 30 : 15, Math.max(4, target.durationSec + XFADE_SEC));
     await recordSpend({
       projectId: plan.projectId,
       kind: "video",
       amountUsd:
         billedSec *
-        (useFast ? FAL_SEEDANCE_FAST_720P_PER_SECOND : FAL_SEEDANCE_PER_SECOND["1080p"]),
-      meta: { sceneOrder: target.order, durationSec: billedSec, tier: useFast ? "fast-720p" : "1080p" },
+        (is25
+          ? FAL_SEEDANCE_25_720P_PER_SECOND
+          : useFast
+            ? FAL_SEEDANCE_FAST_720P_PER_SECOND
+            : FAL_SEEDANCE_PER_SECOND["1080p"]),
+      meta: {
+        sceneOrder: target.order,
+        durationSec: billedSec,
+        tier: is25 ? "2.5-720p" : useFast ? "fast-720p" : "1080p",
+      },
     });
     await recordSpend({
       projectId: plan.projectId,

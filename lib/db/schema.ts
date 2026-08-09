@@ -58,6 +58,13 @@ export const projects = pgTable(
     quality: text("quality", { enum: ["standard", "hero"] })
       .notNull()
       .default("standard"),
+    /** Which Seedance generation animates this project's reels. 2.0 = the
+     *  proven pipeline (fast 720p / full 1080p per quality). 2.5 = newer
+     *  model, better motion, 720p-only (~2× the standard video cost); both
+     *  quality tiers ride 720p + Topaz 3× when this is 2.5. */
+    videoModel: text("video_model", { enum: ["seedance-2.0", "seedance-2.5"] })
+      .notNull()
+      .default("seedance-2.0"),
     targetDurationSec: integer("target_duration_sec"),
     concept: jsonb("concept").$type<{
       workingTitle: string;

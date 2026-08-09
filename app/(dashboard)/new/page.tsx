@@ -38,7 +38,7 @@ const FORMAT_PRESETS: Record<
   reel: {
     label: "Reel",
     kicker: "Instagram · TikTok · YouTube Shorts",
-    hint: "Each scene animated via Seedance 2.0 then upscaled to 2K with Topaz Proteus. Premium feel, slow cuts.",
+    hint: "Each scene animated via Seedance (2.0 or 2.5 — your pick) then upscaled with Topaz Proteus. Premium feel, slow cuts.",
     sceneCount: 3,
     sceneDurationSec: 5,
     aspectClass: "aspect-[9/16]",
@@ -97,6 +97,8 @@ export default function NewProjectPage() {
   const initialLookParam = searchParams.get("look");
   const initialQuality: "standard" | "hero" =
     searchParams.get("quality") === "hero" ? "hero" : "standard";
+  const initialVideoModel: "seedance-2.0" | "seedance-2.5" =
+    searchParams.get("videoModel") === "seedance-2.5" ? "seedance-2.5" : "seedance-2.0";
   const initialWorldParam = searchParams.get("world");
   const initialWorld: WorldType | null =
     initialWorldParam === "interior" || initialWorldParam === "exterior"
@@ -152,6 +154,11 @@ export default function NewProjectPage() {
   // Render-quality tier (reel/carousel). standard = 2K stills + 1080p video;
   // hero = 4K stills + full-tier seedance video for YouTube/portfolio use.
   const [quality, setQuality] = useState<"standard" | "hero">(initialQuality);
+  // Seedance generation for the animate step (reel only). 2.0 = proven
+  // default; 2.5 = newest model, better motion, ~2× the standard video cost.
+  const [videoModel, setVideoModel] = useState<"seedance-2.0" | "seedance-2.5">(
+    initialVideoModel
+  );
   // Moodboard / photo references (reel/carousel, ≤5). Steer materials,
   // palette, and mood for every render; GPT-5.6 also sees them while
   // writing the brief.
@@ -286,6 +293,7 @@ export default function NewProjectPage() {
           operatorNotes: operatorNotes.trim() || undefined,
           lookId: lookId ?? undefined,
           quality,
+          videoModel: format === "reel" ? videoModel : undefined,
           referenceImageUrls: referenceImageUrls.length > 0 ? referenceImageUrls : undefined,
         }),
       });
@@ -456,6 +464,9 @@ export default function NewProjectPage() {
                       onChange={setLookId}
                     />
                     <QualityToggle value={quality} onChange={setQuality} format={format} />
+                    {format === "reel" && (
+                      <VideoEngineToggle value={videoModel} onChange={setVideoModel} />
+                    )}
                     <MoodboardPicker
                       urls={referenceImageUrls}
                       onChange={setReferenceImageUrls}
@@ -603,6 +614,17 @@ export default function NewProjectPage() {
                       }
                       onEdit={() => go(2)}
                     />
+                    {format === "reel" && (
+                      <ReviewRow
+                        label="Video engine"
+                        value={
+                          videoModel === "seedance-2.5"
+                            ? "Seedance 2.5 — newest motion, ~2× video cost"
+                            : "Seedance 2.0 — proven pipeline"
+                        }
+                        onEdit={() => go(2)}
+                      />
+                    )}
                     {referenceImageUrls.length > 0 && (
                       <ReviewRow
                         label="Moodboard"
@@ -1171,6 +1193,62 @@ function QualityToggle({
             <span className="text-xs font-semibold tracking-tight">{t.name}</span>
             <span className="text-[10px] text-muted-foreground tracking-tight leading-snug">
               {t.detail}
+            </span>
+          </motion.button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+/** Seedance generation picker (reel only) — which model animates the stills.
+ *  Orthogonal to Quality: quality drives still resolution + 2.0's video tier,
+ *  this picks the video model itself. On 2.5 both quality tiers render video
+ *  at 720p (its ceiling) and Topaz recovers 4K. */
+function VideoEngineToggle({
+  value,
+  onChange,
+}: {
+  value: "seedance-2.0" | "seedance-2.5";
+  onChange: (m: "seedance-2.0" | "seedance-2.5") => void;
+}) {
+  const engines = [
+    {
+      id: "seedance-2.0" as const,
+      name: "Seedance 2.0",
+      detail: "The proven pipeline — fast 720p or full 1080p per quality tier",
+    },
+    {
+      id: "seedance-2.5" as const,
+      name: "Seedance 2.5",
+      detail: "Newest model, noticeably better motion · 720p + Topaz → 4K · ~2× video cost",
+    },
+  ];
+  return (
+    <div className="flex flex-col gap-2">
+      <div className="flex items-baseline justify-between gap-4">
+        <span className="text-[10px] uppercase tracking-[0.22em] text-muted-foreground">
+          Video engine
+        </span>
+        <span className="text-[11px] text-muted-foreground tracking-tight">
+          Which model animates the stills at the animate step
+        </span>
+      </div>
+      <div className="grid grid-cols-2 gap-3">
+        {engines.map((e) => (
+          <motion.button
+            key={e.id}
+            type="button"
+            onClick={() => onChange(e.id)}
+            whileTap={{ scale: 0.98 }}
+            transition={{ duration: 0.16, ease }}
+            className={`text-left rounded-xl border px-3 py-2.5 flex flex-col gap-0.5 transition-colors ${
+              value === e.id ? "border-foreground bg-foreground/[0.03]" : "hover:border-foreground/30"
+            }`}
+          >
+            <span className="text-xs font-semibold tracking-tight">{e.name}</span>
+            <span className="text-[10px] text-muted-foreground tracking-tight leading-snug">
+              {e.detail}
             </span>
           </motion.button>
         ))}

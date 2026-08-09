@@ -40,6 +40,12 @@ export const FAL_SEEDANCE_PER_SECOND: Record<"480p" | "720p" | "1080p" | "4k", n
  *  standard-quality reel path (Topaz 3× recovers the resolution). */
 export const FAL_SEEDANCE_FAST_720P_PER_SECOND = 0.2419;
 
+/** Seedance 2.5 image-to-video at 720p (fal, 2026-08): $0.0214/1k tokens,
+ *  tokens = (h × w × duration × 24) / 1024 — fal advertises ~$0.473/s at
+ *  720p. 2.5 caps at 720p (no 1080p/4k tier) and has no fast endpoint, so
+ *  this single rate covers the whole 2.5 video path (Topaz 3× → 4K after). */
+export const FAL_SEEDANCE_25_720P_PER_SECOND = 0.473;
+
 /** One gpt-image-2 thumbnail edit at 1536×1024 (token-billed by OpenAI;
  *  this is a rough per-image estimate for the ledger + button label). */
 export const GPT_IMAGE_2_THUMBNAIL_USD = 0.2;
@@ -208,18 +214,22 @@ export function estimateMotionPromptsGen(sceneCount: number): number {
 }
 
 /** All-in cost of the animate step for N scenes at D seconds each.
- *  Standard: Seedance FAST 720p + Topaz 3×→4K30. Hero: Seedance full 1080p
- *  + Topaz 2×→4K30. Both stitch to a supersampled 1080p/30 final. */
+ *  Seedance 2.0 — standard: FAST 720p + Topaz 3×→4K30; hero: full 1080p +
+ *  Topaz 2×→4K30. Seedance 2.5 — always 720p + Topaz 3×→4K30 (2.5 has no
+ *  1080p), both quality tiers. All stitch to a supersampled 1080p/30 final. */
 export function estimateAnimateBatch(
   sceneCount: number,
   perSceneDurationSec: number,
-  quality: "standard" | "hero" = "standard"
+  quality: "standard" | "hero" = "standard",
+  videoModel: "seedance-2.0" | "seedance-2.5" = "seedance-2.0"
 ): number {
   const totalSec = sceneCount * Math.max(0, perSceneDurationSec);
   const seedance =
-    quality === "hero"
-      ? estimateSeedance(totalSec, "1080p")
-      : totalSec * FAL_SEEDANCE_FAST_720P_PER_SECOND;
+    videoModel === "seedance-2.5"
+      ? totalSec * FAL_SEEDANCE_25_720P_PER_SECOND
+      : quality === "hero"
+        ? estimateSeedance(totalSec, "1080p")
+        : totalSec * FAL_SEEDANCE_FAST_720P_PER_SECOND;
   return (
     estimateMotionPromptsGen(sceneCount) +
     seedance +

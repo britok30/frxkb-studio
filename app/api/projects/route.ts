@@ -27,6 +27,9 @@ const CreateBody = z.object({
   /** Render-quality tier: standard (2K stills, 1080p video) or hero
    *  (4K stills, full-tier seedance video). */
   quality: z.enum(["standard", "hero"]).optional(),
+  /** Seedance generation for the animate step (reels). 2.0 = proven default;
+   *  2.5 = better motion, 720p-only, ~2× the standard video cost. */
+  videoModel: z.enum(["seedance-2.0", "seedance-2.5"]).optional(),
   /** Moodboard / photo references (Blob URLs from /api/upload, ≤5). Steer
    *  materials/palette/mood for every render; also shown to GPT-5.5 while
    *  it writes the brief. */

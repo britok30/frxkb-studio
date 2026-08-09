@@ -148,6 +148,12 @@ export default async function ProjectPage({ params }: { params: Promise<{ id: st
                 <span>Hero 4K</span>
               </>
             )}
+            {project.format === "reel" && project.videoModel === "seedance-2.5" && (
+              <>
+                <span aria-hidden>·</span>
+                <span>Seedance 2.5</span>
+              </>
+            )}
             {projectSpend !== null && projectSpend > 0 && (
               <>
                 <span aria-hidden>·</span>
@@ -184,6 +190,8 @@ export default async function ProjectPage({ params }: { params: Promise<{ id: st
             format={project.format}
             perSceneDurationSec={perSceneDurationSec}
             animatedCount={animatedCount}
+            quality={project.quality === "hero" ? "hero" : "standard"}
+            videoModel={project.videoModel === "seedance-2.5" ? "seedance-2.5" : "seedance-2.0"}
           />
         )}
       </div>
@@ -376,7 +384,8 @@ export default async function ProjectPage({ params }: { params: Promise<{ id: st
                       estimateAnimateBatch(
                         1,
                         s.durationSec ?? perSceneDurationSec,
-                        project.quality === "hero" ? "hero" : "standard"
+                        project.quality === "hero" ? "hero" : "standard",
+                        project.videoModel === "seedance-2.5" ? "seedance-2.5" : "seedance-2.0"
                       )
                     )}
                   />
@@ -474,12 +483,14 @@ function duplicateHref(project: {
   worldType: string;
   lookId: string | null;
   quality: string;
+  videoModel: string;
 }): string {
   const params = new URLSearchParams({
     format: project.format,
     niche: project.niche,
     world: project.worldType,
     quality: project.quality,
+    videoModel: project.videoModel,
   });
   if (project.lookId) params.set("look", project.lookId);
   return `/new?${params.toString()}`;

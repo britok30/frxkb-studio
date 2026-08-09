@@ -109,6 +109,64 @@ describe("generateVideo", () => {
     expect(subscribeMock.mock.calls[0][1].input.duration).toBe("15");
   });
 
+  it("routes model: seedance-2.5 to the 2.5 endpoint, silent, at 720p", async () => {
+    subscribeMock.mockResolvedValue(okResponse);
+
+    await withOperator(britok, () =>
+      generateVideo({
+        imageUrl: "https://x",
+        motionPrompt: "p",
+        model: "seedance-2.5",
+        resolution: "720p",
+      })
+    );
+
+    const [endpoint, args] = subscribeMock.mock.calls[0];
+    expect(endpoint).toBe("bytedance/seedance-2.5/image-to-video");
+    // 2.5 defaults generate_audio to TRUE server-side — the wrapper must
+    // explicitly turn it off or every clip comes back with synthesized audio.
+    expect(args.input.generate_audio).toBe(false);
+    expect(args.input.resolution).toBe("720p");
+  });
+
+  it("2.5 clamps duration to its wider 4-30s range", async () => {
+    subscribeMock.mockResolvedValue(okResponse);
+
+    await withOperator(britok, () =>
+      generateVideo({
+        imageUrl: "https://x",
+        motionPrompt: "p",
+        model: "seedance-2.5",
+        resolution: "720p",
+        durationSec: 25,
+      })
+    );
+    expect(subscribeMock.mock.calls[0][1].input.duration).toBe("25");
+  });
+
+  it("2.5 rejects 1080p/4k (its ceiling is 720p) and the fast flag (no fast tier)", async () => {
+    await withOperator(britok, async () => {
+      await expect(
+        generateVideo({
+          imageUrl: "https://x",
+          motionPrompt: "p",
+          model: "seedance-2.5",
+          resolution: "1080p",
+        })
+      ).rejects.toThrow(/caps at 720p/);
+      await expect(
+        generateVideo({
+          imageUrl: "https://x",
+          motionPrompt: "p",
+          model: "seedance-2.5",
+          resolution: "720p",
+          fast: true,
+        })
+      ).rejects.toThrow(/no fast tier/);
+    });
+    expect(subscribeMock).not.toHaveBeenCalled();
+  });
+
   it("forwards overrides for duration, resolution, aspect, seed", async () => {
     subscribeMock.mockResolvedValue(okResponse);
 

@@ -28,6 +28,8 @@ export function ProjectActions({
   format,
   perSceneDurationSec,
   animatedCount,
+  quality = "standard",
+  videoModel = "seedance-2.0",
 }: {
   projectId: string;
   totalScenes: number;
@@ -38,6 +40,9 @@ export function ProjectActions({
   perSceneDurationSec: number;
   /** How many scenes already have a videoUrl. Reels only — used to gate Animate button. */
   animatedCount: number;
+  /** Render-quality tier + video engine — drive the animate cost label. */
+  quality?: "standard" | "hero";
+  videoModel?: "seedance-2.0" | "seedance-2.5";
 }) {
   const router = useRouter();
   const [busy, setBusy] = useState<null | "generate" | "animate" | "finalize">(null);
@@ -183,7 +188,12 @@ export function ProjectActions({
   );
   const regenerateAllCost = formatCost(estimateBatchImages(totalScenes));
   const animateCost = formatCost(
-    estimateAnimateBatch(Math.max(0, animatableCount - animatedCount), perSceneDurationSec || 3)
+    estimateAnimateBatch(
+      Math.max(0, animatableCount - animatedCount),
+      perSceneDurationSec || 3,
+      quality,
+      videoModel
+    )
   );
   const finalizeCost = formatCost(estimateFinalize());
 

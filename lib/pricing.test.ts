@@ -3,6 +3,7 @@ import {
   FAL_NANO_BANANA_PER_IMAGE,
   FAL_NANO_BANANA_PER_IMAGE_4K,
   FAL_NANO_BANANA_EDIT_PER_IMAGE,
+  FAL_SEEDANCE_25_720P_PER_SECOND,
   FAL_SEEDANCE_FAST_720P_PER_SECOND,
   FAL_SEEDANCE_PER_SECOND,
   FAL_TOPAZ_PER_SECOND_GT_1080P,
@@ -159,6 +160,17 @@ describe("video pipeline pricing", () => {
     const hero = estimateAnimateBatch(3, 5, "hero");
     expect(hero - standard).toBeCloseTo(
       15 * (FAL_SEEDANCE_PER_SECOND["1080p"] - FAL_SEEDANCE_FAST_720P_PER_SECOND),
+      6
+    );
+  });
+
+  it("seedance-2.5 animate rides its 720p rate regardless of quality tier (2.5 has no 1080p)", () => {
+    const standard25 = estimateAnimateBatch(3, 5, "standard", "seedance-2.5");
+    const hero25 = estimateAnimateBatch(3, 5, "hero", "seedance-2.5");
+    expect(hero25).toBeCloseTo(standard25, 6);
+    const standard20 = estimateAnimateBatch(3, 5, "standard", "seedance-2.0");
+    expect(standard25 - standard20).toBeCloseTo(
+      15 * (FAL_SEEDANCE_25_720P_PER_SECOND - FAL_SEEDANCE_FAST_720P_PER_SECOND),
       6
     );
   });

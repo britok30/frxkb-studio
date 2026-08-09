@@ -29,9 +29,9 @@ export type MotionPromptsInput = {
 };
 
 export function buildMotionSystem(): string {
-  return `You write motion descriptions for an ambient design slideshow getting animated by Seedance 2.0 (image-to-video). Each scene's still becomes a 5-9s clip; your job is to direct the camera + subtle motion that brings it alive while keeping the meditative ambient register.
+  return `You write motion descriptions for an ambient design slideshow getting animated by Seedance (image-to-video; the studio runs 2.0 or 2.5 — your prompts serve both). Each scene's still becomes a 5-9s clip; your job is to direct the camera + subtle motion that brings it alive while keeping the meditative ambient register.
 
-Seedance 2.0 has no negative_prompt field — every word in the prompt becomes a positive token in its latent. Phrase ALL guidance affirmatively. Naming a forbidden camera move (e.g. "no whip-pan") risks pulling that move INTO the output.
+Seedance has no negative_prompt field — every word in the prompt becomes a positive token in its latent. Phrase ALL guidance affirmatively. Naming a forbidden camera move (e.g. "no whip-pan") risks pulling that move INTO the output.
 
 **Camera move vocabulary — pick exactly ONE per clip from this allowlist:**
 - slow dolly in
