@@ -197,6 +197,9 @@ export default function NewProjectPage() {
   // Showcase-only state: the operator's own images (presentation order) and
   // the target deliverable shape.
   const [showcaseImageUrls, setShowcaseImageUrls] = useState<string[]>([]);
+  // Parallel to showcaseImageUrls: per-shot seconds (reel pacing). Kept in
+  // sync by ShowcaseStep on add/remove; ≥3s each, ≤15s total.
+  const [showcaseDurations, setShowcaseDurations] = useState<number[]>([]);
   const [deliverable, setDeliverable] = useState<"reel" | "long-form">("reel");
 
   // Style-explorer-only state. baseDescription drives the text-to-image base;
@@ -320,6 +323,11 @@ export default function NewProjectPage() {
             deliverable,
             worldType,
             videoModel,
+            shotDurationsSec:
+              deliverable === "reel" &&
+              showcaseDurations.length === showcaseImageUrls.length
+                ? showcaseDurations
+                : undefined,
             operatorNotes: operatorNotes.trim() || undefined,
           }),
         });
@@ -514,6 +522,8 @@ export default function NewProjectPage() {
                   <ShowcaseStep
                     urls={showcaseImageUrls}
                     onChange={setShowcaseImageUrls}
+                    durations={showcaseDurations}
+                    onDurationsChange={setShowcaseDurations}
                     deliverable={deliverable}
                     onDeliverableChange={setDeliverable}
                     notes={operatorNotes}
@@ -695,6 +705,18 @@ export default function NewProjectPage() {
                       value={`${showcaseImageUrls.length} uploaded`}
                       onEdit={() => go(2)}
                     />
+                    {deliverable === "reel" && (
+                      <ReviewRow
+                        label="Pacing"
+                        value={`${showcaseImageUrls
+                          .map((_, i) => `${showcaseDurations[i] ?? 5}s`)
+                          .join(" · ")} — ${showcaseImageUrls.reduce(
+                          (n, _, i) => n + (showcaseDurations[i] ?? 5),
+                          0
+                        )}s total`}
+                        onEdit={() => go(2)}
+                      />
+                    )}
                     <ReviewRow
                       label="Video engine"
                       value={
@@ -1428,6 +1450,8 @@ function LookCard({
 function ShowcaseStep({
   urls,
   onChange,
+  durations,
+  onDurationsChange,
   deliverable,
   onDeliverableChange,
   notes,
@@ -1435,6 +1459,9 @@ function ShowcaseStep({
 }: {
   urls: string[];
   onChange: (urls: string[]) => void;
+  /** Parallel to urls — per-shot seconds (reel pacing). */
+  durations: number[];
+  onDurationsChange: (d: number[]) => void;
   deliverable: "reel" | "long-form";
   onDeliverableChange: (d: "reel" | "long-form") => void;
   notes: string;
@@ -1446,6 +1473,8 @@ function ShowcaseStep({
   // takes the full set (chapter per shot).
   const maxShots = deliverable === "reel" ? SHOWCASE_REEL_MAX_SHOTS : 20;
   const overCap = urls.length > maxShots;
+  const isReel = deliverable === "reel";
+  const totalSec = urls.reduce((n, _, i) => n + (durations[i] ?? 5), 0);
 
   async function upload(files: FileList) {
     const room = maxShots - urls.length;
@@ -1459,12 +1488,44 @@ function ShowcaseStep({
         uploaded.push(img.url);
       }
       onChange([...urls, ...uploaded]);
+      onDurationsChange([...durations, ...uploaded.map(() => 5)]);
     } catch (err) {
       const message = err instanceof Error ? err.message : "Unknown error";
       toast.error("Upload failed", { description: message });
     } finally {
       setUploading(false);
     }
+  }
+
+  function removeShot(i: number) {
+    onChange(urls.filter((_, k) => k !== i));
+    onDurationsChange(durations.filter((_, k) => k !== i));
+  }
+
+  /** Reel pacing: +1s on a shot steals a second from the last other shot
+   *  still above the 3s floor once the 15s budget is spent — "give the hero
+   *  shot 6, another becomes 4". −1s just frees budget (floor 3s). */
+  function bump(i: number, delta: 1 | -1) {
+    const next = urls.map((_, k) => durations[k] ?? 5);
+    if (delta === -1) {
+      if (next[i] <= 3) return;
+      next[i] -= 1;
+    } else {
+      const total = next.reduce((n, s) => n + s, 0);
+      if (total >= 15) {
+        let j = -1;
+        for (let k = next.length - 1; k >= 0; k--) {
+          if (k !== i && next[k] > 3) {
+            j = k;
+            break;
+          }
+        }
+        if (j === -1) return;
+        next[j] -= 1;
+      }
+      next[i] += 1;
+    }
+    onDurationsChange(next);
   }
 
   const deliverables = [
@@ -1530,19 +1591,45 @@ function ShowcaseStep({
         )}
         <div className="flex flex-wrap gap-2">
           {urls.map((url, i) => (
-            <div key={url} className="relative size-24 rounded-md overflow-hidden border group/shot">
-              <Image src={url} alt={`Shot ${i + 1}`} fill sizes="96px" className="object-cover" />
-              <span className="absolute left-1 top-1 rounded bg-black/60 px-1.5 text-[10px] text-white tabular-nums">
-                {i + 1}
-              </span>
-              <button
-                type="button"
-                aria-label="Remove shot"
-                onClick={() => onChange(urls.filter((u) => u !== url))}
-                className="absolute inset-0 hidden group-hover/shot:flex items-center justify-center bg-black/50 text-white text-xs"
-              >
-                Remove
-              </button>
+            <div key={url} className="flex flex-col gap-1">
+              <div className="relative size-24 rounded-md overflow-hidden border group/shot">
+                <Image src={url} alt={`Shot ${i + 1}`} fill sizes="96px" className="object-cover" />
+                <span className="absolute left-1 top-1 rounded bg-black/60 px-1.5 text-[10px] text-white tabular-nums">
+                  {i + 1}
+                </span>
+                <button
+                  type="button"
+                  aria-label="Remove shot"
+                  onClick={() => removeShot(i)}
+                  className="absolute inset-0 hidden group-hover/shot:flex items-center justify-center bg-black/50 text-white text-xs"
+                >
+                  Remove
+                </button>
+              </div>
+              {isReel && !overCap && (
+                <div className="flex items-center justify-center gap-1">
+                  <button
+                    type="button"
+                    aria-label={`Shot ${i + 1}: one second less`}
+                    onClick={() => bump(i, -1)}
+                    disabled={(durations[i] ?? 5) <= 3}
+                    className="size-5 rounded border text-[11px] text-muted-foreground hover:text-foreground disabled:opacity-30"
+                  >
+                    −
+                  </button>
+                  <span className="w-6 text-center text-[11px] tabular-nums tracking-tight">
+                    {durations[i] ?? 5}s
+                  </span>
+                  <button
+                    type="button"
+                    aria-label={`Shot ${i + 1}: one second more`}
+                    onClick={() => bump(i, 1)}
+                    className="size-5 rounded border text-[11px] text-muted-foreground hover:text-foreground"
+                  >
+                    +
+                  </button>
+                </div>
+              )}
             </div>
           ))}
           {urls.length < maxShots && (
@@ -1567,6 +1654,12 @@ function ShowcaseStep({
             e.target.value = "";
           }}
         />
+        {isReel && urls.length > 0 && !overCap && (
+          <span className="text-[11px] text-muted-foreground tracking-tight tabular-nums">
+            Pacing: {urls.map((_, i) => `${durations[i] ?? 5}s`).join(" · ")} — {totalSec}s
+            of 15s. Give a hero shot more; no shot goes under 3s.
+          </span>
+        )}
       </div>
 
       <label className="flex flex-col gap-1.5">

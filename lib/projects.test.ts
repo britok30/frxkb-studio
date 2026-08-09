@@ -699,6 +699,38 @@ describe("createShowcaseProject", () => {
     expect(storageMocks.ensurePngStill).toHaveBeenCalledTimes(3);
   });
 
+  it("reel pacing: per-shot durations land on the scenes (≥3s each, ≤15s total)", async () => {
+    await createShowcaseProject({
+      imageUrls: uploads,
+      deliverable: "reel",
+      worldType: "interior",
+      shotDurationsSec: [6, 4, 5],
+    });
+    const rows = dbMocks.insertScenes.mock.calls[0][0];
+    expect(rows.map((r: { durationSec: number }) => r.durationSec)).toEqual([6, 4, 5]);
+    expect(dbMocks.insertProject.mock.calls[0][0].targetDurationSec).toBe(15);
+
+    // Floor and budget are enforced before any GPT spend.
+    showcaseMocks.generateShowcaseCopy.mockClear();
+    await expect(
+      createShowcaseProject({
+        imageUrls: uploads,
+        deliverable: "reel",
+        worldType: "interior",
+        shotDurationsSec: [2, 8, 5],
+      })
+    ).rejects.toThrow(/at least 3 seconds/);
+    await expect(
+      createShowcaseProject({
+        imageUrls: uploads,
+        deliverable: "reel",
+        worldType: "interior",
+        shotDurationsSec: [8, 5, 5],
+      })
+    ).rejects.toThrow(/caps at 15s/);
+    expect(showcaseMocks.generateShowcaseCopy).not.toHaveBeenCalled();
+  });
+
   it("caps reels at 3 shots (the 15s cut) — long-form takes the full set", async () => {
     const ten = Array.from({ length: 10 }, (_, i) => `https://blob.example/s${i}.jpg`);
     await expect(

@@ -26,7 +26,21 @@ const Body = z
   /** Seedance generation for the animate step. */
   videoModel: z.enum(["seedance-2.0", "seedance-2.5"]).optional(),
   operatorNotes: z.string().max(2000).optional(),
+  /** Reel only: per-shot seconds, parallel to imageUrls. Each ≥ 3, total ≤ 15. */
+  shotDurationsSec: z.array(z.number().int().min(3).max(15)).max(20).optional(),
   })
+  .refine(
+    (b) =>
+      !b.shotDurationsSec ||
+      (b.deliverable === "reel" &&
+        b.shotDurationsSec.length === b.imageUrls.length &&
+        b.shotDurationsSec.reduce((n, s) => n + s, 0) <= 15),
+    {
+      path: ["shotDurationsSec"],
+      message:
+        "Shot timings are reel-only, must match the image count, and total at most 15s.",
+    }
+  )
   .refine(
     (b) => b.deliverable !== "reel" || b.imageUrls.length <= SHOWCASE_REEL_MAX_SHOTS,
     {

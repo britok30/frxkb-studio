@@ -610,6 +610,10 @@ export type CreateShowcaseInput = {
   propertyType?: PropertyType;
   /** Seedance generation for the animate step. */
   videoModel?: "seedance-2.0" | "seedance-2.5";
+  /** Reel only: per-shot clip lengths in seconds, parallel to imageUrls —
+   *  the operator's pacing (e.g. [6, 4, 5] to let the hero shot breathe).
+   *  Each ≥ 3, total ≤ 15 (the reel cut). Omitted = 5s each. */
+  shotDurationsSec?: number[];
   /** Steering for the copy pass — location, tier, what to emphasise. */
   operatorNotes?: string;
 };
@@ -631,6 +635,26 @@ export async function createShowcaseProject(
     throw new Error(
       `A showcase reel caps at ${SHOWCASE_REEL_MAX_SHOTS} shots (${SHOWCASE_REEL_MAX_SHOTS * 5}s — the studio's reel length). Pick your best ${SHOWCASE_REEL_MAX_SHOTS}, or switch to the YouTube long-form for the full set.`
     );
+  }
+  // Operator pacing (reel only): each shot ≥ 3s, total ≤ 15s. Long-form
+  // ignores it — chapters depend on the uniform hold.
+  const shotDurations =
+    input.deliverable === "reel" && input.shotDurationsSec
+      ? input.shotDurationsSec
+      : null;
+  if (shotDurations) {
+    if (shotDurations.length !== imageUrls.length) {
+      throw new Error(
+        `shotDurationsSec has ${shotDurations.length} entries for ${imageUrls.length} images.`
+      );
+    }
+    if (shotDurations.some((s) => !Number.isInteger(s) || s < 3)) {
+      throw new Error("Every shot needs at least 3 seconds.");
+    }
+    const total = shotDurations.reduce((n, s) => n + s, 0);
+    if (total > 15) {
+      throw new Error(`Shot timings total ${total}s — the reel cut caps at 15s.`);
+    }
   }
 
   const projectId = nanoid(12);
@@ -675,7 +699,9 @@ export async function createShowcaseProject(
     operatorEmail: op.email,
     videoModel: input.videoModel ?? "seedance-2.0",
     uploadSourced: true,
-    targetDurationSec: isReel ? imageUrls.length * 5 : null,
+    targetDurationSec: isReel
+      ? (shotDurations?.reduce((n, s) => n + s, 0) ?? imageUrls.length * 5)
+      : null,
     concept: {
       workingTitle: copy.workingTitle,
       hook: `${imageUrls.length} shots of one real ${input.worldType === "interior" ? "interior" : "property"}, presented as a cinematic ${isReel ? "reel" : "tour"}.`,
@@ -698,7 +724,7 @@ export async function createShowcaseProject(
       prompt: shot.description,
       styleName: shot.name,
       styleSubtitle: shot.subtitle,
-      durationSec: isReel ? 5 : 0,
+      durationSec: isReel ? (shotDurations?.[i] ?? 5) : 0,
       status: "generated" as const,
       imageUrl: stills[i],
       referenceImageUrl: null,
