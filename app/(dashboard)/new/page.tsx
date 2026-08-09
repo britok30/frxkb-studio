@@ -16,6 +16,7 @@ import {
 import { NICHE_POOL, sampleN } from "@/lib/prompts/niche-pool";
 import { uploadImage } from "@/lib/upload-client";
 import { getLook, looksForWorld, type Look } from "@/lib/prompts/looks";
+import { SHOWCASE_REEL_MAX_SHOTS } from "@/lib/prompts/types";
 
 type Format = "reel" | "carousel" | "before-after" | "style-explorer" | "showcase";
 type WorldType = "interior" | "exterior";
@@ -67,7 +68,7 @@ const FORMAT_PRESETS: Record<
   showcase: {
     label: "Showcase",
     kicker: "Your images · IG · YouTube",
-    hint: "Bring 2–20 of your own photos or renders of one property. GPT names every shot, Seedance animates each into a cinematic clip, and the studio stitches a reel or a chaptered YouTube tour.",
+    hint: "Bring your own photos or renders of one property. GPT names every shot, Seedance animates each into a cinematic clip — your best 3 as a 15s reel, or up to 20 as a chaptered YouTube tour.",
     sceneCount: 10,
     sceneDurationSec: 5,
     aspectClass: "aspect-[9/16]",
@@ -249,7 +250,9 @@ export default function NewProjectPage() {
       : format === "style-explorer"
         ? !!worldType && !!propertyType && !!baseImageUrl
         : format === "showcase"
-          ? !!worldType && showcaseImageUrls.length >= 2
+          ? !!worldType &&
+            showcaseImageUrls.length >= 2 &&
+            (deliverable !== "reel" || showcaseImageUrls.length <= SHOWCASE_REEL_MAX_SHOTS)
           : !!worldType && niche.trim().length >= 2;
 
   async function submit() {
@@ -1439,9 +1442,13 @@ function ShowcaseStep({
 }) {
   const [uploading, setUploading] = useState(false);
   const inputRef = useRef<HTMLInputElement | null>(null);
+  // Reels are the studio's fixed 15s cut — best 3 shots only. The long-form
+  // takes the full set (chapter per shot).
+  const maxShots = deliverable === "reel" ? SHOWCASE_REEL_MAX_SHOTS : 20;
+  const overCap = urls.length > maxShots;
 
   async function upload(files: FileList) {
-    const room = 20 - urls.length;
+    const room = maxShots - urls.length;
     const picked = Array.from(files).slice(0, room);
     if (picked.length === 0) return;
     setUploading(true);
@@ -1464,7 +1471,7 @@ function ShowcaseStep({
     {
       id: "reel" as const,
       name: "Reel",
-      detail: "9:16 · every shot becomes a 5s animated clip, crossfaded with music",
+      detail: `9:16 · your best ${SHOWCASE_REEL_MAX_SHOTS} shots as 5s animated clips — the 15s cut`,
     },
     {
       id: "long-form" as const,
@@ -1507,12 +1514,20 @@ function ShowcaseStep({
       <div className="flex flex-col gap-2">
         <div className="flex items-baseline justify-between gap-4">
           <span className="text-[10px] uppercase tracking-[0.22em] text-muted-foreground">
-            Your images ({urls.length}/20)
+            Your images ({urls.length}/{maxShots})
           </span>
           <span className="text-[11px] text-muted-foreground tracking-tight">
             Upload in play order — shot 1 opens the {deliverable === "reel" ? "reel" : "video"}
           </span>
         </div>
+        {overCap && (
+          <p className="rounded-md border border-amber-500/40 bg-amber-500/5 px-3 py-2 text-xs text-amber-600 dark:text-amber-400 leading-relaxed">
+            A reel caps at {SHOWCASE_REEL_MAX_SHOTS} shots (the 15s cut). Remove{" "}
+            {urls.length - SHOWCASE_REEL_MAX_SHOTS} image
+            {urls.length - SHOWCASE_REEL_MAX_SHOTS === 1 ? "" : "s"} — or switch to the
+            YouTube long-form to keep the full set.
+          </p>
+        )}
         <div className="flex flex-wrap gap-2">
           {urls.map((url, i) => (
             <div key={url} className="relative size-24 rounded-md overflow-hidden border group/shot">
@@ -1530,7 +1545,7 @@ function ShowcaseStep({
               </button>
             </div>
           ))}
-          {urls.length < 20 && (
+          {urls.length < maxShots && (
             <button
               type="button"
               onClick={() => inputRef.current?.click()}

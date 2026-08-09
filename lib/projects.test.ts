@@ -699,6 +699,30 @@ describe("createShowcaseProject", () => {
     expect(storageMocks.ensurePngStill).toHaveBeenCalledTimes(3);
   });
 
+  it("caps reels at 3 shots (the 15s cut) — long-form takes the full set", async () => {
+    const ten = Array.from({ length: 10 }, (_, i) => `https://blob.example/s${i}.jpg`);
+    await expect(
+      createShowcaseProject({ imageUrls: ten, deliverable: "reel", worldType: "interior" })
+    ).rejects.toThrow(/caps at 3 shots/);
+    expect(showcaseMocks.generateShowcaseCopy).not.toHaveBeenCalled();
+
+    // Same set is fine as a long-form.
+    storageMocks.ensurePngStill.mockImplementation(async ({ url }) => url);
+    showcaseMocks.generateShowcaseCopy.mockResolvedValue({
+      workingTitle: "Ten Shot Tour",
+      vibe: "A full walk through the property.",
+      shots: ten.map((_, i) => ({
+        index: i + 1,
+        name: `Room ${i + 1}`,
+        subtitle: `Space ${i + 1}`,
+        description: `A generously described view of room number ${i + 1} with visible furniture and light.`,
+      })),
+    });
+    await expect(
+      createShowcaseProject({ imageUrls: ten, deliverable: "long-form", worldType: "interior" })
+    ).resolves.toBeTruthy();
+  });
+
   it("refuses fewer than 2 images before any GPT spend", async () => {
     await expect(
       createShowcaseProject({

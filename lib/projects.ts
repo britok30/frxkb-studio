@@ -11,6 +11,7 @@ import {
 } from "@/lib/prompts/metadata";
 import {
   defaultsForFormat,
+  SHOWCASE_REEL_MAX_SHOTS,
   STYLE_EXPLORER_HOLD_SEC,
   type Format,
   type AspectRatio,
@@ -625,6 +626,11 @@ export async function createShowcaseProject(
   const imageUrls = input.imageUrls.slice(0, 20);
   if (imageUrls.length < 2) {
     throw new Error("Showcase needs at least 2 images.");
+  }
+  if (input.deliverable === "reel" && imageUrls.length > SHOWCASE_REEL_MAX_SHOTS) {
+    throw new Error(
+      `A showcase reel caps at ${SHOWCASE_REEL_MAX_SHOTS} shots (${SHOWCASE_REEL_MAX_SHOTS * 5}s — the studio's reel length). Pick your best ${SHOWCASE_REEL_MAX_SHOTS}, or switch to the YouTube long-form for the full set.`
+    );
   }
 
   const projectId = nanoid(12);

@@ -78,6 +78,12 @@ export const ScenePromptsResponseSchema = z.object({
 });
 export type ScenePromptsResponse = z.infer<typeof ScenePromptsResponseSchema>;
 
+/** Showcase reel shot cap. 3 × 5s = the 15s reel — the studio's reel length
+ *  (AI reels lock at exactly 3 × 5s). More shots than this belong in the
+ *  long-form deliverable (up to 20 chapters), not a reel; the cost curve
+ *  agrees (~$2.85/clip of Seedance 2.5 + Topaz). */
+export const SHOWCASE_REEL_MAX_SHOTS = 3;
+
 /** Uniform chapter hold for the style-explorer long-form: every still — and,
  *  when the styles are animated, every clip — occupies exactly this many
  *  seconds of the timeline. Chapter timestamps in the YouTube description are
