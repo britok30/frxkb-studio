@@ -10,6 +10,7 @@ import {
   estimateFinalize,
   formatCost,
 } from "@/lib/pricing";
+import { STYLE_EXPLORER_HOLD_SEC } from "@/lib/prompts/types";
 
 type Counts = {
   pending: number;
@@ -98,15 +99,15 @@ export function ProjectActions({
   const allStillsDone = totalScenes > 0 && remaining === 0 && counts.generating === 0 && ready === totalScenes;
 
   // Animate gating: stills all done, but not every scene has a video yet.
-  // Reels are the only animatable format — everything else (carousel,
-  // style-explorer, before-after) is stills-only and finalizes as soon as
-  // every still is in.
+  // Reels REQUIRE animation (the deliverable is the clips). Style-explorer
+  // animation is OPTIONAL — the Animate button appears alongside Finalize,
+  // and the stitch upgrades from stills slideshow to real footage once every
+  // style has a clip. Carousel and before-after stay stills-only.
   const isReel = format === "reel";
-  const isAnimatable = isReel;
+  const isAnimatable = isReel || format === "style-explorer";
   const animatableCount = totalScenes;
   const animateNeeded = isAnimatable && allStillsDone && animatedCount < animatableCount;
-  const canFinalize =
-    allStillsDone && (!isAnimatable || animatedCount >= animatableCount);
+  const canFinalize = allStillsDone && (!isReel || animatedCount >= animatableCount);
 
   async function generate(force = false) {
     setBusy("generate");
@@ -190,7 +191,9 @@ export function ProjectActions({
   const animateCost = formatCost(
     estimateAnimateBatch(
       Math.max(0, animatableCount - animatedCount),
-      perSceneDurationSec || 3,
+      // Style-explorer clips fill the uniform chapter hold; scene rows carry
+      // durationSec 0 there, so the hold constant is the truthful duration.
+      format === "style-explorer" ? STYLE_EXPLORER_HOLD_SEC : perSceneDurationSec || 3,
       quality,
       videoModel
     )

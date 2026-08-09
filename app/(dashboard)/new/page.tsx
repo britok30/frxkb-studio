@@ -62,7 +62,7 @@ const FORMAT_PRESETS: Record<
   "style-explorer": {
     label: "Style explorer",
     kicker: "YouTube long-form",
-    hint: "Describe a space, render a base, then GPT-5.6 restyles that exact space into ~15 recognisable design styles. SEO metadata + card copy included.",
+    hint: "Describe a space, render a base, then GPT-5.6 restyles that exact space into ~15 recognisable design styles. Optionally animate every style into real footage. SEO metadata + card copy included.",
     sceneCount: 15, // number of styles
     sceneDurationSec: 0, // static stills
     aspectClass: "aspect-video", // 16:9 for YouTube
@@ -267,6 +267,7 @@ export default function NewProjectPage() {
             worldType,
             propertyType,
             styleCount: sceneCount,
+            videoModel,
             operatorNotes: operatorNotes.trim() || undefined,
             baseDescription: baseDescription.trim() || undefined,
           }),
@@ -432,21 +433,24 @@ export default function NewProjectPage() {
                   onTransformationChange={setTransformationPrompt}
                 />
               ) : format === "style-explorer" ? (
-                <StyleExplorerStep
-                  description={baseDescription}
-                  onDescriptionChange={(s) => {
-                    setBaseDescription(s);
-                    setBaseImageUrl(null);
-                  }}
-                  worldType={worldType}
-                  propertyType={propertyType}
-                  baseImageUrl={baseImageUrl}
-                  onBaseGenerated={setBaseImageUrl}
-                  styleCount={sceneCount}
-                  onStyleCountChange={setSceneCount}
-                  notes={operatorNotes}
-                  onNotesChange={setOperatorNotes}
-                />
+                <>
+                  <StyleExplorerStep
+                    description={baseDescription}
+                    onDescriptionChange={(s) => {
+                      setBaseDescription(s);
+                      setBaseImageUrl(null);
+                    }}
+                    worldType={worldType}
+                    propertyType={propertyType}
+                    baseImageUrl={baseImageUrl}
+                    onBaseGenerated={setBaseImageUrl}
+                    styleCount={sceneCount}
+                    onStyleCountChange={setSceneCount}
+                    notes={operatorNotes}
+                    onNotesChange={setOperatorNotes}
+                  />
+                  <VideoEngineToggle value={videoModel} onChange={setVideoModel} />
+                </>
               ) : (
                 worldType && (
                   <>
@@ -596,6 +600,15 @@ export default function NewProjectPage() {
                       onEdit={() => go(2)}
                     />
                     <ReviewRow label="Styles" value={`${sceneCount}`} onEdit={() => go(2)} />
+                    <ReviewRow
+                      label="Video engine"
+                      value={
+                        videoModel === "seedance-2.5"
+                          ? "Seedance 2.5 — newest motion, ~2× video cost"
+                          : "Seedance 2.0 — proven pipeline"
+                      }
+                      onEdit={() => go(2)}
+                    />
                   </>
                 ) : (
                   <>

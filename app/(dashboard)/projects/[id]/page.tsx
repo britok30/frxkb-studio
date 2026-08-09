@@ -24,6 +24,7 @@ import {
   estimateImageBatch,
   formatCost,
 } from "@/lib/pricing";
+import { STYLE_EXPLORER_HOLD_SEC } from "@/lib/prompts/types";
 import { sumProjectSpend } from "@/lib/spend";
 
 export const dynamic = "force-dynamic";
@@ -274,6 +275,11 @@ export default async function ProjectPage({ params }: { params: Promise<{ id: st
           canDownload={canViewExports}
           stitchStatus={project.stitchStatus}
           stitchError={project.stitchError}
+          animatedLongForm={
+            project.format === "style-explorer" &&
+            scenes.length > 0 &&
+            animatedCount === scenes.length
+          }
           aspect={
             project.format === "style-explorer"
               ? (project.aspectRatio ?? "16:9")
@@ -348,7 +354,8 @@ export default async function ProjectPage({ params }: { params: Promise<{ id: st
         />
       </section>
 
-      {project.format === "reel" && (animatedCount > 0 || animateFailedScenes.length > 0) && (
+      {(project.format === "reel" || project.format === "style-explorer") &&
+        (animatedCount > 0 || animateFailedScenes.length > 0) && (
           <section className="flex flex-col gap-4">
             <div className="flex items-baseline justify-between gap-4 border-b pb-3">
               <span className="text-xs uppercase tracking-[0.18em] text-muted-foreground">
@@ -361,8 +368,8 @@ export default async function ProjectPage({ params }: { params: Promise<{ id: st
                 )}
               </div>
             </div>
-            {/* Reels: 9:16 cards (the deliverable aspect). Before-after: use
-                the project's stored aspect since the upload defines it. */}
+            {/* Reels: 9:16 cards (the deliverable aspect). Style-explorer:
+                the project's stored aspect (16:9 long-form). */}
             <div className="grid gap-3 grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5">
               {scenes
                 .filter((s) => !!s.videoUrl)
@@ -376,14 +383,16 @@ export default async function ProjectPage({ params }: { params: Promise<{ id: st
                       posterUrl: s.imageUrl,
                       durationSec: s.durationSec,
                     }}
-                    aspect="9:16"
+                    aspect={project.format === "style-explorer" ? "16:9" : "9:16"}
                     projectId={project.id}
                     canReanimate={isOwner && !isBusy}
                     hasPreviousTake={!!s.previousVideoUrl}
                     reanimateCostLabel={formatCost(
                       estimateAnimateBatch(
                         1,
-                        s.durationSec ?? perSceneDurationSec,
+                        project.format === "style-explorer"
+                          ? STYLE_EXPLORER_HOLD_SEC
+                          : (s.durationSec ?? perSceneDurationSec),
                         project.quality === "hero" ? "hero" : "standard",
                         project.videoModel === "seedance-2.5" ? "seedance-2.5" : "seedance-2.0"
                       )
@@ -400,7 +409,7 @@ export default async function ProjectPage({ params }: { params: Promise<{ id: st
                     posterUrl: s2.imageUrl,
                     error: s2.error as string,
                   }}
-                  aspect="9:16"
+                  aspect={project.format === "style-explorer" ? "16:9" : "9:16"}
                   canRetry={isOwner && !isBusy}
                   index={i}
                 />

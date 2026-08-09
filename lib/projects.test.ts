@@ -1593,6 +1593,44 @@ describe("stitchFinalVideo — style-explorer slideshow", () => {
     expect(composeMocks.composeVideo.mock.calls[0][0][0].keyframes[1].timestamp).toBe(15000);
   });
 
+  it("upgrades to real footage once EVERY style has a clip — hold pinned to the chapter constant", async () => {
+    styleExplorerReady();
+    dbMocks.selectScenesByProject.mockResolvedValue([
+      { ...fakeScene({ id: "s_1", order: 1, status: "generated" }), imageUrl: "https://blob/base.jpg", videoUrl: "https://blob/base.mp4", durationSec: 0 },
+      { ...fakeScene({ id: "s_2", order: 2, status: "generated" }), imageUrl: "https://blob/style-a.jpg", videoUrl: "https://blob/style-a.mp4", durationSec: 0 },
+      { ...fakeScene({ id: "s_3", order: 3, status: "approved" }), imageUrl: "https://blob/style-b.jpg", videoUrl: "https://blob/style-b.mp4", durationSec: 0 },
+    ]);
+
+    // perStillSec override must be IGNORED — clips were rendered to fill
+    // exactly the 10s chapter hold, and a longer hold would outrun them.
+    await stitchFinalVideo("p_1", { perStillSec: 5 });
+
+    const tracks = composeMocks.composeVideo.mock.calls[0][0];
+    expect(tracks[0].type).toBe("video");
+    expect(tracks[0].keyframes).toEqual([
+      { timestamp: 0, duration: 10000, url: "https://blob/base.mp4" },
+      { timestamp: 10000, duration: 10000, url: "https://blob/style-a.mp4" },
+      { timestamp: 20000, duration: 10000, url: "https://blob/style-b.mp4" },
+    ]);
+  });
+
+  it("stays a stills slideshow while ANY style lacks a clip (mixed timelines can't render on the fal fallback)", async () => {
+    styleExplorerReady();
+    dbMocks.selectScenesByProject.mockResolvedValue([
+      { ...fakeScene({ id: "s_1", order: 1, status: "generated" }), imageUrl: "https://blob/base.jpg", videoUrl: "https://blob/base.mp4", durationSec: 0 },
+      { ...fakeScene({ id: "s_2", order: 2, status: "generated" }), imageUrl: "https://blob/style-a.jpg", videoUrl: null, durationSec: 0 },
+    ]);
+
+    await stitchFinalVideo("p_1");
+
+    const tracks = composeMocks.composeVideo.mock.calls[0][0];
+    expect(tracks[0].type).toBe("image");
+    expect(tracks[0].keyframes.map((k: { url: string }) => k.url)).toEqual([
+      "https://blob/base.jpg",
+      "https://blob/style-a.jpg",
+    ]);
+  });
+
   it("refuses when any style is not generated yet", async () => {
     dbMocks.selectProjectById.mockResolvedValue({ id: "p_1", format: "style-explorer", worldType: "interior", status: "ready" });
     dbMocks.selectScenesByProject.mockResolvedValue([

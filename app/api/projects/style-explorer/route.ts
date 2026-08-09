@@ -21,6 +21,8 @@ const Body = z.object({
   worldType: WorldTypeSchema,
   propertyType: PropertyTypeSchema,
   styleCount: z.number().int().min(3).max(20).optional(),
+  /** Seedance generation for the optional per-style Animate step. */
+  videoModel: z.enum(["seedance-2.0", "seedance-2.5"]).optional(),
   operatorNotes: z.string().max(500).optional(),
   /** The operator's base-space description (from /api/style-base) — persisted so
    *  the YouTube metadata grounds its title/description in the real space. */

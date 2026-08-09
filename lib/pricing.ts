@@ -260,7 +260,8 @@ export function estimateProjectTotal(format: Format, sceneCount: number): number
   if (format === "style-explorer") {
     // 1 base render (text-to-image) + N styled edits ($0.15 each) + the styles
     // GPT-5.5 call (bigger per-style output than scene gen) + the YouTube
-    // metadata GPT-5.5 call. No animation (static stills).
+    // metadata GPT-5.5 call. Animation is OPTIONAL and excluded here — the
+    // Animate button prices it separately via estimateAnimateBatch.
     const styles = Math.max(0, sceneCount);
     const stylesGen = estimateStylesGen(styles);
     return (

@@ -78,6 +78,13 @@ export const ScenePromptsResponseSchema = z.object({
 });
 export type ScenePromptsResponse = z.infer<typeof ScenePromptsResponseSchema>;
 
+/** Uniform chapter hold for the style-explorer long-form: every still — and,
+ *  when the styles are animated, every clip — occupies exactly this many
+ *  seconds of the timeline. Chapter timestamps in the YouTube description are
+ *  i × this, so animate + stitch + metadata MUST all read the same value.
+ *  Client-safe (imported by cost labels). */
+export const STYLE_EXPLORER_HOLD_SEC = 10;
+
 export function defaultsForFormat(format: Format): {
   aspectRatio: AspectRatio;
   sceneCount: number;
@@ -103,9 +110,10 @@ export function defaultsForFormat(format: Format): {
       // N styled edits of one uploaded base, for a YouTube long-form "X styles
       // of this space" video. Like before-after, the real aspect comes from
       // the upload (stored on projects.aspectRatio); 16:9 here is the long-form
-      // placeholder. Static stills (durationSec 0) — pacing/music/cards are
-      // done in CapCut. Default 15 styles → a longer SEO walkthrough with
-      // more chapter keywords per upload.
+      // placeholder. Stills by default (durationSec 0); the operator can
+      // optionally Animate every style into a STYLE_EXPLORER_HOLD_SEC clip —
+      // the stitch swaps to real footage once all styles have one. Default 15
+      // styles → a longer SEO walkthrough with more chapter keywords.
       return { aspectRatio: "16:9", sceneCount: 15, sceneDurationSec: 0 };
   }
 }

@@ -11,6 +11,7 @@ import {
 } from "@/lib/prompts/metadata";
 import {
   defaultsForFormat,
+  STYLE_EXPLORER_HOLD_SEC,
   type Format,
   type AspectRatio,
   type PropertyType,
@@ -426,7 +427,8 @@ export async function createBeforeAfterProject(
  *    /edit (the same conditioning before-after uses for its "after").
  *  - Each scene carries title + subtitle card copy (styleName/styleSubtitle)
  *    for the operator's CapCut name cards.
- *  - Static stills only; no animation, no dedupe.
+ *  - Stills first; the operator can optionally Animate every style into a
+ *    chapter-hold clip afterwards. No dedupe.
  */
 export type CreateStyleExplorerInput = {
   /** Public Blob URL of the operator-approved base — a text-to-image render
@@ -439,6 +441,9 @@ export type CreateStyleExplorerInput = {
   propertyType: PropertyType;
   /** How many styles to propose. Clamped 3–20; defaults to the format default (10). */
   styleCount?: number;
+  /** Seedance generation for the optional per-style Animate step. Defaults
+   *  to 2.0; 2.5 = better motion at ~2× the video cost. */
+  videoModel?: "seedance-2.0" | "seedance-2.5";
   /** Optional steering — location, tier, or angle for the SEO concept. */
   operatorNotes?: string;
   /** The operator's own description of the space (what they typed to render the
@@ -515,6 +520,7 @@ export async function createStyleExplorerProject(
     aspectRatio: input.aspectRatio,
     status: "scripting",
     operatorEmail: op.email,
+    videoModel: input.videoModel ?? "seedance-2.0",
     targetDurationSec: null,
     concept: {
       workingTitle,
@@ -1103,13 +1109,17 @@ export async function animateAllScenes(
 ): Promise<AnimateAllResult> {
   const project = await selectProjectById(projectId);
   if (!project) throw new Error(`Project ${projectId} not found`);
-  // Animation makes sense for reel (every scene → video) and before-after
-  // (just the "after" scene → video). Carousel stays static.
+  // Reel: every scene → clip. Style-explorer: every style → a chapter-hold
+  // clip (optional upgrade from the stills slideshow). Carousel stays static;
   // before-after went stills-only 2026-07-24 (4 static "after" concepts).
-  if (project.format !== "reel") {
-    throw new Error("Animate is only available for reel projects.");
+  if (project.format !== "reel" && project.format !== "style-explorer") {
+    throw new Error("Animate is only available for reel and style-explorer projects.");
   }
   if (!project.concept) throw new Error("Project has no concept brief — animate after concept exists.");
+  // Style-explorer scenes carry durationSec 0 (stills); their clips fill the
+  // chapter hold exactly so description timestamps stay true.
+  const clipSecFor = (sceneDurationSec: number | null) =>
+    project.format === "style-explorer" ? STYLE_EXPLORER_HOLD_SEC : sceneDurationSec || 5;
 
   // Reels are always 9:16; before-after inherits from the upload (stored on
   // project.aspectRatio). The seedance call below uses this so the after
@@ -1165,7 +1175,7 @@ export async function animateAllScenes(
     await assertWithinDailyBudget(
       estimateAnimateBatch(
         targets.length,
-        targets[0]?.durationSec || 5,
+        clipSecFor(targets[0]?.durationSec ?? null),
         project.quality === "hero" ? "hero" : "standard",
         project.videoModel === "seedance-2.5" ? "seedance-2.5" : "seedance-2.0"
       )
@@ -1213,7 +1223,7 @@ export async function animateAllScenes(
         const seedanceResult = await generateVideo({
           imageUrl: scene.imageUrl as string,
           motionPrompt: motion,
-          durationSec: (scene.durationSec || 5) + XFADE_SEC,
+          durationSec: clipSecFor(scene.durationSec) + XFADE_SEC,
           resolution: at720 ? "720p" : "1080p",
           fast: useFast,
           model: is25 ? "seedance-2.5" : "seedance-2.0",
@@ -1247,7 +1257,7 @@ export async function animateAllScenes(
       // Ledger: seedance tier per quality/model; Topaz 4K30 rides every clip.
       // Bill what was actually requested — durationSec + the crossfade pad,
       // same as animatePlannedScene (this path used to under-bill by the pad).
-      const billedSec = Math.min(is25 ? 30 : 15, Math.max(4, (scene.durationSec || 5) + XFADE_SEC));
+      const billedSec = Math.min(is25 ? 30 : 15, Math.max(4, clipSecFor(scene.durationSec) + XFADE_SEC));
       await recordSpend({
         projectId,
         kind: "video",
@@ -1366,11 +1376,21 @@ export async function planAnimate(
 ): Promise<AnimatePlan> {
   const project = await selectProjectById(projectId);
   if (!project) throw new Error(`Project ${projectId} not found`);
-  // before-after went stills-only 2026-07-24 (4 static "after" concepts).
-  if (project.format !== "reel") {
-    throw new Error("Animate is only available for reel projects.");
+  // Reel: every scene → clip (required for stitch). Style-explorer: every
+  // style → a STYLE_EXPLORER_HOLD_SEC clip (OPTIONAL — the stitch upgrades
+  // from stills slideshow to real footage once all styles have one).
+  // before-after went stills-only 2026-07-24; carousel stays static.
+  if (project.format !== "reel" && project.format !== "style-explorer") {
+    throw new Error("Animate is only available for reel and style-explorer projects.");
   }
   if (!project.concept) throw new Error("Project has no concept brief — animate after concept exists.");
+
+  // Style-explorer scenes carry durationSec 0 (stills); their clips must fill
+  // exactly the chapter hold so description timestamps stay true.
+  const clipSecFor = (sceneDurationSec: number | null) =>
+    project.format === "style-explorer"
+      ? STYLE_EXPLORER_HOLD_SEC
+      : sceneDurationSec || 5;
 
   const aspectRatio: AspectRatio =
     project.aspectRatio ?? defaultsForFormat(project.format).aspectRatio;
@@ -1413,7 +1433,12 @@ export async function planAnimate(
     }
 
     await assertWithinDailyBudget(
-      estimateAnimateBatch(targetsRaw.length, targetsRaw[0]?.durationSec || 5, quality, videoModel)
+      estimateAnimateBatch(
+        targetsRaw.length,
+        clipSecFor(targetsRaw[0]?.durationSec ?? null),
+        quality,
+        videoModel
+      )
     );
 
     const motionByOrder = new Map(
@@ -1435,7 +1460,7 @@ export async function planAnimate(
         sceneId: s.id,
         order: s.order,
         imageUrl: s.imageUrl as string,
-        durationSec: s.durationSec || 5,
+        durationSec: clipSecFor(s.durationSec),
         motion: motionByOrder.get(s.order) as string,
       }));
 
@@ -1558,8 +1583,9 @@ export type StitchResult = {
  *  10-style video stays in the 1-2 minute band YouTube retention likes. */
 // 10s per still since 2026-07-25 (was 7): at 15 styles + base the video
 // needs room to breathe, and longer holds read better for ambient viewing.
-// MUST match the chapter-stamp default in lib/prompts/metadata.ts.
-const STYLE_EXPLORER_PER_STILL_SEC = 10;
+// MUST match the chapter-stamp default in lib/prompts/metadata.ts AND the
+// animate clip length — the shared constant enforces all three.
+const STYLE_EXPLORER_PER_STILL_SEC = STYLE_EXPLORER_HOLD_SEC;
 
 /**
  * Stitch a project's assets into ONE ready-to-post video — the CapCut
@@ -1568,6 +1594,8 @@ const STYLE_EXPLORER_PER_STILL_SEC = 10;
  * Style-explorer: every still (Original first, then each style) holds for a
  * uniform `perStillSec` — a stills+music YouTube long-form; with uniform
  * timing the description's chapter timestamps are just i × perStillSec.
+ * When every style has been Animated, the same uniform slots carry the
+ * seedance clips instead — real footage, chapter timestamps unchanged.
  *
  * Audio: clips render SILENT (per-clip seedance ambience was turned off —
  * it never synced across cuts). Passing `musicUrl` lays ONE audio bed
@@ -1642,7 +1670,17 @@ export async function prepareStitch(
         `Cannot stitch: ${missing || "all"} style${missing === 1 ? "" : "s"} not generated yet.`
       );
     }
-    const perStillMs = clamp(opts.perStillSec ?? STYLE_EXPLORER_PER_STILL_SEC, 3, 15) * 1000;
+    // Animated long-form: once EVERY style has a clip, chapters become real
+    // footage. All-or-nothing on purpose — a mixed stills+clips timeline
+    // can't render on the fal fallback (image and video tracks can't
+    // coexist), so until the last style is animated the stitch stays a
+    // stills slideshow. Clips were rendered to fill exactly the chapter
+    // hold (+ crossfade pad), so the hold is PINNED when animated — an
+    // opts.perStillSec override would outrun the footage.
+    const allAnimated = renderable.every((s) => !!s.videoUrl);
+    const perStillMs = allAnimated
+      ? STYLE_EXPLORER_PER_STILL_SEC * 1000
+      : clamp(opts.perStillSec ?? STYLE_EXPLORER_PER_STILL_SEC, 3, 15) * 1000;
     const cycleMs = renderable.length * perStillMs;
     // Whole cycles only, so the video always ends on the last style. At
     // least one cycle; capped at 20 minutes as a runaway guard.
@@ -1653,7 +1691,11 @@ export async function prepareStitch(
     // ONE cycle only — renderStitch repeats it (Shotstack renders the cycle,
     // fal concats copies) so vendor cost doesn't scale with target length.
     for (const s of renderable) {
-      segments.push({ kind: "image", url: s.imageUrl as string, ms: perStillMs });
+      segments.push(
+        allAnimated
+          ? { kind: "video", url: s.videoUrl as string, ms: perStillMs }
+          : { kind: "image", url: s.imageUrl as string, ms: perStillMs }
+      );
     }
   } else {
     const missing = ordered.filter((s) => !s.videoUrl);

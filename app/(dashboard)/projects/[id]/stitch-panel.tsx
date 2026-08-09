@@ -33,11 +33,16 @@ export function StitchPanel({
   stitchError = null,
   initialMusicUrl = null,
   initialMusicDurationSec = null,
+  animatedLongForm = false,
 }: {
   projectId: string;
   format: string;
   finalVideoUrl: string | null;
   aspect: string;
+  /** Style-explorer only: every style has an animated clip, so the stitch
+   *  renders real footage and the per-style hold is PINNED to the clip
+   *  length server-side (an override would outrun the footage). */
+  animatedLongForm?: boolean;
   /** Whether the signed-in operator has their own Shotstack key. Without
    *  one, stitching uses the fal fallback (hard cuts) and the panel shows
    *  the crossfade opt-in hint. */
@@ -230,9 +235,11 @@ export function StitchPanel({
               <CardTitle className="text-base">Final video</CardTitle>
               <CardDescription>
                 {isSlideshow
-                    ? "The YouTube long-form, ready to upload: every still held in sequence, looped to your target length, music tiled underneath. Add music — the video is silent without it. Chapters land every " +
-                      perStillSec +
-                      "s of cycle one."
+                    ? (animatedLongForm
+                        ? "The YouTube long-form, ready to upload: every style plays as REAL FOOTAGE (all styles animated), looped to your target length, music tiled underneath. Add music — the video is silent without it. Chapters land every 10s of cycle one."
+                        : "The YouTube long-form, ready to upload: every still held in sequence, looped to your target length, music tiled underneath. Add music — the video is silent without it. Chapters land every " +
+                          perStillSec +
+                          "s of cycle one.")
                     : "All clips as one ready-to-post MP4 with crossfades. Clips are silent — add a music file for the audio bed, or the final ships without sound."}
               </CardDescription>
             </div>
@@ -313,6 +320,9 @@ export function StitchPanel({
           <div className="flex flex-wrap items-center gap-3">
             {isSlideshow && (
               <>
+                {/* Animated long-forms: the hold is pinned to the clips' length
+                    server-side — no knob to turn. */}
+                {!animatedLongForm && (
                 <label className="inline-flex items-center gap-2 text-xs text-muted-foreground tracking-tight">
                   Seconds per style
                   <input
@@ -326,6 +336,7 @@ export function StitchPanel({
                     className="w-16 h-9 rounded-md border bg-transparent px-2 text-sm text-foreground focus:border-foreground outline-none"
                   />
                 </label>
+                )}
                 <label
                   className="inline-flex items-center gap-2 text-xs text-muted-foreground tracking-tight"
                   title="Full-timeline Shotstack render at high bitrate (~14-17 Mbps) — the upload-quality option. Unchecked uses the cheap loop-concat (~2-3 Mbps), fine for drafts."
