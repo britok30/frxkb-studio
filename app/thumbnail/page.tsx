@@ -7,6 +7,7 @@ import { motion, AnimatePresence } from "motion/react";
 import { toast } from "sonner";
 import { Download, ImagePlus } from "lucide-react";
 import { saveAs } from "file-saver";
+import { downloadThumbnailFilename } from "@/lib/filenames";
 import { upload } from "@vercel/blob/client";
 import { ease } from "@/lib/motion";
 import { formatCost, GPT_IMAGE_2_THUMBNAIL_USD } from "@/lib/pricing";
@@ -79,7 +80,7 @@ export default function ThumbnailPage() {
     try {
       const res = await fetch(url);
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      saveAs(await res.blob(), url.split("/").pop()?.split("?")[0] || "thumbnail.jpg");
+      saveAs(await res.blob(), downloadThumbnailFilename(text));
       toast.success("Saved", { id: toastId });
     } catch (err) {
       const message = err instanceof Error ? err.message : "Unknown error";

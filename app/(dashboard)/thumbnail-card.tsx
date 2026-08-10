@@ -5,6 +5,7 @@ import { motion } from "motion/react";
 import { toast } from "sonner";
 import { Download } from "lucide-react";
 import { saveAs } from "file-saver";
+import { downloadThumbnailFilename } from "@/lib/filenames";
 import { Card } from "@/components/ui/card";
 import { ease, staggerDelay } from "@/lib/motion";
 
@@ -21,7 +22,7 @@ export function ThumbnailCard({
     try {
       const res = await fetch(thumbnail.url);
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      saveAs(await res.blob(), thumbnail.url.split("/").pop()?.split("?")[0] || "thumbnail.jpg");
+      saveAs(await res.blob(), downloadThumbnailFilename(thumbnail.text));
       toast.success("Saved", { id: toastId });
     } catch (err) {
       const message = err instanceof Error ? err.message : "Unknown error";
