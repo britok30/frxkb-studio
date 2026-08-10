@@ -5,10 +5,13 @@ import {
   ADMIN_EMAIL,
   getDailyBudgetOverrides,
   getTimeoutSetting,
+  getUpscalerSetting,
   type TimeoutSetting,
+  type UpscalerSetting,
 } from "@/lib/app-settings";
 import { TimeoutToggle } from "../timeout-toggle";
 import { BudgetEditor, type BudgetRow } from "./budget-editor";
+import { UpscalerToggle } from "./upscaler-toggle";
 
 export const dynamic = "force-dynamic";
 
@@ -23,6 +26,13 @@ export default async function AdminPage() {
     timeout = await getTimeoutSetting();
   } catch {
     timeout = null;
+  }
+
+  let upscaler: UpscalerSetting = "topaz";
+  try {
+    upscaler = await getUpscalerSetting();
+  } catch {
+    upscaler = "topaz";
   }
 
   let budgets: BudgetRow[] = [];
@@ -52,6 +62,8 @@ export default async function AdminPage() {
           Only your account can see this page.
         </p>
       </header>
+
+      <UpscalerToggle initial={upscaler} />
 
       <BudgetEditor initial={budgets} />
 

@@ -43,6 +43,34 @@ export async function setTimeoutSetting(setting: TimeoutSetting): Promise<void> 
     });
 }
 
+const UPSCALER_KEY = "upscaler";
+
+export type UpscalerSetting = "topaz" | "seedvr2";
+
+/** Which model runs the crisp-pipeline upscale after seedance. Runtime-
+ *  switchable (admin page) so Topaz vs SeedVR2 can be A/B'd without a
+ *  deploy; planAnimate snapshots it into the plan so an in-flight batch
+ *  stays consistent mid-toggle. Default: topaz (the incumbent). */
+export async function getUpscalerSetting(): Promise<UpscalerSetting> {
+  const rows = await getDb()
+    .select()
+    .from(appSettings)
+    .where(eq(appSettings.key, UPSCALER_KEY))
+    .limit(1);
+  const value = rows[0]?.value as { model?: string } | undefined;
+  return value?.model === "seedvr2" ? "seedvr2" : "topaz";
+}
+
+export async function setUpscalerSetting(model: UpscalerSetting): Promise<void> {
+  await getDb()
+    .insert(appSettings)
+    .values({ key: UPSCALER_KEY, value: { model }, updatedAt: new Date() })
+    .onConflictDoUpdate({
+      target: appSettings.key,
+      set: { value: { model }, updatedAt: new Date() },
+    });
+}
+
 const BUDGETS_KEY = "daily-budgets";
 
 /** Runtime per-operator daily-cap overrides (USD), keyed by email. Absent

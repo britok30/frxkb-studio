@@ -60,6 +60,19 @@ export const FAL_TOPAZ_PER_SECOND_GT_1080P = 0.08;
  *  pipeline interpolates 24fps → 30fps, so the multiplier always applies. */
 export const FAL_TOPAZ_FPS_INTERPOLATION_MULTIPLIER = 2;
 
+/** SeedVR2 video upscale (fal, 2026-08): $0.001 per megapixel of video data
+ *  (width × height × frames / 1e6). The crisp pipeline outputs 2160p
+ *  (3840×2160 ≈ 8.29 MP) at seedance's 24fps → ~$0.199/s of output —
+ *  assuming fal bills on OUTPUT dimensions (their example is ambiguous;
+ *  verify against the ledger after the first run and correct if it's
+ *  input-billed, which would be ~8× cheaper). No fps-interpolation
+ *  surcharge — SeedVR2 doesn't interpolate. */
+export const FAL_SEEDVR_PER_MEGAPIXEL = 0.001;
+export function estimateSeedVR(durationSec: number, fps: number = 24): number {
+  const outputMegapixels = (3840 * 2160) / 1_000_000;
+  return Math.max(0, durationSec) * fps * outputMegapixels * FAL_SEEDVR_PER_MEGAPIXEL;
+}
+
 /** fal ffmpeg-api/compose (final-video stitch) — $0.0002 per second of
  *  output. Rounding error next to seedance; surfaced for completeness. */
 export const FAL_COMPOSE_PER_SECOND = 0.0002;

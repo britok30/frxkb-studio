@@ -32,6 +32,8 @@ import {
 } from "@/lib/shotstack";
 import { generateVideo } from "@/lib/seedance";
 import { upscaleVideo } from "@/lib/topaz";
+import { upscaleVideoSeedVR } from "@/lib/seedvr";
+import { getUpscalerSetting, type UpscalerSetting } from "@/lib/app-settings";
 import { generateMotionPrompts, getCameraMove } from "@/lib/prompts/motion";
 import {
   completeLargeRehost,
@@ -52,6 +54,7 @@ import {
   estimateSceneGen,
   estimateShowcaseCopy,
   estimateStylesGen,
+  estimateSeedVR,
   estimateTopazUpscale,
   FAL_COMPOSE_PER_SECOND,
   FAL_NANO_BANANA_EDIT_PER_IMAGE,
@@ -1307,6 +1310,10 @@ export async function animateAllScenes(
     project.aspectRatio ?? defaultsForFormat(project.format).aspectRatio;
   const concurrency = opts.concurrency ?? 2; // seedance is heavy — keep parallelism low
 
+  // Same upscaler snapshot the Inngest path takes at plan time.
+  const upscaler = await getUpscalerSetting().catch((): UpscalerSetting => "topaz");
+  const useSeedVR = upscaler === "seedvr2";
+
   const acquired = await tryAcquireGenerationLock(projectId);
   if (!acquired) throw new ProjectBusyError(projectId);
 
@@ -1412,16 +1419,23 @@ export async function animateAllScenes(
 
         // Crisp-pipeline (matches animatePlannedScene): every animate ends at
         // ~4K; the stitch downsamples to a supersampled 1080p/30.
-        const finalVideoUrl = (
-          await upscaleVideo({
-            videoUrl: seedanceResult.videoUrl,
-            model: "Proteus",
-            upscaleFactor: at720 ? 3 : 2,
-            // 30 across the board — the stitch renders 30fps output, so 60fps
-        // interpolation here would be synthesized and then discarded.
-        targetFps: 30,
-          })
-        ).videoUrl;
+        const finalVideoUrl = useSeedVR
+          ? (
+              await upscaleVideoSeedVR({
+                videoUrl: seedanceResult.videoUrl,
+                targetResolution: "2160p",
+              })
+            ).videoUrl
+          : (
+              await upscaleVideo({
+                videoUrl: seedanceResult.videoUrl,
+                model: "Proteus",
+                upscaleFactor: at720 ? 3 : 2,
+                // 30 across the board — the stitch renders 30fps output, so
+                // 60fps interpolation would be synthesized then discarded.
+                targetFps: 30,
+              })
+            ).videoUrl;
 
       // Re-host on our own Blob so the URL is stable + downloadable.
       const filename = `scene-${String(scene.order).padStart(3, "0")}-${nanoid(6)}.mp4`;
@@ -1452,8 +1466,10 @@ export async function animateAllScenes(
       await recordSpend({
         projectId,
         kind: "upscale",
-        amountUsd: estimateTopazUpscale(billedSec, "gt-1080p"),
-        meta: { sceneOrder: scene.order },
+        amountUsd: useSeedVR
+          ? estimateSeedVR(billedSec)
+          : estimateTopazUpscale(billedSec, "gt-1080p"),
+        meta: { sceneOrder: scene.order, upscaler },
       });
     };
 
@@ -1532,6 +1548,10 @@ export type AnimatePlan = {
    *  serialized by Inngest before the field existed still replay — absent
    *  means 2.0, the only model that existed then. */
   videoModel?: "seedance-2.0" | "seedance-2.5";
+  /** Which upscaler runs after seedance — snapshotted from the runtime
+   *  setting at plan time so a mid-batch toggle can't mix models. Absent
+   *  (pre-field plans) means topaz. */
+  upscaler?: UpscalerSetting;
   aspectRatio: AspectRatio;
   skipped: number;
   targets: AnimatePlanTarget[];
@@ -1605,10 +1625,13 @@ export async function planAnimate(
     const quality: "standard" | "hero" = project.quality === "hero" ? "hero" : "standard";
     const videoModel: "seedance-2.0" | "seedance-2.5" =
       project.videoModel === "seedance-2.5" ? "seedance-2.5" : "seedance-2.0";
+    // Soft-fail to the incumbent — a settings-table hiccup must never block
+    // an animate batch.
+    const upscaler = await getUpscalerSetting().catch((): UpscalerSetting => "topaz");
 
     if (targetsRaw.length === 0) {
       await updateProjectStatus(projectId, "ready");
-      return { projectId, quality, videoModel, aspectRatio, skipped, targets: [] };
+      return { projectId, quality, videoModel, upscaler, aspectRatio, skipped, targets: [] };
     }
 
     await assertWithinDailyBudget(
@@ -1643,7 +1666,7 @@ export async function planAnimate(
         motion: motionByOrder.get(s.order) as string,
       }));
 
-    return { projectId, quality, videoModel, aspectRatio, skipped, targets };
+    return { projectId, quality, videoModel, upscaler, aspectRatio, skipped, targets };
   } catch (err) {
     await updateProjectStatus(projectId, "ready");
     throw err;
@@ -1657,7 +1680,7 @@ export async function planAnimate(
  * completes and the batch keeps its per-scene independence.
  */
 export async function animatePlannedScene(
-  plan: Pick<AnimatePlan, "projectId" | "quality" | "videoModel" | "aspectRatio">,
+  plan: Pick<AnimatePlan, "projectId" | "quality" | "videoModel" | "upscaler" | "aspectRatio">,
   target: AnimatePlanTarget
 ): Promise<{ ok: boolean }> {
   // Crisp-pipeline tiers (all end at ~4K sources, stitched to 1080p/30):
@@ -1685,17 +1708,27 @@ export async function animatePlannedScene(
     });
     // Supersampled delivery: detail synthesized at 4K survives the stitch's
     // 1080p/30 downscale and platform recompression far better than native
-    // seedance output shipped as-is.
-    const finalVideoUrl = (
-      await upscaleVideo({
-        videoUrl: seedanceResult.videoUrl,
-        model: "Proteus",
-        upscaleFactor: at720 ? 3 : 2,
-        // 30 across the board — the stitch renders 30fps output, so 60fps
-        // interpolation here would be synthesized and then discarded.
-        targetFps: 30,
-      })
-    ).videoUrl;
+    // seedance output shipped as-is. Upscaler per the plan's snapshot:
+    // Topaz Proteus (+30fps Apollo interpolation) or SeedVR2 (2160p, stays
+    // 24fps — the stitch resamples).
+    const useSeedVR = plan.upscaler === "seedvr2";
+    const finalVideoUrl = useSeedVR
+      ? (
+          await upscaleVideoSeedVR({
+            videoUrl: seedanceResult.videoUrl,
+            targetResolution: "2160p",
+          })
+        ).videoUrl
+      : (
+          await upscaleVideo({
+            videoUrl: seedanceResult.videoUrl,
+            model: "Proteus",
+            upscaleFactor: at720 ? 3 : 2,
+            // 30 across the board — the stitch renders 30fps output, so 60fps
+            // interpolation here would be synthesized and then discarded.
+            targetFps: 30,
+          })
+        ).videoUrl;
     const filename = `scene-${String(target.order).padStart(3, "0")}-${nanoid(6)}.mp4`;
     const stored = await storeFromUrl({
       url: finalVideoUrl,
@@ -1724,8 +1757,10 @@ export async function animatePlannedScene(
     await recordSpend({
       projectId: plan.projectId,
       kind: "upscale",
-      amountUsd: estimateTopazUpscale(billedSec, "gt-1080p"),
-      meta: { sceneOrder: target.order },
+      amountUsd: useSeedVR
+        ? estimateSeedVR(billedSec)
+        : estimateTopazUpscale(billedSec, "gt-1080p"),
+      meta: { sceneOrder: target.order, upscaler: useSeedVR ? "seedvr2" : "topaz" },
     });
   };
 
