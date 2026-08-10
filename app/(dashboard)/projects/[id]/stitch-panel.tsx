@@ -10,6 +10,7 @@ import { Clapperboard, Download, Music } from "lucide-react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { ease } from "@/lib/motion";
+import { downloadVideoFilename } from "@/lib/filenames";
 
 /**
  * One-click assembled deliverable — the CapCut replacement. Stitches the
@@ -22,6 +23,7 @@ import { ease } from "@/lib/motion";
  */
 export function StitchPanel({
   projectId,
+  projectTitle = null,
   format,
   finalVideoUrl,
   previousFinalVideoUrl = null,
@@ -36,6 +38,9 @@ export function StitchPanel({
   animatedLongForm = false,
 }: {
   projectId: string;
+  /** Names the downloaded file — a Downloads folder of final (7).mp4 helps
+   *  nobody. Null falls back to final.mp4. */
+  projectTitle?: string | null;
   format: string;
   finalVideoUrl: string | null;
   aspect: string;
@@ -78,13 +83,15 @@ export function StitchPanel({
   /** Fetch-then-save: the `download` attribute is ignored on cross-origin
    *  URLs (Blob lives on another origin), which opens the video in a tab
    *  instead of saving it. */
+  const videoFilename = downloadVideoFilename(projectTitle);
+
   async function downloadFinal() {
     if (!finalVideoUrl || downloading) return;
     setDownloading(true);
     try {
       const res = await fetch(finalVideoUrl);
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      saveAs(await res.blob(), "final.mp4");
+      saveAs(await res.blob(), videoFilename);
     } catch (err) {
       const message = err instanceof Error ? err.message : "Unknown error";
       toast.error("Download failed", { description: message });
@@ -294,7 +301,7 @@ export function StitchPanel({
                   className="text-xs text-muted-foreground hover:text-foreground tracking-tight inline-flex items-center gap-1.5 disabled:opacity-50"
                 >
                   <Download className="size-3.5" />
-                  {downloading ? "Downloading…" : "Download final.mp4"}
+                  {downloading ? "Downloading…" : `Download ${videoFilename}`}
                 </button>
               )}
               {canDownload && previousFinalVideoUrl && previousFinalVideoUrl !== finalVideoUrl && (

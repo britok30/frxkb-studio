@@ -266,6 +266,7 @@ export default async function ProjectPage({ params }: { params: Promise<{ id: st
           counts.generated + counts.approved === scenes.length)) && (
         <StitchPanel
           projectId={project.id}
+          projectTitle={project.title}
           format={project.format}
           finalVideoUrl={project.finalVideoUrl}
           previousFinalVideoUrl={project.previousFinalVideoUrl}

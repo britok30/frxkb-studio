@@ -7,6 +7,7 @@ import { motion } from "motion/react";
 import { toast } from "sonner";
 import { Check, Copy, FileArchive, Film, X } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
+import { downloadVideoFilename } from "@/lib/filenames";
 import { Separator } from "@/components/ui/separator";
 import { Badge } from "@/components/ui/badge";
 import { ease } from "@/lib/motion";
@@ -70,15 +71,17 @@ export function ExportPanel({
   ];
   const ready = checklist.every((c) => c.done);
 
+  const videoFilename = downloadVideoFilename(data.title);
+
   async function downloadVideo() {
     if (!data.finalVideoUrl || downloadingVideo) return;
     setDownloadingVideo(true);
-    const toastId = toast.loading("Downloading final.mp4…");
+    const toastId = toast.loading(`Downloading ${videoFilename}…`);
     try {
       const res = await fetch(data.finalVideoUrl);
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const { saveAs } = await import("file-saver");
-      saveAs(await res.blob(), "final.mp4");
+      saveAs(await res.blob(), videoFilename);
       toast.success("Video downloaded", { id: toastId });
     } catch (err) {
       const message = err instanceof Error ? err.message : "Unknown error";
@@ -176,7 +179,7 @@ export function ExportPanel({
                     className="w-full h-10 rounded-md border text-sm font-medium tracking-tight hover:border-foreground/40 transition-colors inline-flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
                   >
                     <Film className="size-3.5" />
-                    {downloadingVideo ? "Downloading…" : "Video — final.mp4"}
+                    {downloadingVideo ? "Downloading…" : `Video — ${videoFilename}`}
                   </motion.button>
                 )}
                 {!ready && (
