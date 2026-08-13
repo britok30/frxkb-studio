@@ -1,5 +1,6 @@
 import { createFalClient, type FalClient } from "@fal-ai/client";
 import { currentOperator } from "@/lib/operators";
+import { collectQueued, submitQueued, type FalQueuedRequest } from "@/lib/fal-queue";
 
 // Mirrors the fal SDK's accepted enum (verified against @fal-ai/client types).
 // "Proteus" is our default — the all-purpose enhancement model. Other entries
@@ -71,8 +72,9 @@ export function __resetTopazForTests(): void {
  * set (Apollo interpolation surcharge), so an interpolated >1080p output
  * lands in the $0.16/sec tier.
  */
-export async function upscaleVideo(input: TopazInput): Promise<TopazOutput> {
-  const client = clientForOperator();
+const TOPAZ_ENDPOINT = "fal-ai/topaz/upscale/video";
+
+function buildTopazPayload(input: TopazInput): { video_url: string } & Record<string, unknown> {
   const {
     videoUrl,
     model = "Proteus",
@@ -81,25 +83,41 @@ export async function upscaleVideo(input: TopazInput): Promise<TopazOutput> {
     recoverDetail,
     targetFps = 30,
   } = input;
+  return {
+    video_url: videoUrl,
+    model,
+    upscale_factor: upscaleFactor,
+    H264_output: true,
+    ...(targetFps > 0 ? { target_fps: targetFps } : {}),
+    ...(compression !== undefined ? { compression } : {}),
+    ...(recoverDetail !== undefined ? { recover_detail: recoverDetail } : {}),
+  };
+}
 
-  const result = await client.subscribe("fal-ai/topaz/upscale/video", {
-    input: {
-      video_url: videoUrl,
-      model,
-      upscale_factor: upscaleFactor,
-      H264_output: true,
-      ...(targetFps > 0 ? { target_fps: targetFps } : {}),
-      ...(compression !== undefined ? { compression } : {}),
-      ...(recoverDetail !== undefined ? { recover_detail: recoverDetail } : {}),
-    },
+function parseTopazResult(data: unknown, requestId: string): TopazOutput {
+  const video = (data as { video?: { url?: string } })?.video;
+  if (!video?.url) throw new Error("topaz returned no video url");
+  return { videoUrl: video.url, requestId };
+}
+
+/** Queue-based Topaz: enqueue and return immediately. Pair with checkQueued
+ *  (poll) + collectUpscale — the multi-minute upscale never holds a
+ *  serverless invocation open. */
+export async function submitUpscale(input: TopazInput): Promise<FalQueuedRequest> {
+  return submitQueued(TOPAZ_ENDPOINT, buildTopazPayload(input));
+}
+
+/** Fetch the finished upscale for a submitUpscale request. */
+export async function collectUpscale(req: FalQueuedRequest): Promise<TopazOutput> {
+  const data = await collectQueued(req);
+  return parseTopazResult(data, req.requestId);
+}
+
+export async function upscaleVideo(input: TopazInput): Promise<TopazOutput> {
+  const client = clientForOperator();
+  const result = await client.subscribe(TOPAZ_ENDPOINT, {
+    input: buildTopazPayload(input),
     logs: false,
   });
-
-  const data = result.data as { video?: { url?: string } };
-  if (!data?.video?.url) throw new Error("topaz returned no video url");
-
-  return {
-    videoUrl: data.video.url,
-    requestId: result.requestId,
-  };
+  return parseTopazResult(result.data, result.requestId);
 }

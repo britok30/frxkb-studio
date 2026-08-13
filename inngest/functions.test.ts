@@ -12,7 +12,11 @@ const hoisted = vi.hoisted(() => {
     generateAllImages: vi.fn(),
     animateAllScenes: vi.fn(),
     planAnimate: vi.fn(),
-    animatePlannedScene: vi.fn(),
+    startSceneVideo: vi.fn(),
+    pollSceneRequest: vi.fn(),
+    startSceneUpscale: vi.fn(),
+    finishSceneAnimation: vi.fn(),
+    failSceneAnimation: vi.fn(),
     finishAnimate: vi.fn(),
     prepareStitch: vi.fn(),
     planStitchRehost: vi.fn(),
@@ -31,7 +35,11 @@ vi.mock("@/lib/projects", () => ({
   generateAllImages: hoisted.generateAllImages,
   animateAllScenes: hoisted.animateAllScenes,
   planAnimate: hoisted.planAnimate,
-  animatePlannedScene: hoisted.animatePlannedScene,
+  startSceneVideo: hoisted.startSceneVideo,
+  pollSceneRequest: hoisted.pollSceneRequest,
+  startSceneUpscale: hoisted.startSceneUpscale,
+  finishSceneAnimation: hoisted.finishSceneAnimation,
+  failSceneAnimation: hoisted.failSceneAnimation,
   finishAnimate: hoisted.finishAnimate,
   prepareStitch: hoisted.prepareStitch,
   planStitchRehost: hoisted.planStitchRehost,
@@ -68,17 +76,23 @@ const stubOperator = {
   apps: [],
 };
 
-// Minimal step.run that just invokes the inner fn — Inngest's real step.run
+// Minimal step that just invokes the inner fn — Inngest's real step.run
 // also memoizes for retries, but we don't exercise that path in unit tests.
+// sleep resolves immediately (real Inngest parks the run durably).
 const passthroughStep = {
   run: <T>(_name: string, fn: () => Promise<T>) => fn(),
+  sleep: (_name: string, _duration: string | number) => Promise.resolve(),
 };
 
 beforeEach(() => {
   hoisted.generateAllImages.mockReset();
   hoisted.animateAllScenes.mockReset();
   hoisted.planAnimate.mockReset();
-  hoisted.animatePlannedScene.mockReset();
+  hoisted.startSceneVideo.mockReset();
+  hoisted.pollSceneRequest.mockReset().mockResolvedValue(true);
+  hoisted.startSceneUpscale.mockReset();
+  hoisted.finishSceneAnimation.mockReset();
+  hoisted.failSceneAnimation.mockReset().mockResolvedValue({ ok: false });
   hoisted.finishAnimate.mockReset().mockResolvedValue(undefined);
   hoisted.prepareStitch.mockReset();
   hoisted.planStitchRehost.mockReset();
@@ -183,12 +197,17 @@ describe("handleAnimate", () => {
     ],
   };
 
-  it("plans, animates each scene in its own step, then finishes — per-scene results roll up", async () => {
+  const videoReq = { endpoint: "bytedance/seedance-2.5/image-to-video", requestId: "req_v" };
+  const upscaleReq = { endpoint: "fal-ai/topaz/upscale/video", requestId: "req_u" };
+
+  it("plans, runs each scene as submit → poll → upscale → poll → store, then finishes — per-scene results roll up", async () => {
     hoisted.getOperator.mockReturnValue(stubOperator);
     hoisted.planAnimate.mockResolvedValue(plan);
-    hoisted.animatePlannedScene
+    hoisted.startSceneVideo.mockResolvedValue(videoReq);
+    hoisted.startSceneUpscale.mockResolvedValue(upscaleReq);
+    hoisted.finishSceneAnimation
       .mockResolvedValueOnce({ ok: true })
-      .mockResolvedValueOnce({ ok: false });
+      .mockRejectedValueOnce(new Error("blob write failed"));
 
     const result = await handleAnimate(
       { event: { data: { projectId: "p_1", operatorEmail: "britok30@gmail.com", force: false } } },
@@ -196,16 +215,63 @@ describe("handleAnimate", () => {
     );
 
     expect(hoisted.planAnimate).toHaveBeenCalledWith("p_1", { force: false });
-    expect(hoisted.animatePlannedScene).toHaveBeenCalledTimes(2);
-    expect(hoisted.animatePlannedScene).toHaveBeenCalledWith(plan, plan.targets[0]);
+    expect(hoisted.startSceneVideo).toHaveBeenCalledTimes(2);
+    expect(hoisted.startSceneVideo).toHaveBeenCalledWith(plan, plan.targets[0]);
+    // One completed poll per stage per scene (mock reports done immediately).
+    expect(hoisted.pollSceneRequest).toHaveBeenCalledWith("p_1", videoReq);
+    expect(hoisted.pollSceneRequest).toHaveBeenCalledWith("p_1", upscaleReq);
+    expect(hoisted.startSceneUpscale).toHaveBeenCalledWith(plan, plan.targets[0], videoReq);
+    expect(hoisted.finishSceneAnimation).toHaveBeenCalledTimes(2);
+    // The scene whose store step failed is marked failed, not thrown.
+    expect(hoisted.failSceneAnimation).toHaveBeenCalledTimes(1);
+    expect(hoisted.failSceneAnimation).toHaveBeenCalledWith(expect.any(String), "blob write failed");
     expect(hoisted.finishAnimate).toHaveBeenCalledWith("p_1");
     expect(result).toEqual({ animated: 1, failed: 1, skipped: 0 });
+  });
+
+  it("keeps polling a stage until fal reports COMPLETED", async () => {
+    hoisted.getOperator.mockReturnValue(stubOperator);
+    hoisted.planAnimate.mockResolvedValue({ ...plan, targets: [plan.targets[0]] });
+    hoisted.startSceneVideo.mockResolvedValue(videoReq);
+    hoisted.startSceneUpscale.mockResolvedValue(upscaleReq);
+    hoisted.finishSceneAnimation.mockResolvedValue({ ok: true });
+    hoisted.pollSceneRequest
+      .mockResolvedValueOnce(false)
+      .mockResolvedValueOnce(false)
+      .mockResolvedValue(true);
+
+    const result = await handleAnimate(
+      { event: { data: { projectId: "p_1", operatorEmail: "britok30@gmail.com" } } },
+      passthroughStep
+    );
+
+    // 3 polls for the video stage (false, false, true) + 1 for the upscale.
+    expect(hoisted.pollSceneRequest).toHaveBeenCalledTimes(4);
+    expect(result).toEqual({ animated: 1, failed: 0, skipped: 0 });
+  });
+
+  it("gives up on a scene (marks it failed) when a stage never completes", async () => {
+    hoisted.getOperator.mockReturnValue(stubOperator);
+    hoisted.planAnimate.mockResolvedValue({ ...plan, targets: [plan.targets[0]] });
+    hoisted.startSceneVideo.mockResolvedValue(videoReq);
+    hoisted.pollSceneRequest.mockResolvedValue(false);
+
+    const result = await handleAnimate(
+      { event: { data: { projectId: "p_1", operatorEmail: "britok30@gmail.com" } } },
+      passthroughStep
+    );
+
+    expect(hoisted.startSceneUpscale).not.toHaveBeenCalled();
+    expect(hoisted.failSceneAnimation).toHaveBeenCalledWith("s_1", expect.stringMatching(/still not done/));
+    expect(result).toEqual({ animated: 0, failed: 1, skipped: 0 });
   });
 
   it("forwards sceneId so a single clip can be re-animated", async () => {
     hoisted.getOperator.mockReturnValue(stubOperator);
     hoisted.planAnimate.mockResolvedValue({ ...plan, targets: [plan.targets[1]] });
-    hoisted.animatePlannedScene.mockResolvedValue({ ok: true });
+    hoisted.startSceneVideo.mockResolvedValue(videoReq);
+    hoisted.startSceneUpscale.mockResolvedValue(upscaleReq);
+    hoisted.finishSceneAnimation.mockResolvedValue({ ok: true });
 
     const result = await handleAnimate(
       { event: { data: { projectId: "p_1", operatorEmail: "britok30@gmail.com", sceneId: "s_2" } } },
@@ -213,7 +279,7 @@ describe("handleAnimate", () => {
     );
 
     expect(hoisted.planAnimate).toHaveBeenCalledWith("p_1", { force: undefined, sceneId: "s_2" });
-    expect(hoisted.animatePlannedScene).toHaveBeenCalledTimes(1);
+    expect(hoisted.startSceneVideo).toHaveBeenCalledTimes(1);
     expect(result).toEqual({ animated: 1, failed: 0, skipped: 0 });
   });
 
@@ -227,7 +293,7 @@ describe("handleAnimate", () => {
     );
 
     expect(result).toEqual({ animated: 0, failed: 0, skipped: 3 });
-    expect(hoisted.animatePlannedScene).not.toHaveBeenCalled();
+    expect(hoisted.startSceneVideo).not.toHaveBeenCalled();
     expect(hoisted.finishAnimate).not.toHaveBeenCalled();
   });
 

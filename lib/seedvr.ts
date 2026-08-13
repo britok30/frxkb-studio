@@ -1,5 +1,6 @@
 import { createFalClient, type FalClient } from "@fal-ai/client";
 import { currentOperator } from "@/lib/operators";
+import { collectQueued, submitQueued, type FalQueuedRequest } from "@/lib/fal-queue";
 
 /**
  * SeedVR2 (ByteDance) video upscaling on fal — the alternative to Topaz for
@@ -48,27 +49,45 @@ export function __resetSeedVRForTests(): void {
   clientCache.clear();
 }
 
+const SEEDVR_ENDPOINT = "fal-ai/seedvr/upscale/video";
+
+function buildSeedVRPayload(input: SeedVRInput): { video_url: string } & Record<string, unknown> {
+  const { videoUrl, targetResolution = "2160p", seed } = input;
+  return {
+    video_url: videoUrl,
+    upscale_mode: "target",
+    target_resolution: targetResolution,
+    output_format: "X264 (.mp4)",
+    output_quality: "high",
+    ...(seed !== undefined ? { seed } : {}),
+  };
+}
+
+function parseSeedVRResult(data: unknown, requestId: string): SeedVROutput {
+  const video = (data as { video?: { url?: string } })?.video;
+  if (!video?.url) throw new Error("seedvr returned no video url");
+  return { videoUrl: video.url, requestId };
+}
+
+/** Queue-based SeedVR2: enqueue and return immediately. Pair with checkQueued
+ *  (poll) + collectSeedVRUpscale — SeedVR2 is the slowest stage in the crisp
+ *  pipeline (it's what pushed animate scenes past Vercel's maxDuration,
+ *  observed 2026-08-12), so it must never hold an invocation open. */
+export async function submitSeedVRUpscale(input: SeedVRInput): Promise<FalQueuedRequest> {
+  return submitQueued(SEEDVR_ENDPOINT, buildSeedVRPayload(input));
+}
+
+/** Fetch the finished upscale for a submitSeedVRUpscale request. */
+export async function collectSeedVRUpscale(req: FalQueuedRequest): Promise<SeedVROutput> {
+  const data = await collectQueued(req);
+  return parseSeedVRResult(data, req.requestId);
+}
+
 export async function upscaleVideoSeedVR(input: SeedVRInput): Promise<SeedVROutput> {
   const client = clientForOperator();
-  const { videoUrl, targetResolution = "2160p", seed } = input;
-
-  const result = await client.subscribe("fal-ai/seedvr/upscale/video", {
-    input: {
-      video_url: videoUrl,
-      upscale_mode: "target",
-      target_resolution: targetResolution,
-      output_format: "X264 (.mp4)",
-      output_quality: "high",
-      ...(seed !== undefined ? { seed } : {}),
-    },
+  const result = await client.subscribe(SEEDVR_ENDPOINT, {
+    input: buildSeedVRPayload(input),
     logs: false,
   });
-
-  const data = result.data as { video?: { url?: string } };
-  if (!data?.video?.url) throw new Error("seedvr returned no video url");
-
-  return {
-    videoUrl: data.video.url,
-    requestId: result.requestId,
-  };
+  return parseSeedVRResult(result.data, result.requestId);
 }

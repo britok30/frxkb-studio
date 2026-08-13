@@ -1,22 +1,29 @@
 import { inngest } from "./client";
 import {
-  animatePlannedScene,
   completeStitchRehost,
+  failSceneAnimation,
   failStitch,
   finishAnimate,
+  finishSceneAnimation,
   finishStitch,
   generateAllImages,
   planAnimate,
   planStitchRehost,
+  pollSceneRequest,
   prepareStitch,
   ProjectBusyError,
   renderStitch,
+  startSceneUpscale,
+  startSceneVideo,
   transferStitchRehostParts,
   type AnimatePlan,
+  type AnimatePlanTarget,
   type RenderStitchResult,
+  type ScenePlan,
   type StitchOpts,
   type StitchPrep,
 } from "@/lib/projects";
+import type { FalQueuedRequest } from "@/lib/fal-queue";
 import { REHOST_PARTS_PER_STEP, type RehostPart, type RehostPlan } from "@/lib/storage";
 import { getOperator, withOperator } from "@/lib/operators";
 import { cleanupOrphanedUploads } from "@/lib/cleanup";
@@ -29,6 +36,9 @@ import type { AspectRatio } from "@/lib/prompts/types";
  */
 type StepRunner = {
   run: <T>(name: string, fn: () => Promise<T>) => Promise<T>;
+  /** Inngest's durable sleep: the function invocation ENDS and a new one is
+   *  scheduled after the delay — no serverless time is spent waiting. */
+  sleep: (name: string, duration: string | number) => Promise<void>;
 };
 
 type GenerateEvent = {
@@ -124,12 +134,13 @@ export async function handleAnimate(
     return { animated: 0, failed: 0, skipped: typedPlan.skipped };
   }
 
-  // Parallel per-scene steps — Inngest runs each as its own invocation.
+  // Parallel per-scene pipelines — every step is a sub-second HTTP call
+  // (queue submit / status poll / result fetch); the render waits happen in
+  // durable sleeps, so no invocation ever rides out a multi-minute vendor
+  // call (that pattern died silently at Vercel's maxDuration, 2026-08-12).
   const results = await Promise.all(
     typedPlan.targets.map((target) =>
-      step.run(`scene-${target.order}`, () =>
-        withOperator(operator, () => animatePlannedScene(typedPlan, target))
-      )
+      animateSceneStepwise(step, operator, typedPlan, target)
     )
   );
 
@@ -137,6 +148,69 @@ export async function handleAnimate(
 
   const animated = results.filter((r) => r.ok).length;
   return { animated, failed: results.length - animated, skipped: typedPlan.skipped };
+}
+
+/** Poll cadence for queued fal renders. 30s keeps the generation lock fresh
+ *  (STALE_LOCK_MS is 10 min) without hammering fal; 40 polls bounds a stage
+ *  at 20 minutes — beyond any observed seedance/Topaz/SeedVR2 render. */
+const FAL_POLL_INTERVAL = "30s";
+const FAL_MAX_POLLS = 40;
+
+type Operator = NonNullable<ReturnType<typeof getOperator>>;
+
+/** Sleep → poll until the queued request completes, or throw on timeout. */
+async function waitForFal(
+  step: StepRunner,
+  operator: Operator,
+  projectId: string,
+  label: string,
+  req: FalQueuedRequest
+): Promise<void> {
+  for (let i = 0; i < FAL_MAX_POLLS; i++) {
+    await step.sleep(`${label}-wait-${i}`, FAL_POLL_INTERVAL);
+    const done = await step.run(`${label}-poll-${i}`, () =>
+      withOperator(operator, () => pollSceneRequest(projectId, req))
+    );
+    if (done) return;
+  }
+  throw new Error(
+    `${req.endpoint} request ${req.requestId} still not done after ${FAL_MAX_POLLS} polls — giving up on this scene.`
+  );
+}
+
+/**
+ * One scene's full pipeline as short steps: submit seedance → poll → submit
+ * upscale → poll → store/bill. Any stage failing (submit rejected, render
+ * failed, timeout) marks the scene failed and resolves ok:false so the batch
+ * keeps its per-scene independence.
+ */
+async function animateSceneStepwise(
+  step: StepRunner,
+  operator: Operator,
+  plan: ScenePlan,
+  target: AnimatePlanTarget
+): Promise<{ ok: boolean }> {
+  const label = `scene-${target.order}`;
+  try {
+    const videoReq = (await step.run(`${label}-submit-video`, () =>
+      withOperator(operator, () => startSceneVideo(plan, target))
+    )) as FalQueuedRequest;
+    await waitForFal(step, operator, plan.projectId, `${label}-video`, videoReq);
+
+    const upscaleReq = (await step.run(`${label}-submit-upscale`, () =>
+      withOperator(operator, () => startSceneUpscale(plan, target, videoReq))
+    )) as FalQueuedRequest;
+    await waitForFal(step, operator, plan.projectId, `${label}-upscale`, upscaleReq);
+
+    return await step.run(`${label}-store`, () =>
+      withOperator(operator, () => finishSceneAnimation(plan, target, upscaleReq))
+    );
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : "unknown error";
+    return await step.run(`${label}-fail`, () =>
+      withOperator(operator, () => failSceneAnimation(target.sceneId, msg))
+    );
+  }
 }
 
 /**

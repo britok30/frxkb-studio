@@ -30,9 +30,10 @@ import {
   type ShotstackClip,
   type ShotstackEdit,
 } from "@/lib/shotstack";
-import { generateVideo } from "@/lib/seedance";
-import { upscaleVideo } from "@/lib/topaz";
-import { upscaleVideoSeedVR } from "@/lib/seedvr";
+import { collectVideo, generateVideo, submitVideo } from "@/lib/seedance";
+import { collectUpscale, submitUpscale, upscaleVideo } from "@/lib/topaz";
+import { collectSeedVRUpscale, submitSeedVRUpscale, upscaleVideoSeedVR } from "@/lib/seedvr";
+import { checkQueued, type FalQueuedRequest } from "@/lib/fal-queue";
 import { getUpscalerSetting, type UpscalerSetting } from "@/lib/app-settings";
 import { generateMotionPrompts, getCameraMove } from "@/lib/prompts/motion";
 import {
@@ -1673,110 +1674,151 @@ export async function planAnimate(
   }
 }
 
-/**
- * Step 2 (× N, parallel): animate ONE planned scene. Two attempts inside
- * (transient seedance 422s from Blob propagation are real); a final failure
- * marks the scene and returns ok:false rather than throwing, so the step
- * completes and the batch keeps its per-scene independence.
- */
-export async function animatePlannedScene(
-  plan: Pick<AnimatePlan, "projectId" | "quality" | "videoModel" | "upscaler" | "aspectRatio">,
-  target: AnimatePlanTarget
-): Promise<{ ok: boolean }> {
-  // Crisp-pipeline tiers (all end at ~4K sources, stitched to 1080p/30):
-  //   2.0 standard reel: Seedance FAST 720p (~$0.24/s, quicker) → Topaz 3× → 4K30
-  //   2.0 hero reel:     Seedance full 1080p (~$0.68/s)         → Topaz 2× → 4K30
-  //   2.5 (any quality): Seedance 2.5 720p (~$0.47/s, no 1080p) → Topaz 3× → 4K30
+/** Serializable plan slice every stepwise scene function takes. */
+export type ScenePlan = Pick<
+  AnimatePlan,
+  "projectId" | "quality" | "videoModel" | "upscaler" | "aspectRatio"
+>;
+
+// Crisp-pipeline tiers (all end at ~4K sources, stitched to 1080p/30):
+//   2.0 standard reel: Seedance FAST 720p (~$0.24/s, quicker) → Topaz 3× → 4K30
+//   2.0 hero reel:     Seedance full 1080p (~$0.68/s)         → Topaz 2× → 4K30
+//   2.5 (any quality): Seedance 2.5 720p (~$0.47/s, no 1080p) → Topaz 3× → 4K30
+function animateTier(plan: ScenePlan): { is25: boolean; useFast: boolean; at720: boolean } {
   const is25 = plan.videoModel === "seedance-2.5";
   const useFast = !is25 && plan.quality !== "hero";
-  const at720 = is25 || useFast;
+  return { is25, useFast, at720: is25 || useFast };
+}
 
-  const attempt = async () => {
-    await heartbeatGenerationLock(plan.projectId);
-    await markSceneAnimating(target.sceneId, target.motion);
-    // Crossfade pad — see animateAllScenes: reels render +XFADE_SEC of
-    // footage so the stitched final keeps its full nominal length.
-    const seedanceResult = await generateVideo({
-      imageUrl: target.imageUrl,
-      motionPrompt: target.motion,
-      durationSec: target.durationSec + XFADE_SEC,
-      resolution: at720 ? "720p" : "1080p",
-      fast: useFast,
-      model: is25 ? "seedance-2.5" : "seedance-2.0",
-      aspectRatio: plan.aspectRatio,
-      seed: freshSeed(),
-    });
-    // Supersampled delivery: detail synthesized at 4K survives the stitch's
-    // 1080p/30 downscale and platform recompression far better than native
-    // seedance output shipped as-is. Upscaler per the plan's snapshot:
-    // Topaz Proteus (+30fps Apollo interpolation) or SeedVR2 (2160p, stays
-    // 24fps — the stitch resamples).
-    const useSeedVR = plan.upscaler === "seedvr2";
-    const finalVideoUrl = useSeedVR
-      ? (
-          await upscaleVideoSeedVR({
-            videoUrl: seedanceResult.videoUrl,
-            targetResolution: "2160p",
-          })
-        ).videoUrl
-      : (
-          await upscaleVideo({
-            videoUrl: seedanceResult.videoUrl,
-            model: "Proteus",
-            upscaleFactor: at720 ? 3 : 2,
-            // 30 across the board — the stitch renders 30fps output, so 60fps
-            // interpolation here would be synthesized and then discarded.
-            targetFps: 30,
-          })
-        ).videoUrl;
-    const filename = `scene-${String(target.order).padStart(3, "0")}-${nanoid(6)}.mp4`;
-    const stored = await storeFromUrl({
-      url: finalVideoUrl,
-      kind: "videos",
-      projectId: plan.projectId,
-      filename,
-    });
-    await markSceneAnimated(target.sceneId, { videoUrl: stored.url });
-    const billedSec = Math.min(is25 ? 30 : 15, Math.max(4, target.durationSec + XFADE_SEC));
-    await recordSpend({
-      projectId: plan.projectId,
-      kind: "video",
-      amountUsd:
-        billedSec *
-        (is25
-          ? FAL_SEEDANCE_25_720P_PER_SECOND
-          : useFast
-            ? FAL_SEEDANCE_FAST_720P_PER_SECOND
-            : FAL_SEEDANCE_PER_SECOND["1080p"]),
-      meta: {
-        sceneOrder: target.order,
-        durationSec: billedSec,
-        tier: is25 ? "2.5-720p" : useFast ? "fast-720p" : "1080p",
-      },
-    });
-    await recordSpend({
-      projectId: plan.projectId,
-      kind: "upscale",
-      amountUsd: useSeedVR
-        ? estimateSeedVR(billedSec)
-        : estimateTopazUpscale(billedSec, "gt-1080p"),
-      meta: { sceneOrder: target.order, upscaler: useSeedVR ? "seedvr2" : "topaz" },
-    });
-  };
+/**
+ * Step 2a (× N): ENQUEUE one scene's seedance render and return the queue
+ * handle immediately. The render itself runs on fal's side — no serverless
+ * invocation waits on it (a blocking wait died at Vercel's maxDuration with
+ * nothing written back, observed in prod 2026-08-12). The orchestrator polls
+ * via pollSceneRequest between durable sleeps.
+ */
+export async function startSceneVideo(
+  plan: ScenePlan,
+  target: AnimatePlanTarget
+): Promise<FalQueuedRequest> {
+  const { is25, useFast, at720 } = animateTier(plan);
+  await heartbeatGenerationLock(plan.projectId);
+  await markSceneAnimating(target.sceneId, target.motion);
+  // Crossfade pad — see animateAllScenes: reels render +XFADE_SEC of
+  // footage so the stitched final keeps its full nominal length.
+  return await submitVideo({
+    imageUrl: target.imageUrl,
+    motionPrompt: target.motion,
+    durationSec: target.durationSec + XFADE_SEC,
+    resolution: at720 ? "720p" : "1080p",
+    fast: useFast,
+    model: is25 ? "seedance-2.5" : "seedance-2.0",
+    aspectRatio: plan.aspectRatio,
+    seed: freshSeed(),
+  });
+}
 
-  try {
-    await attempt();
-    return { ok: true };
-  } catch {
-    try {
-      await attempt();
-      return { ok: true };
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : "unknown error";
-      await markSceneAnimateFailed(target.sceneId, msg);
-      return { ok: false };
-    }
-  }
+/** One status poll for an in-flight queue request. Doubles as the lock
+ *  heartbeat: polls land every ~30s, well inside STALE_LOCK_MS, so a fresh
+ *  animate click can't reclaim the lock mid-batch. */
+export async function pollSceneRequest(
+  projectId: string,
+  req: FalQueuedRequest
+): Promise<boolean> {
+  await heartbeatGenerationLock(projectId);
+  return await checkQueued(req);
+}
+
+/**
+ * Step 2b: the seedance render is done — fetch its URL and enqueue the
+ * upscale. Supersampled delivery: detail synthesized at 4K survives the
+ * stitch's 1080p/30 downscale and platform recompression far better than
+ * native seedance output shipped as-is. Upscaler per the plan's snapshot:
+ * Topaz Proteus (+30fps Apollo interpolation) or SeedVR2 (2160p, stays
+ * 24fps — the stitch resamples).
+ */
+export async function startSceneUpscale(
+  plan: ScenePlan,
+  target: AnimatePlanTarget,
+  videoReq: FalQueuedRequest
+): Promise<FalQueuedRequest> {
+  const { at720 } = animateTier(plan);
+  await heartbeatGenerationLock(plan.projectId);
+  const seedanceResult = await collectVideo(videoReq);
+  return plan.upscaler === "seedvr2"
+    ? await submitSeedVRUpscale({
+        videoUrl: seedanceResult.videoUrl,
+        targetResolution: "2160p",
+      })
+    : await submitUpscale({
+        videoUrl: seedanceResult.videoUrl,
+        model: "Proteus",
+        upscaleFactor: at720 ? 3 : 2,
+        // 30 across the board — the stitch renders 30fps output, so 60fps
+        // interpolation here would be synthesized and then discarded.
+        targetFps: 30,
+      });
+}
+
+/**
+ * Step 2c: the upscale is done — re-host the clip on our Blob, mark the
+ * scene animated, and record spend for both vendor calls.
+ */
+export async function finishSceneAnimation(
+  plan: ScenePlan,
+  target: AnimatePlanTarget,
+  upscaleReq: FalQueuedRequest
+): Promise<{ ok: true }> {
+  const { is25, useFast } = animateTier(plan);
+  const useSeedVR = plan.upscaler === "seedvr2";
+  await heartbeatGenerationLock(plan.projectId);
+  const upscaled = useSeedVR
+    ? await collectSeedVRUpscale(upscaleReq)
+    : await collectUpscale(upscaleReq);
+  const filename = `scene-${String(target.order).padStart(3, "0")}-${nanoid(6)}.mp4`;
+  const stored = await storeFromUrl({
+    url: upscaled.videoUrl,
+    kind: "videos",
+    projectId: plan.projectId,
+    filename,
+  });
+  await markSceneAnimated(target.sceneId, { videoUrl: stored.url });
+  const billedSec = Math.min(is25 ? 30 : 15, Math.max(4, target.durationSec + XFADE_SEC));
+  await recordSpend({
+    projectId: plan.projectId,
+    kind: "video",
+    amountUsd:
+      billedSec *
+      (is25
+        ? FAL_SEEDANCE_25_720P_PER_SECOND
+        : useFast
+          ? FAL_SEEDANCE_FAST_720P_PER_SECOND
+          : FAL_SEEDANCE_PER_SECOND["1080p"]),
+    meta: {
+      sceneOrder: target.order,
+      durationSec: billedSec,
+      tier: is25 ? "2.5-720p" : useFast ? "fast-720p" : "1080p",
+    },
+  });
+  await recordSpend({
+    projectId: plan.projectId,
+    kind: "upscale",
+    amountUsd: useSeedVR
+      ? estimateSeedVR(billedSec)
+      : estimateTopazUpscale(billedSec, "gt-1080p"),
+    meta: { sceneOrder: target.order, upscaler: useSeedVR ? "seedvr2" : "topaz" },
+  });
+  return { ok: true };
+}
+
+/** Terminal per-scene failure: record the error on the scene (the still is
+ *  untouched) so the operator sees why and can re-animate just that scene. */
+export async function failSceneAnimation(
+  sceneId: string,
+  message: string
+): Promise<{ ok: false }> {
+  await markSceneAnimateFailed(sceneId, message);
+  return { ok: false };
 }
 
 /** Step 3: release the lock by settling status. */

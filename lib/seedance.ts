@@ -1,5 +1,6 @@
 import { createFalClient, type FalClient } from "@fal-ai/client";
 import { currentOperator } from "@/lib/operators";
+import { collectQueued, submitQueued, type FalQueuedRequest } from "@/lib/fal-queue";
 
 export type SeedanceResolution = "480p" | "720p" | "1080p" | "4k";
 export type SeedanceAspectRatio = "auto" | "21:9" | "16:9" | "4:3" | "1:1" | "3:4" | "9:16";
@@ -72,8 +73,12 @@ export function __resetSeedanceForTests(): void {
  * unrelated ambience, which never synced across cuts. Clips ship silent;
  * the operator lays one music bed at stitch time (stitch panel upload).
  */
-export async function generateVideo(input: SeedanceInput): Promise<SeedanceOutput> {
-  const client = clientForOperator();
+/** Validate the input and build the endpoint + API payload. Shared by the
+ *  blocking path (generateVideo) and the queue path (submitVideo). */
+function buildSeedanceRequest(input: SeedanceInput): {
+  endpoint: string;
+  payload: Record<string, unknown>;
+} {
   const {
     imageUrl,
     endImageUrl,
@@ -108,19 +113,48 @@ export async function generateVideo(input: SeedanceInput): Promise<SeedanceOutpu
     : fast
       ? "bytedance/seedance-2.0/fast/image-to-video"
       : "bytedance/seedance-2.0/image-to-video";
+  return {
+    endpoint,
+    payload: {
+      prompt: motionPrompt,
+      image_url: imageUrl,
+      ...(endImageUrl ? { end_image_url: endImageUrl } : {}),
+      duration: apiDuration,
+      resolution,
+      aspect_ratio: aspectRatio,
+      generate_audio: false,
+      ...(seed !== undefined ? { seed } : {}),
+    },
+  };
+}
+
+function parseSeedanceResult(data: unknown, requestId: string): SeedanceOutput {
+  const video = (data as { video?: { url?: string } })?.video;
+  if (!video?.url) throw new Error("seedance returned no video url");
+  return { videoUrl: video.url, requestId };
+}
+
+/** Queue-based seedance: enqueue the render and return immediately. Pair
+ *  with checkQueued (poll) + collectVideo — no invocation ever blocks on
+ *  the multi-minute render. */
+export async function submitVideo(input: SeedanceInput): Promise<FalQueuedRequest> {
+  const { endpoint, payload } = buildSeedanceRequest(input);
+  return submitQueued(endpoint, payload);
+}
+
+/** Fetch the finished render for a submitVideo request. */
+export async function collectVideo(req: FalQueuedRequest): Promise<SeedanceOutput> {
+  const data = await collectQueued(req);
+  return parseSeedanceResult(data, req.requestId);
+}
+
+export async function generateVideo(input: SeedanceInput): Promise<SeedanceOutput> {
+  const client = clientForOperator();
+  const { endpoint, payload } = buildSeedanceRequest(input);
   let result;
   try {
     result = await client.subscribe(endpoint, {
-      input: {
-        prompt: motionPrompt,
-        image_url: imageUrl,
-        ...(endImageUrl ? { end_image_url: endImageUrl } : {}),
-        duration: apiDuration,
-        resolution,
-        aspect_ratio: aspectRatio,
-        generate_audio: false,
-        ...(seed !== undefined ? { seed } : {}),
-      },
+      input: payload,
       logs: false,
     });
   } catch (err) {
@@ -139,11 +173,5 @@ export async function generateVideo(input: SeedanceInput): Promise<SeedanceOutpu
     throw err;
   }
 
-  const data = result.data as { video: { url: string } };
-  if (!data?.video?.url) throw new Error("seedance returned no video url");
-
-  return {
-    videoUrl: data.video.url,
-    requestId: result.requestId,
-  };
+  return parseSeedanceResult(result.data, result.requestId);
 }
