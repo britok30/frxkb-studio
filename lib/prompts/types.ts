@@ -202,6 +202,9 @@ export type StagingBrief = {
   /** The upload was FURNISHED: scene 2 is the cleared (unfurnished) room,
    *  scene 3 the staged after. Undefined/false = upload was already empty. */
   unfurnish?: boolean;
+  /** Which of the operator's apps the captions promote (app name). Unset =
+   *  the format default (the staging-scoped app, else the first general). */
+  ctaApp?: string;
 };
 
 /** Scene roles inside a staging project, derived from order + unfurnish. */

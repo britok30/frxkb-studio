@@ -146,6 +146,14 @@ export function appsForFormat(operator: Operator, format?: Format | string): App
   return operator.apps.filter((a) => !a.formats);
 }
 
+/** Apps an operator may CHOOSE to promote on a format: the format-specific
+ *  ones first, then the general ones. Length > 1 = show a picker. */
+export function ctaChoicesForFormat(operator: Operator, format: Format | string): AppLink[] {
+  const specific = operator.apps.filter((a) => a.formats?.includes(format as Format));
+  const general = operator.apps.filter((a) => !a.formats);
+  return [...specific, ...general];
+}
+
 export function pickAppLink(operator: Operator, niche: string, format?: Format | string): string {
   const apps = appsForFormat(operator, format);
   const lower = niche.toLowerCase();

@@ -2399,6 +2399,13 @@ describe("createStagingProject", () => {
     );
   });
 
+  it("persists a valid CTA choice and drops an unknown one", async () => {
+    await createStagingProject({ beforeImageUrl: "https://blob.example/x.jpg", aspectRatio: "1:1", ctaApp: "ArchitectGPT" });
+    expect(dbMocks.insertProject.mock.calls[0][0].staging.ctaApp).toBe("ArchitectGPT");
+    await createStagingProject({ beforeImageUrl: "https://blob.example/x.jpg", aspectRatio: "1:1", ctaApp: "SomeoneElsesApp" });
+    expect(dbMocks.insertProject.mock.calls[1][0].staging.ctaApp).toBeUndefined();
+  });
+
   it("refuses operators whose apps don't cover interiors", async () => {
     operatorMocks.currentOperator.mockReturnValueOnce({
       ...operatorMocks.fixture,
@@ -2612,7 +2619,8 @@ describe("finalizeProject — staging", () => {
         afterImageUrl: "https://blob.vercel-storage.com/images/p_1/after.jpg",
         roomType: "Living room",
         furniturePlan: stagingBrief.furniturePlan,
-        appNames: ["ArchitectGPT", "CasaGPT"],
+        // Default CTA = the first general app (this fixture has no staging-scoped app).
+        appNames: ["ArchitectGPT"],
       })
     );
     expect(claudeMocks.generateMetadata).not.toHaveBeenCalled();
@@ -2643,12 +2651,42 @@ describe("finalizeProject — staging", () => {
       expect(stagingMocks.generateStagingMetadata).toHaveBeenCalledWith(
         expect.objectContaining({ appNames: ["AI Virtual Stage"] })
       );
-      // Link substitution is asked for the staging format specifically.
-      expect(operatorMocks.pickAppLink).toHaveBeenCalledWith(expect.anything(), expect.any(String), "staging");
       const m = result.metadata;
       if (m.kind !== "staging") throw new Error("expected staging metadata");
+      // The chosen app's own link goes in — no niche routing needed.
+      expect(m.instagramCaption).toContain("https://www.aivirtualstage.io");
+      expect(operatorMocks.pickAppLink).not.toHaveBeenCalled();
       // No handle on the staging app → no @ line appended.
       expect(m.instagramCaption).not.toMatch(/@architectgpt/);
+    } finally {
+      operatorMocks.currentOperator.mockReturnValue(operatorMocks.fixture);
+    }
+  });
+
+  it("the operator can point a staging package at ArchitectGPT instead", async () => {
+    operatorMocks.currentOperator.mockReturnValue({
+      ...operatorMocks.fixture,
+      apps: [
+        ...operatorMocks.fixture.apps,
+        { name: "AI Virtual Stage", url: "https://www.aivirtualstage.io", handle: "", formats: ["staging" as const] },
+      ] as unknown as typeof operatorMocks.fixture.apps,
+    });
+    const base = await dbMocks.selectProjectById();
+    dbMocks.selectProjectById.mockResolvedValue({
+      ...base,
+      staging: { ...base.staging, ctaApp: "ArchitectGPT" },
+    });
+    try {
+      const result = await finalizeProject("p_1");
+      expect(stagingMocks.generateStagingMetadata).toHaveBeenCalledWith(
+        expect.objectContaining({ appNames: ["ArchitectGPT"] })
+      );
+      const m = result.metadata;
+      if (m.kind !== "staging") throw new Error("expected staging metadata");
+      // ArchitectGPT's handle; its link resolves through niche routing
+      // (the fixture's ArchitectGPT url is empty) scoped to staging.
+      expect(m.instagramCaption.endsWith("@architectgpt")).toBe(true);
+      expect(operatorMocks.pickAppLink).toHaveBeenCalledWith(expect.anything(), expect.any(String), "staging");
     } finally {
       operatorMocks.currentOperator.mockReturnValue(operatorMocks.fixture);
     }

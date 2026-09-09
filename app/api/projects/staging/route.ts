@@ -29,6 +29,8 @@ const Body = z.object({
   furnitureReferenceUrls: z.array(z.string().url()).max(STAGING_MAX_FURNITURE_REFS).optional(),
   /** The photo is furnished — clear it first, then stage. */
   unfurnish: z.boolean().optional(),
+  /** Which operator app the captions promote (must be one of the operator's). */
+  ctaApp: z.string().min(1).max(60).optional(),
 });
 
 /**

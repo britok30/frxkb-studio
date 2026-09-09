@@ -83,7 +83,7 @@ import {
   FAL_SEEDANCE_FAST_720P_PER_SECOND,
   FAL_SEEDANCE_PER_SECOND,
 } from "@/lib/pricing";
-import { appsForFormat, currentOperator, pickAppLink } from "@/lib/operators";
+import { appsForFormat, ctaChoicesForFormat, currentOperator, pickAppLink } from "@/lib/operators";
 import { findSimilarProjects, type DuplicateMatch } from "@/lib/world-dedupe";
 import {
   deleteSceneVersion,
@@ -468,6 +468,8 @@ export type CreateStagingInput = {
   /** The photo is furnished: clear it first (extra gpt-image-2.5 pass), then
    *  stage the cleared room. Scenes become original → cleared → staged. */
   unfurnish?: boolean;
+  /** Which of the operator's apps the captions promote (app name). */
+  ctaApp?: string;
 };
 
 export async function createStagingProject(input: CreateStagingInput): Promise<ProjectWithScenes> {
@@ -482,6 +484,9 @@ export async function createStagingProject(input: CreateStagingInput): Promise<P
   const furnitureRefs = (input.furnitureReferenceUrls ?? []).slice(0, STAGING_MAX_FURNITURE_REFS);
   const brief = input.brief?.trim() || undefined;
   const unfurnish = !!input.unfurnish;
+  // CTA choice must be one of THIS operator's apps — anything else falls
+  // back to the format default at finalize.
+  const ctaApp = ctaChoicesForFormat(op, "staging").find((a) => a.name === input.ctaApp)?.name;
 
   // ONE vision call before any DB write (a failure leaves no orphan row):
   // GPT-6 sees the room (+ furniture refs), returns the room read, the
@@ -518,6 +523,7 @@ export async function createStagingProject(input: CreateStagingInput): Promise<P
       roomRead: plan.roomRead,
       furnitureReferenceCount: furnitureRefs.length,
       unfurnish,
+      ...(ctaApp ? { ctaApp } : {}),
     },
     concept: {
       workingTitle: plan.workingTitle,
@@ -2777,6 +2783,9 @@ async function finalizeStaging(project: Project, scenes: Scene[]): Promise<Final
 
   try {
     const op = currentOperator();
+    const ctaApp =
+      ctaChoicesForFormat(op, "staging").find((a) => a.name === staging.ctaApp) ??
+      appsForFormat(op, "staging")[0];
     const raw = await generateStagingMetadata({
       beforeImageUrl: before.imageUrl,
       clearedImageUrl: cleared?.imageUrl ?? null,
@@ -2787,14 +2796,14 @@ async function finalizeStaging(project: Project, scenes: Scene[]): Promise<Final
       furniturePlan: project.concept?.objectSet ?? [],
       brief: staging.brief,
       hook: project.concept?.hook,
-      // Staging pitches the staging platform (AI Virtual Stage for britok),
-      // not the general design app.
-      appNames: appsForFormat(op, "staging").map((a) => a.name),
+      // The operator picked which app this package promotes (britok: AI
+      // Virtual Stage or ArchitectGPT); default = the staging-scoped app.
+      appNames: ctaApp ? [ctaApp.name] : [],
       instagramHandle: op.socials.instagram,
     });
-    const handle = appsForFormat(op, "staging")[0]?.handle ?? "";
+    const handle = ctaApp?.handle ?? "";
     const metadata = applyMetadataPolicies(
-      substituteAppLink(raw, project.niche, "staging"),
+      substituteAppLink(raw, project.niche, "staging", ctaApp?.url),
       project.worldType,
       handle
     );
@@ -2930,9 +2939,15 @@ export async function finalizeProject(projectId: string): Promise<FinalizeResult
  * lib/operators.ts. If the resolved URL is empty, leave the placeholder intact
  * so the operator notices and pastes a link manually.
  */
-function substituteAppLink(metadata: Metadata, niche: string, format?: Format): Metadata {
+function substituteAppLink(
+  metadata: Metadata,
+  niche: string,
+  format?: Format,
+  /** Explicit link (operator-chosen CTA app) — skips niche routing. */
+  linkOverride?: string
+): Metadata {
   const op = currentOperator();
-  const link = pickAppLink(op, niche, format);
+  const link = linkOverride || pickAppLink(op, niche, format);
   if (!link) return metadata;
   const sub = (s: string) => s.split("{APP_LINK}").join(link);
   switch (metadata.kind) {

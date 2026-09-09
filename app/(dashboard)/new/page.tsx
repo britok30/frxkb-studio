@@ -167,8 +167,13 @@ export default function NewProjectPage() {
         const data = (await res.json()) as {
           worldTypes: WorldType[];
           propertyTypes?: PropertyType[];
+          stagingCtaApps?: string[];
         };
         setAllowedWorldTypes(data.worldTypes);
+        if (data.stagingCtaApps?.length) {
+          setStagingCtaApps(data.stagingCtaApps);
+          setStagingCtaApp((cur) => cur ?? data.stagingCtaApps![0]);
+        }
         if (data.worldTypes.length === 1) {
           setWorldType(data.worldTypes[0]);
         }
@@ -220,6 +225,10 @@ export default function NewProjectPage() {
   const [stagingFurnitureUrls, setStagingFurnitureUrls] = useState<string[]>([]);
   // Furnished upload → clear it first (extra gpt-image-2.5 pass), then stage.
   const [stagingUnfurnish, setStagingUnfurnish] = useState(false);
+  // Which app the package's captions promote. Offered only when the operator
+  // has more than one eligible app (britok: AI Virtual Stage / ArchitectGPT).
+  const [stagingCtaApps, setStagingCtaApps] = useState<string[]>([]);
+  const [stagingCtaApp, setStagingCtaApp] = useState<string | null>(null);
 
   // Showcase-only state: the operator's own images (presentation order) and
   // the target deliverable shape.
@@ -312,6 +321,7 @@ export default function NewProjectPage() {
             furnitureReferenceUrls:
               stagingFurnitureUrls.length > 0 ? stagingFurnitureUrls : undefined,
             unfurnish: stagingUnfurnish || undefined,
+            ctaApp: stagingCtaApp ?? undefined,
           }),
         });
         if (!res.ok) {
@@ -578,6 +588,9 @@ export default function NewProjectPage() {
                   onFurnitureChange={setStagingFurnitureUrls}
                   unfurnish={stagingUnfurnish}
                   onUnfurnishChange={setStagingUnfurnish}
+                  ctaApps={stagingCtaApps}
+                  ctaApp={stagingCtaApp}
+                  onCtaAppChange={setStagingCtaApp}
                 />
               ) : format === "before-after" ? (
                 <BeforeAfterStep
@@ -781,6 +794,13 @@ export default function NewProjectPage() {
                     />
                     {stagingBrief.trim() && (
                       <ReviewRow label="Brief" value={stagingBrief.trim()} onEdit={() => go(2)} />
+                    )}
+                    {stagingCtaApps.length > 1 && (
+                      <ReviewRow
+                        label="Captions promote"
+                        value={stagingCtaApp ?? stagingCtaApps[0]}
+                        onEdit={() => go(2)}
+                      />
                     )}
                     <ReviewRow label="Renderer" value="gpt-image-2.5 Sunburst · room preserved, furniture added" />
                   </>
@@ -1987,6 +2007,9 @@ function StagingStep({
   onFurnitureChange,
   unfurnish,
   onUnfurnishChange,
+  ctaApps,
+  ctaApp,
+  onCtaAppChange,
 }: {
   beforeImageUrl: string | null;
   beforeAspect: AspectRatio | null;
@@ -2001,6 +2024,9 @@ function StagingStep({
   onFurnitureChange: (urls: string[]) => void;
   unfurnish: boolean;
   onUnfurnishChange: (v: boolean) => void;
+  ctaApps: string[];
+  ctaApp: string | null;
+  onCtaAppChange: (name: string) => void;
 }) {
   const [uploading, setUploading] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -2156,6 +2182,29 @@ function StagingStep({
         help={`Up to ${STAGING_MAX_FURNITURE_REFS} photos of pieces to place — the stager reproduces them and fills in around them`}
         addLabel="+ Piece"
       />
+
+      {ctaApps.length > 1 && (
+        <div className="flex flex-col gap-2">
+          <div className="flex items-baseline justify-between gap-4">
+            <span className="text-[10px] uppercase tracking-[0.22em] text-muted-foreground">
+              Captions promote
+            </span>
+            <span className="text-[11px] text-muted-foreground tracking-tight">
+              The soft CTA + link at the end of the Instagram caption
+            </span>
+          </div>
+          <div className="flex flex-wrap gap-1.5">
+            {ctaApps.map((name) => (
+              <StagingChip
+                key={name}
+                active={(ctaApp ?? ctaApps[0]) === name}
+                onClick={() => onCtaAppChange(name)}
+                label={name}
+              />
+            ))}
+          </div>
+        </div>
+      )}
 
       <label className="flex flex-col gap-1.5">
         <span className="text-[10px] uppercase tracking-[0.22em] text-muted-foreground">

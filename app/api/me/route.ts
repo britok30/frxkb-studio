@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { withSessionOperator } from "@/lib/route-helpers";
-import { currentOperator } from "@/lib/operators";
+import { ctaChoicesForFormat, currentOperator } from "@/lib/operators";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -17,6 +17,9 @@ export async function GET(): Promise<Response> {
     return NextResponse.json({
       email: op.email,
       appNames: op.apps.map((a) => a.name),
+      /** Apps the staging wizard can offer as the caption CTA (britok:
+       *  AI Virtual Stage + ArchitectGPT; single-app operators get one). */
+      stagingCtaApps: ctaChoicesForFormat(op, "staging").map((a) => a.name),
       worldTypes: op.worldTypes,
       propertyTypes: op.propertyTypes,
     });
