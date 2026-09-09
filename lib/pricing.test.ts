@@ -22,6 +22,8 @@ import {
   estimateTopazUpscale,
   estimateAnimateBatch,
   formatCost,
+  estimateImageBatchFor,
+  GPT_IMAGE_STAGING_USD,
 } from "./pricing";
 
 describe("vendor price constants", () => {
@@ -29,9 +31,9 @@ describe("vendor price constants", () => {
     expect(FAL_NANO_BANANA_PER_IMAGE).toBe(0.225);
   });
 
-  it("LLM (GPT-5.6 Sol): $5/MTok in, $30/MTok out", () => {
-    expect(LLM_INPUT_PER_MTOK).toBe(5);
-    expect(LLM_OUTPUT_PER_MTOK).toBe(30);
+  it("LLM (GPT-6 Astra): $10/MTok in, $50/MTok out", () => {
+    expect(LLM_INPUT_PER_MTOK).toBe(10);
+    expect(LLM_OUTPUT_PER_MTOK).toBe(50);
   });
 });
 
@@ -64,8 +66,9 @@ describe("estimateSceneGen", () => {
     const sixty = estimateSceneGen(60);
     expect(sixty).toBeGreaterThan(five);
     // Output dominates — should scale ~linearly with scene count for the
-    // per-scene portion. Differential: 55 scenes × 100 tokens out × $30/Mtok.
-    expect(sixty - five).toBeCloseTo((55 * 100 * 30) / 1_000_000, 4);
+    // per-scene portion. Differential: 55 scenes × 100 tokens out × the
+    // output rate (reads the constant so a model upgrade doesn't break it).
+    expect(sixty - five).toBeCloseTo((55 * 100 * LLM_OUTPUT_PER_MTOK) / 1_000_000, 4);
   });
 
   it("guards against negative scene count", () => {
@@ -114,11 +117,11 @@ describe("estimateSuggestWorld", () => {
 });
 
 describe("estimateConceptGen + estimateMetadataGen", () => {
-  it("both are small per-call costs", () => {
+  it("both are small per-call costs (GPT-6 Astra: metadata ≈ $0.11, concept ≈ $0.04)", () => {
     expect(estimateConceptGen()).toBeGreaterThan(0);
     expect(estimateConceptGen()).toBeLessThan(0.1);
     expect(estimateMetadataGen()).toBeGreaterThan(0);
-    expect(estimateMetadataGen()).toBeLessThan(0.1);
+    expect(estimateMetadataGen()).toBeLessThan(0.15);
   });
 });
 
@@ -210,5 +213,20 @@ describe("formatCost", () => {
 
   it("never returns a negative", () => {
     expect(formatCost(-5)).toBe("$0.00");
+  });
+});
+
+describe("virtual staging pricing", () => {
+  it("routes staging through the OpenAI per-image rate, everything else through nano-banana", () => {
+    expect(estimateImageBatchFor("staging", 1)).toBe(GPT_IMAGE_STAGING_USD);
+    expect(estimateImageBatchFor("staging", 3)).toBeCloseTo(3 * GPT_IMAGE_STAGING_USD, 6);
+    expect(estimateImageBatchFor("reel", 1)).toBeCloseTo(estimateImageBatch(1), 6);
+    expect(estimateImageBatchFor("staging", 0)).toBe(0);
+  });
+
+  it("a staging package is one image + two vision calls — well under a dollar", () => {
+    const total = estimateProjectTotal("staging", 2);
+    expect(total).toBeGreaterThan(GPT_IMAGE_STAGING_USD);
+    expect(total).toBeLessThan(1);
   });
 });

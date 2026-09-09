@@ -107,7 +107,7 @@ export default async function ProjectsPage() {
           <span className="text-xs uppercase tracking-[0.18em] text-muted-foreground">
             Start something
           </span>
-          <span className="text-xs text-muted-foreground tabular-nums">6</span>
+          <span className="text-xs text-muted-foreground tabular-nums">7</span>
         </div>
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
           <FeatureCard
@@ -117,6 +117,14 @@ export default async function ProjectsPage() {
             hint="3 × 5s clips with crossfades, animated via Seedance (2.0 or 2.5 — your pick) + Topaz 4K, delivered as supersampled 1080p/30 with your own music bed."
             cost={`~${formatCost(estimateProjectTotal("reel", 3) + estimateAnimateBatch(3, 5))}`}
             aspectClass="aspect-[9/16]"
+          />
+          <FeatureCard
+            href="/new?format=staging"
+            kicker="Listings · Instagram · TikTok"
+            title="Virtual staging"
+            hint="Upload an empty room, optionally your client's own furniture. GPT-6 plans the staging, gpt-image-2.5 composites it in with the room preserved — before + after + listing copy, packaged."
+            cost={`~${formatCost(estimateProjectTotal("staging", 2))}`}
+            aspectClass="aspect-[4/3]"
           />
           <FeatureCard
             href="/new?format=before-after"
@@ -130,7 +138,7 @@ export default async function ProjectsPage() {
             href="/new?format=style-explorer"
             kicker="YouTube long-form"
             title="Style explorer"
-            hint="Describe a space, review the rendered base, then GPT-5.6 restyles that exact space into ~15 recognisable styles. SEO metadata + chapter copy included."
+            hint="Describe a space, review the rendered base, then GPT-6 restyles that exact space into ~15 recognisable styles. SEO metadata + chapter copy included."
             cost={`~${formatCost(estimateProjectTotal("style-explorer", 15))}`}
             aspectClass="aspect-video"
           />

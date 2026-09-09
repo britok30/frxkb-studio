@@ -78,7 +78,7 @@ export async function listProjectsWithCovers(): Promise<
     // Cover is ALWAYS derived live from scenes (thumbnail generation was
     // deprecated — see lib/projects.ts finalizeProject). Single source of
     // truth: the scenes themselves.
-    if (p.format === "before-after") {
+    if (p.format === "before-after" || p.format === "staging") {
       // The after (highest-order scene with an image) is the visual payoff.
       for (let i = projScenes.length - 1; i >= 0; i--) {
         if (projScenes[i].imageUrl) return { ...p, coverUrl: projScenes[i].imageUrl };

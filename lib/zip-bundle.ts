@@ -41,6 +41,10 @@ export async function downloadBundle(
   data: BundleData,
   opts: { onProgress?: (done: number, total: number) => void } = {}
 ): Promise<void> {
+  if (data.format === "staging") {
+    await downloadStagingBundle(data, opts);
+    return;
+  }
   // The final.mp4 deliberately does NOT ship in the zip: full-quality
   // long-forms run gigabytes, which browser-side zipping can't survive.
   // The export panel pairs this bundle with a dedicated "Download video"
@@ -146,6 +150,105 @@ export async function downloadBundle(
   saveAs(blob, `${slugify(data.title)}-bundle.zip`);
 }
 
+/**
+ * Staging package: exactly two photos plus the copy. Named for the listing
+ * (not scene-001/002) so the agent can attach them as-is, plus a side-by-side
+ * composite built in the browser for the social reveal.
+ */
+async function downloadStagingBundle(
+  data: BundleData,
+  opts: { onProgress?: (done: number, total: number) => void } = {}
+): Promise<void> {
+  const ordered = [...data.scenes].sort((a, b) => a.order - b.order);
+  const before = ordered[0];
+  const after = ordered[ordered.length - 1];
+  if (!before || !after || before === after) {
+    throw new Error("Staging bundle needs both the before and the staged after.");
+  }
+  const total = 3;
+  let done = 0;
+  const tick = () => {
+    done++;
+    opts.onProgress?.(done, total);
+  };
+
+  const [beforeBlob, afterBlob] = await Promise.all([
+    fetchAsBlob(before.imageUrl).then((b) => (tick(), b)),
+    fetchAsBlob(after.imageUrl).then((b) => (tick(), b)),
+  ]);
+
+  const base = slugify(data.title) || "room";
+  const beforeName = `${base}-before.jpg`;
+  const afterName = `${base}-after-virtually-staged.jpg`;
+  const sideBySideName = `${base}-before-after.jpg`;
+
+  const zip = new JSZip();
+  zip.file(beforeName, beforeBlob, { compression: "STORE" });
+  zip.file(afterName, afterBlob, { compression: "STORE" });
+
+  // Side-by-side reveal — best effort (needs canvas; skipped where absent).
+  let sideBySide: string | null = null;
+  try {
+    const composite = await composeSideBySide(beforeBlob, afterBlob);
+    if (composite) {
+      zip.file(sideBySideName, composite, { compression: "STORE" });
+      sideBySide = sideBySideName;
+    }
+  } catch {
+    sideBySide = null;
+  }
+  tick();
+
+  const manifest = {
+    version: MANIFEST_VERSION_CLIENT,
+    projectId: data.projectId,
+    title: data.title,
+    niche: data.niche,
+    format: data.format,
+    generatedAt: new Date().toISOString(),
+    before: beforeName,
+    after: afterName,
+    sideBySide,
+    metadata: data.metadata,
+    stagingPlan: after.prompt,
+    styleName: after.styleName ?? null,
+    styleSubtitle: after.styleSubtitle ?? null,
+  };
+  zip.file("manifest.json", JSON.stringify(manifest, null, 2));
+  zip.file("copy.txt", buildPlainTextMetadata(data));
+
+  const blob = await zip.generateAsync({
+    type: "blob",
+    compression: "DEFLATE",
+    compressionOptions: { level: 6 },
+  });
+  saveAs(blob, `${base}-virtual-staging.zip`);
+}
+
+/** Before | after on one canvas, matched heights, thin gutter, JPEG. */
+async function composeSideBySide(beforeBlob: Blob, afterBlob: Blob): Promise<Blob | null> {
+  if (typeof createImageBitmap !== "function" || typeof document === "undefined") return null;
+  const [a, b] = await Promise.all([createImageBitmap(beforeBlob), createImageBitmap(afterBlob)]);
+  const height = Math.min(a.height, b.height, 1600);
+  const aw = Math.round((a.width / a.height) * height);
+  const bw = Math.round((b.width / b.height) * height);
+  const gutter = Math.round(height * 0.01);
+  const canvas = document.createElement("canvas");
+  canvas.width = aw + gutter + bw;
+  canvas.height = height;
+  const ctx = canvas.getContext("2d");
+  if (!ctx) return null;
+  ctx.fillStyle = "#ffffff";
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  ctx.drawImage(a, 0, 0, aw, height);
+  ctx.drawImage(b, aw + gutter, 0, bw, height);
+  a.close?.();
+  b.close?.();
+  return await new Promise<Blob | null>((resolve) =>
+    canvas.toBlob((out) => resolve(out), "image/jpeg", 0.92)
+  );
+}
+
 async function fetchAsBlob(url: string): Promise<Blob> {
   const res = await fetch(url);
   if (!res.ok) throw new Error(`Failed to fetch ${url}: ${res.status}`);
@@ -195,6 +298,32 @@ function buildPlainTextMetadata(data: BundleData): string {
         m.instagramCaption,
         "",
         m.instagramHashtags.map((h) => `#${h}`).join(" "),
+        "",
+      ].join("\n");
+    case "staging":
+      return [
+        ...header,
+        "## Instagram",
+        m.instagramCaption,
+        "",
+        m.instagramHashtags.map((h) => `#${h}`).join(" "),
+        "",
+        "## TikTok",
+        m.tiktokCaption,
+        "",
+        m.tiktokHashtags.map((h) => `#${h}`).join(" "),
+        "",
+        "## Listing remarks (MLS)",
+        m.listingBlurb,
+        "",
+        "## Note to the agent / homeowner",
+        m.clientNote,
+        "",
+        "## Alt text (after image)",
+        m.altText,
+        "",
+        "## Required disclosure",
+        m.disclosure,
         "",
       ].join("\n");
     case "youtube": {

@@ -6,8 +6,9 @@ import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import {
   estimateAnimateBatch,
-  estimateBatchImages,
   estimateFinalize,
+  estimateImageBatchFor,
+  estimateStagingMetadata,
   formatCost,
 } from "@/lib/pricing";
 import { STYLE_EXPLORER_HOLD_SEC } from "@/lib/prompts/types";
@@ -184,10 +185,12 @@ export function ProjectActions({
     }
   }
 
+  // Staging: scene 1 is the upload — only the after ever renders.
+  const renderable = format === "staging" ? Math.max(1, totalScenes - 1) : totalScenes;
   const generateBatchCost = formatCost(
-    estimateBatchImages(remaining === totalScenes ? totalScenes : remaining)
+    estimateImageBatchFor(format, remaining === totalScenes ? renderable : remaining, quality)
   );
-  const regenerateAllCost = formatCost(estimateBatchImages(totalScenes));
+  const regenerateAllCost = formatCost(estimateImageBatchFor(format, renderable, quality));
   const animateCost = formatCost(
     estimateAnimateBatch(
       Math.max(0, animatableCount - animatedCount),
@@ -198,7 +201,9 @@ export function ProjectActions({
       videoModel
     )
   );
-  const finalizeCost = formatCost(estimateFinalize());
+  const finalizeCost = formatCost(
+    format === "staging" ? estimateStagingMetadata() : estimateFinalize()
+  );
 
   return (
     <div className="flex items-center gap-2">

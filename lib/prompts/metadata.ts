@@ -73,10 +73,31 @@ export const YouTubeMetadataSchema = z.object({
 });
 export type YouTubeMetadata = z.infer<typeof YouTubeMetadataSchema>;
 
+/**
+ * Virtual-staging metadata: one before + one after, sold three ways. The
+ * social captions (IG + TikTok) do the reveal; the listing blurb is MLS
+ * copy the agent can paste; the client note is the message that travels
+ * with the two files. `disclosure` is deterministic (MLS rules require a
+ * "virtually staged" label — never left to the model).
+ */
+export const StagingMetadataSchema = z.object({
+  kind: z.literal("staging"),
+  instagramCaption: z.string().min(20).max(2200),
+  instagramHashtags: REEL_PLATFORM_HASHTAGS,
+  tiktokCaption: z.string().min(10).max(600),
+  tiktokHashtags: REEL_PLATFORM_HASHTAGS,
+  listingBlurb: z.string().min(40).max(1200),
+  clientNote: z.string().min(40).max(1500),
+  altText: z.string().min(10).max(300),
+  disclosure: z.string().min(10).max(300),
+});
+export type StagingMetadata = z.infer<typeof StagingMetadataSchema>;
+
 export const MetadataSchema = z.discriminatedUnion("kind", [
   ReelMetadataSchema,
   CarouselMetadataSchema,
   YouTubeMetadataSchema,
+  StagingMetadataSchema,
 ]);
 export type Metadata = z.infer<typeof MetadataSchema>;
 

@@ -1,6 +1,7 @@
 import { pgTable, text, integer, real, timestamp, jsonb, index, boolean } from "drizzle-orm/pg-core";
 import { relations } from "drizzle-orm";
 import type { Metadata } from "@/lib/prompts/metadata";
+import type { StagingBrief } from "@/lib/prompts/types";
 
 export const projects = pgTable(
   "projects",
@@ -9,7 +10,7 @@ export const projects = pgTable(
     title: text("title").notNull(),
     niche: text("niche").notNull(),
     format: text("format", {
-      enum: ["reel", "carousel", "before-after", "style-explorer"],
+      enum: ["reel", "carousel", "before-after", "style-explorer", "staging"],
     }).notNull(),
     /** Visual lane: interior spaces vs exterior shots. Threaded through every
      *  prompt generator so the world stays on one side for the whole project. */
@@ -70,6 +71,10 @@ export const projects = pgTable(
      *  hard-blocked — a regen would overwrite the client's photo with an AI
      *  render of its description. */
     uploadSourced: boolean("upload_sourced").notNull().default(false),
+    /** Virtual staging only: what the stager read in the empty-room photo and
+     *  what it was asked for (room, style, brief). Furniture reference photos
+     *  ride on referenceImageUrls. Null for every other format. */
+    staging: jsonb("staging").$type<StagingBrief>(),
     targetDurationSec: integer("target_duration_sec"),
     concept: jsonb("concept").$type<{
       workingTitle: string;

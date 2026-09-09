@@ -20,9 +20,13 @@ import {
   SHOWCASE_REEL_MAX_TOTAL_SEC,
   SHOWCASE_SHOT_MAX_SEC,
   SHOWCASE_SHOT_MIN_SEC,
+  STAGING_MAX_FURNITURE_REFS,
+  STAGING_ROOM_TYPES,
+  STAGING_STYLES,
+  getStagingStyle,
 } from "@/lib/prompts/types";
 
-type Format = "reel" | "carousel" | "before-after" | "style-explorer" | "showcase";
+type Format = "reel" | "carousel" | "before-after" | "style-explorer" | "showcase" | "staging";
 type WorldType = "interior" | "exterior";
 type PropertyType = "residential" | "commercial";
 type AspectRatio = "16:9" | "9:16" | "1:1" | "4:3" | "3:4";
@@ -61,6 +65,14 @@ const FORMAT_PRESETS: Record<
     sceneDurationSec: 0,
     aspectClass: "aspect-square",
   },
+  staging: {
+    label: "Virtual staging",
+    kicker: "Listings · Instagram · TikTok",
+    hint: "Upload a photo of an empty room (and, optionally, your client's own furniture). GPT-6 plans the staging; gpt-image-2.5 composites it in with the room preserved. Before + after + listing copy.",
+    sceneCount: 2, // before + one staged after
+    sceneDurationSec: 0,
+    aspectClass: "aspect-[4/3]", // overridden by the upload's actual aspect
+  },
   "before-after": {
     label: "Before / after",
     kicker: "Instagram · TikTok",
@@ -80,7 +92,7 @@ const FORMAT_PRESETS: Record<
   "style-explorer": {
     label: "Style explorer",
     kicker: "YouTube long-form",
-    hint: "Describe a space, render a base, then GPT-5.6 restyles that exact space into ~15 recognisable design styles. Optionally animate every style into real footage. SEO metadata + card copy included.",
+    hint: "Describe a space, render a base, then GPT-6 restyles that exact space into ~15 recognisable design styles. Optionally animate every style into real footage. SEO metadata + card copy included.",
     sceneCount: 15, // number of styles
     sceneDurationSec: 0, // static stills
     aspectClass: "aspect-video", // 16:9 for YouTube
@@ -98,7 +110,8 @@ function isFormat(v: string | null): v is Format {
     v === "carousel" ||
     v === "before-after" ||
     v === "style-explorer" ||
-    v === "showcase"
+    v === "showcase" ||
+    v === "staging"
   );
 }
 
@@ -136,7 +149,9 @@ export default function NewProjectPage() {
   // No default — operator must explicitly pick a side, EXCEPT when their
   // operator config only allows one (we auto-select to skip the friction)
   // or a duplicate-as-template link carried one in.
-  const [worldType, setWorldType] = useState<WorldType | null>(initialWorld);
+  const [worldType, setWorldType] = useState<WorldType | null>(
+    initialFormat === "staging" ? "interior" : initialWorld
+  );
   // Program axis (style-explorer only). Same single-lane auto-select trick.
   const [allowedPropertyTypes, setAllowedPropertyTypes] = useState<PropertyType[]>([
     "residential",
@@ -168,7 +183,7 @@ export default function NewProjectPage() {
   }, []);
   const [niche, setNiche] = useState(initialNiche);
   const [operatorNotes, setOperatorNotes] = useState("");
-  // Committed photographic look (reel/carousel only). Null = "let GPT-5.6
+  // Committed photographic look (reel/carousel only). Null = "let GPT-6
   // choose the light per concept" — the pre-looks behavior.
   const [lookId, setLookId] = useState<string | null>(initialLookParam);
   // Render-quality tier (reel/carousel). standard = 2K stills + 1080p video;
@@ -183,7 +198,7 @@ export default function NewProjectPage() {
     initialVideoModel
   );
   // Moodboard / photo references (reel/carousel, ≤5). Steer materials,
-  // palette, and mood for every render; GPT-5.6 also sees them while
+  // palette, and mood for every render; GPT-6 also sees them while
   // writing the brief.
   const [referenceImageUrls, setReferenceImageUrls] = useState<string[]>([]);
   const [showCustomize, setShowCustomize] = useState(false);
@@ -197,6 +212,12 @@ export default function NewProjectPage() {
   const [beforeImageUrl, setBeforeImageUrl] = useState<string | null>(null);
   const [beforeAspect, setBeforeAspect] = useState<AspectRatio | null>(null);
   const [transformationPrompt, setTransformationPrompt] = useState("");
+
+  // Staging-only state. The empty-room photo reuses beforeImageUrl/beforeAspect.
+  const [stagingRoomType, setStagingRoomType] = useState<string>("auto");
+  const [stagingStyleId, setStagingStyleId] = useState<string>("auto");
+  const [stagingBrief, setStagingBrief] = useState("");
+  const [stagingFurnitureUrls, setStagingFurnitureUrls] = useState<string[]>([]);
 
   // Showcase-only state: the operator's own images (presentation order) and
   // the target deliverable shape.
@@ -226,6 +247,8 @@ export default function NewProjectPage() {
 
   function changeFormat(f: Format) {
     setFormat(f);
+    // Staging is an interior product — no lane to pick.
+    if (f === "staging") setWorldType("interior");
     setSceneCount(FORMAT_PRESETS[f].sceneCount);
     setSceneDurationSec(FORMAT_PRESETS[f].sceneDurationSec);
   }
@@ -252,7 +275,9 @@ export default function NewProjectPage() {
 
   const canContinueStep1 = !!format;
   const canContinueStep2 =
-    format === "before-after"
+    format === "staging"
+      ? !!beforeImageUrl
+      : format === "before-after"
       ? !!worldType && !!beforeImageUrl && transformationPrompt.trim().length >= 8
       : format === "style-explorer"
         ? !!worldType && !!propertyType && !!baseImageUrl
@@ -268,6 +293,37 @@ export default function NewProjectPage() {
     setSubmitting(true);
     try {
       if (!worldType) throw new Error("Pick interior or exterior first.");
+
+      if (format === "staging") {
+        if (!beforeImageUrl || !beforeAspect) {
+          throw new Error("Upload the empty-room photo first.");
+        }
+        const res = await fetch("/api/projects/staging", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            beforeImageUrl,
+            aspectRatio: beforeAspect,
+            roomType: stagingRoomType,
+            styleId: stagingStyleId,
+            brief: stagingBrief.trim() || undefined,
+            furnitureReferenceUrls:
+              stagingFurnitureUrls.length > 0 ? stagingFurnitureUrls : undefined,
+          }),
+        });
+        if (!res.ok) {
+          const err = await res.json().catch(() => ({}));
+          throw new Error(err.error ?? `HTTP ${res.status}`);
+        }
+        const data = await res.json();
+        toast.success(
+          data.enqueued
+            ? "Staging started — the after is rendering now"
+            : "Project created — hit Generate to render the after"
+        );
+        router.push(`/projects/${data.project.id}`);
+        return;
+      }
 
       if (format === "before-after") {
         if (!beforeImageUrl || !beforeAspect) {
@@ -422,7 +478,9 @@ export default function NewProjectPage() {
                     hint={FORMAT_PRESETS[f].hint}
                     aspectClass={FORMAT_PRESETS[f].aspectClass}
                     detail={
-                      f === "carousel"
+                      f === "staging"
+                        ? "1 photo → 1 staged after"
+                        : f === "carousel"
                         ? `${FORMAT_PRESETS[f].sceneCount} slides`
                         : f === "style-explorer"
                           ? `${FORMAT_PRESETS[f].sceneCount} styles`
@@ -451,7 +509,9 @@ export default function NewProjectPage() {
               <StepHeader
                 eyebrow="Step 2 of 3"
                 title={
-                  format === "before-after"
+                  format === "staging"
+                    ? "Drop the empty room."
+                    : format === "before-after"
                     ? "Drop the before, describe the after."
                     : format === "style-explorer"
                       ? "Describe the space, render a base."
@@ -460,16 +520,19 @@ export default function NewProjectPage() {
                         : "What's the world?"
                 }
                 hint={
-                  format === "before-after"
+                  format === "staging"
+                    ? "Upload the listing photo of the empty room. Pick the room and a style if you want to steer it, add the client's own furniture photos if they have pieces to place, and the stager does the rest — the room, floors, windows, and light stay exactly as shot."
+                    : format === "before-after"
                     ? "Upload a real photo of an interior or exterior. Describe the direction — the studio proposes and renders 9 distinct after concepts on the exact same camera: with the before, a ready-made 10-image carousel."
                     : format === "style-explorer"
-                      ? "Pick the program and vantage, describe the space, and render a base image. Review it here — then GPT-5.6 reimagines that exact space in distinct, recognisable design styles."
+                      ? "Pick the program and vantage, describe the space, and render a base image. Review it here — then GPT-6 reimagines that exact space in distinct, recognisable design styles."
                       : format === "showcase"
-                        ? "Upload 2–20 photos or renders of ONE property in the order they should play. GPT-5.6 names and describes every shot; you animate them on the next screen."
+                        ? "Upload 2–20 photos or renders of ONE property in the order they should play. GPT-6 names and describes every shot; you animate them on the next screen."
                         : "Describe a home a designer would screenshot — a place with strong identity, a quality of light, materials and the kind of objects (plants, art, books) that fill it. Or have the studio suggest one."
                 }
               />
 
+              {format !== "staging" && (
               <WorldTypePicker
                 value={worldType}
                 onChange={(v) => {
@@ -481,6 +544,7 @@ export default function NewProjectPage() {
                 }}
                 allowed={allowedWorldTypes ?? ["interior", "exterior"]}
               />
+              )}
 
               {format === "style-explorer" && (
                 <PropertyTypePicker
@@ -493,7 +557,24 @@ export default function NewProjectPage() {
                 />
               )}
 
-              {format === "before-after" ? (
+              {format === "staging" ? (
+                <StagingStep
+                  beforeImageUrl={beforeImageUrl}
+                  beforeAspect={beforeAspect}
+                  onUploaded={(url, aspect) => {
+                    setBeforeImageUrl(url);
+                    setBeforeAspect(aspect);
+                  }}
+                  roomType={stagingRoomType}
+                  onRoomTypeChange={setStagingRoomType}
+                  styleId={stagingStyleId}
+                  onStyleChange={setStagingStyleId}
+                  brief={stagingBrief}
+                  onBriefChange={setStagingBrief}
+                  furnitureUrls={stagingFurnitureUrls}
+                  onFurnitureChange={setStagingFurnitureUrls}
+                />
+              ) : format === "before-after" ? (
                 <BeforeAfterStep
                   beforeImageUrl={beforeImageUrl}
                   beforeAspect={beforeAspect}
@@ -578,7 +659,7 @@ export default function NewProjectPage() {
                     ›
                   </span>
                   {format === "reel"
-                    ? "Add notes for GPT-5.6"
+                    ? "Add notes for GPT-6"
                     : `Customize (${sceneCount} slides)`}
                 </button>
                 )}
@@ -610,7 +691,7 @@ export default function NewProjectPage() {
 
                         <label className="flex flex-col gap-1.5">
                           <span className="text-xs text-muted-foreground tracking-tight">
-                            Notes for GPT-5.6 (optional)
+                            Notes for GPT-6 (optional)
                           </span>
                           <textarea
                             value={operatorNotes}
@@ -642,7 +723,7 @@ export default function NewProjectPage() {
               <StepHeader
                 eyebrow="Step 3 of 3"
                 title="Ready to script."
-                hint="GPT-5.6 writes a concept brief, then a scene-by-scene shotlist. Takes about 30 seconds. You'll review before any images get generated."
+                hint="GPT-6 writes a concept brief, then a scene-by-scene shotlist. Takes about 30 seconds. You'll review before any images get generated."
               />
 
               <div className="rounded-xl border divide-y">
@@ -658,7 +739,38 @@ export default function NewProjectPage() {
                     onEdit={() => go(2)}
                   />
                 )}
-                {format === "before-after" ? (
+                {format === "staging" ? (
+                  <>
+                    <ReviewRow
+                      label="Empty room"
+                      value={beforeImageUrl ? `Uploaded (${beforeAspect})` : "Not uploaded"}
+                      onEdit={() => go(2)}
+                    />
+                    <ReviewRow
+                      label="Room"
+                      value={stagingRoomType === "auto" ? "Stager identifies it" : stagingRoomType}
+                      onEdit={() => go(2)}
+                    />
+                    <ReviewRow
+                      label="Style"
+                      value={getStagingStyle(stagingStyleId).name}
+                      onEdit={() => go(2)}
+                    />
+                    <ReviewRow
+                      label="Client furniture"
+                      value={
+                        stagingFurnitureUrls.length > 0
+                          ? `${stagingFurnitureUrls.length} piece${stagingFurnitureUrls.length === 1 ? "" : "s"} to place`
+                          : "None — stager picks everything"
+                      }
+                      onEdit={() => go(2)}
+                    />
+                    {stagingBrief.trim() && (
+                      <ReviewRow label="Brief" value={stagingBrief.trim()} onEdit={() => go(2)} />
+                    )}
+                    <ReviewRow label="Renderer" value="gpt-image-2.5 Sunburst · room preserved, furniture added" />
+                  </>
+                ) : format === "before-after" ? (
                   <>
                     <ReviewRow
                       label="Before"
@@ -738,7 +850,7 @@ export default function NewProjectPage() {
                     <ReviewRow label="Niche" value={niche.trim()} onEdit={() => go(2)} />
                     <ReviewRow
                       label="Look"
-                      value={getLook(lookId)?.name ?? "GPT-5.6's choice"}
+                      value={getLook(lookId)?.name ?? "GPT-6's choice"}
                       onEdit={() => go(2)}
                     />
                     {format === "reel" && (
@@ -776,7 +888,7 @@ export default function NewProjectPage() {
                       : `~${formatCost(estimateProjectTotal(format, sceneCount))} all-in`
                   }
                 />
-                {format !== "before-after" && operatorNotes.trim() && (
+                {format !== "before-after" && format !== "staging" && operatorNotes.trim() && (
                   <ReviewRow label="Notes" value={operatorNotes.trim()} onEdit={() => go(2)} />
                 )}
               </div>
@@ -800,10 +912,14 @@ export default function NewProjectPage() {
                     {submitting
                       ? format === "style-explorer"
                         ? "Generating…"
-                        : "Scripting…"
+                        : format === "staging"
+                          ? "Planning the staging…"
+                          : "Scripting…"
                       : format === "style-explorer"
                         ? "Generate styles →"
-                        : "Create project →"}
+                        : format === "staging"
+                          ? "Stage it →"
+                          : "Create project →"}
                   </motion.button>
                 </Footer>
               )}
@@ -1257,7 +1373,7 @@ function LookPicker({
           selected={value === null}
           onSelect={() => onChange(null)}
           name="No look"
-          tagline="GPT-5.6 picks the light per concept"
+          tagline="GPT-6 picks the light per concept"
           swatch="linear-gradient(135deg, #d8d8d8 0%, #a8a8a8 50%, #6f6f6f 100%)"
         />
         {looks.map((l: Look) => (
@@ -1331,19 +1447,27 @@ function VideoEngineToggle({
 
 /** Moodboard / photo references (≤5). Uploaded through /api/upload; the
  *  returned Blob URLs condition every render via nano-banana /edit and are
- *  shown to GPT-5.6 while it writes the brief. */
+ *  shown to GPT-6 while it writes the brief. */
 function MoodboardPicker({
   urls,
   onChange,
+  max = 5,
+  label = "Moodboard (optional)",
+  help = "1–5 photos or refs — materials, palette, and mood follow them",
+  addLabel = "+ Add",
 }: {
   urls: string[];
   onChange: (urls: string[]) => void;
+  max?: number;
+  label?: string;
+  help?: string;
+  addLabel?: string;
 }) {
   const [uploading, setUploading] = useState(false);
   const inputRef = useRef<HTMLInputElement | null>(null);
 
   async function upload(files: FileList) {
-    const room = 5 - urls.length;
+    const room = max - urls.length;
     const picked = Array.from(files).slice(0, room);
     if (picked.length === 0) return;
     setUploading(true);
@@ -1366,11 +1490,9 @@ function MoodboardPicker({
     <div className="flex flex-col gap-2">
       <div className="flex items-baseline justify-between gap-4">
         <span className="text-[10px] uppercase tracking-[0.22em] text-muted-foreground">
-          Moodboard (optional)
+          {label}
         </span>
-        <span className="text-[11px] text-muted-foreground tracking-tight">
-          1–5 photos or refs — materials, palette, and mood follow them
-        </span>
+        <span className="text-[11px] text-muted-foreground tracking-tight">{help}</span>
       </div>
       <div className="flex flex-wrap gap-2">
         {urls.map((url, i) => (
@@ -1386,14 +1508,14 @@ function MoodboardPicker({
             </button>
           </div>
         ))}
-        {urls.length < 5 && (
+        {urls.length < max && (
           <button
             type="button"
             onClick={() => inputRef.current?.click()}
             disabled={uploading}
             className="size-20 rounded-md border border-dashed text-xs text-muted-foreground hover:text-foreground hover:border-foreground/40 transition-colors disabled:opacity-50"
           >
-            {uploading ? "…" : "+ Add"}
+            {uploading ? "…" : addLabel}
           </button>
         )}
       </div>
@@ -1706,7 +1828,7 @@ function ShowcaseStep({
 
       <label className="flex flex-col gap-1.5">
         <span className="text-xs text-muted-foreground tracking-tight">
-          Notes for GPT-5.6 (optional)
+          Notes for GPT-6 (optional)
         </span>
         <textarea
           value={notes}
@@ -1827,6 +1949,202 @@ function BeforeAfterStep({
         </span>
       </label>
     </div>
+  );
+}
+
+// ── Virtual staging step (upload the empty room → room/style/brief/furniture) ──
+
+function StagingStep({
+  beforeImageUrl,
+  beforeAspect,
+  onUploaded,
+  roomType,
+  onRoomTypeChange,
+  styleId,
+  onStyleChange,
+  brief,
+  onBriefChange,
+  furnitureUrls,
+  onFurnitureChange,
+}: {
+  beforeImageUrl: string | null;
+  beforeAspect: AspectRatio | null;
+  onUploaded: (url: string, aspect: AspectRatio) => void;
+  roomType: string;
+  onRoomTypeChange: (s: string) => void;
+  styleId: string;
+  onStyleChange: (s: string) => void;
+  brief: string;
+  onBriefChange: (s: string) => void;
+  furnitureUrls: string[];
+  onFurnitureChange: (urls: string[]) => void;
+}) {
+  const [uploading, setUploading] = useState(false);
+  const inputRef = useRef<HTMLInputElement>(null);
+  const [dragOver, setDragOver] = useState(false);
+
+  async function handleFile(file: File) {
+    if (uploading) return;
+    setUploading(true);
+    const toastId = toast.loading("Uploading…");
+    try {
+      const img = await uploadImage(file);
+      onUploaded(img.url, img.aspectRatio);
+      toast.success(`Uploaded (${img.aspectRatio})`, { id: toastId });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Unknown error";
+      toast.error("Upload failed", { id: toastId, description: message });
+    } finally {
+      setUploading(false);
+    }
+  }
+
+  return (
+    <div className="flex flex-col gap-6">
+      <div
+        onDragOver={(e) => {
+          e.preventDefault();
+          setDragOver(true);
+        }}
+        onDragLeave={() => setDragOver(false)}
+        onDrop={(e) => {
+          e.preventDefault();
+          setDragOver(false);
+          const file = e.dataTransfer.files?.[0];
+          if (file) void handleFile(file);
+        }}
+        onClick={() => inputRef.current?.click()}
+        className={`relative cursor-pointer rounded-xl border-2 border-dashed transition-colors flex flex-col items-center justify-center gap-2 p-6 ${
+          dragOver
+            ? "border-foreground bg-foreground/[0.04]"
+            : "border-foreground/30 hover:border-foreground/60"
+        }`}
+      >
+        <input
+          ref={inputRef}
+          type="file"
+          accept="image/jpeg,image/png,image/webp"
+          className="hidden"
+          onChange={(e) => {
+            const file = e.target.files?.[0];
+            if (file) void handleFile(file);
+            e.target.value = "";
+          }}
+        />
+        {beforeImageUrl ? (
+          <div className="flex flex-col items-center gap-3">
+            <Image
+              src={beforeImageUrl}
+              alt="Empty room"
+              width={560}
+              height={420}
+              className="max-h-[280px] w-auto rounded-md border bg-muted/30"
+            />
+            <div className="text-xs text-muted-foreground tracking-tight">
+              Empty room · {beforeAspect} — the after renders at this exact shape · click to replace
+            </div>
+          </div>
+        ) : (
+          <div className="flex flex-col items-center gap-1.5 py-6">
+            <div className="text-sm tracking-tight">
+              {uploading ? "Uploading…" : "Drop the empty-room photo or click to choose"}
+            </div>
+            <div className="text-[11px] text-muted-foreground">
+              The listing photo, as shot · JPEG, PNG, or WebP · max 30MB
+            </div>
+          </div>
+        )}
+      </div>
+
+      <div className="flex flex-col gap-2">
+        <span className="text-[10px] uppercase tracking-[0.22em] text-muted-foreground">
+          Room
+        </span>
+        <div className="flex flex-wrap gap-1.5">
+          {STAGING_ROOM_TYPES.map((r) => (
+            <StagingChip
+              key={r}
+              active={roomType === r}
+              onClick={() => onRoomTypeChange(r)}
+              label={r === "auto" ? "Stager identifies it" : r}
+            />
+          ))}
+        </div>
+      </div>
+
+      <div className="flex flex-col gap-2">
+        <div className="flex items-baseline justify-between gap-4">
+          <span className="text-[10px] uppercase tracking-[0.22em] text-muted-foreground">
+            Staging style
+          </span>
+          <span className="text-[11px] text-muted-foreground tracking-tight">
+            {getStagingStyle(styleId).hint}
+          </span>
+        </div>
+        <div className="flex flex-wrap gap-1.5">
+          {STAGING_STYLES.map((st) => (
+            <StagingChip
+              key={st.id}
+              active={styleId === st.id}
+              onClick={() => onStyleChange(st.id)}
+              label={st.name}
+            />
+          ))}
+        </div>
+      </div>
+
+      <MoodboardPicker
+        urls={furnitureUrls}
+        onChange={onFurnitureChange}
+        max={STAGING_MAX_FURNITURE_REFS}
+        label="Client's furniture (optional)"
+        help={`Up to ${STAGING_MAX_FURNITURE_REFS} photos of pieces to place — the stager reproduces them and fills in around them`}
+        addLabel="+ Piece"
+      />
+
+      <label className="flex flex-col gap-1.5">
+        <span className="text-[10px] uppercase tracking-[0.22em] text-muted-foreground">
+          Brief (optional)
+        </span>
+        <textarea
+          value={brief}
+          onChange={(e) => onBriefChange(e.target.value)}
+          rows={3}
+          maxLength={1000}
+          placeholder="Young-family buyers, $650k listing. Keep the window wall clear — it's the view. Warm neutrals, one sofa, a reading corner by the fireplace."
+          className="w-full rounded-md border bg-transparent px-3 py-2 text-sm focus:border-foreground outline-none resize-none tracking-tight"
+        />
+        <span className="text-[11px] text-muted-foreground tracking-tight">
+          Target buyer, must-haves, palette, anything to avoid. Treated as hard constraints.
+        </span>
+      </label>
+    </div>
+  );
+}
+
+/** Bordered toggle chip (ModeTab assumes a muted strip behind it). */
+function StagingChip({
+  active,
+  onClick,
+  label,
+}: {
+  active: boolean;
+  onClick: () => void;
+  label: string;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      aria-pressed={active}
+      className={`text-xs px-3 py-1.5 rounded-full border tracking-tight transition-colors ${
+        active
+          ? "bg-foreground text-background border-foreground"
+          : "text-muted-foreground border-border hover:text-foreground hover:border-foreground/40"
+      }`}
+    >
+      {label}
+    </button>
   );
 }
 
@@ -1967,7 +2285,7 @@ function StyleExplorerStep({
         />
         <label className="flex flex-col gap-1.5">
           <span className="text-xs text-muted-foreground tracking-tight">
-            Notes for GPT-5.6 (optional)
+            Notes for GPT-6 (optional)
           </span>
           <textarea
             value={notes}
@@ -2011,11 +2329,11 @@ function WorldChooser({
   const writeNicheRef = useRef<string>("");
   // Tracks the in-flight suggest request so we can cancel it when the
   // operator switches modes or kicks off a new request. Without this,
-  // a stale GPT-5.6 response overwrites the input the user has since cleared.
+  // a stale GPT-6 response overwrites the input the user has since cleared.
   const inflightController = useRef<AbortController | null>(null);
-  // Niches GPT-5.6 has proposed and the operator has rejected. Persisted to
+  // Niches GPT-6 has proposed and the operator has rejected. Persisted to
   // localStorage so the avoid-list is non-empty even on a fresh session's
-  // first click — otherwise GPT-5.6 gets identical input every time and keeps
+  // first click — otherwise GPT-6 gets identical input every time and keeps
   // proposing the same "obvious gap" answer. Capped at 30.
   const REJECTED_KEY = "frxkb-rejected-niches";
   const REJECTED_CAP = 30;
@@ -2051,7 +2369,7 @@ function WorldChooser({
   }
 
   const suggestRequest = useCallback(async () => {
-    // Whatever GPT-5.6 proposed last is now considered rejected — record it
+    // Whatever GPT-6 proposed last is now considered rejected — record it
     // before we ask for another. Persisted to localStorage so it survives
     // page refresh / new sessions.
     if (aiNicheRef.current) rememberRejection(aiNicheRef.current);
@@ -2108,7 +2426,7 @@ function WorldChooser({
     }
   }, [format, worldType, onNiche]);
 
-  // Switch handler: preserve text on each side. Never auto-fires GPT-5.6 —
+  // Switch handler: preserve text on each side. Never auto-fires GPT-6 —
   // suggestion only happens when the operator clicks the button.
   function switchMode(next: Mode) {
     if (next === mode) return;
@@ -2224,7 +2542,7 @@ function WorldChooser({
             className="flex items-center justify-between gap-4 rounded-xl border border-dashed p-4"
           >
             <span className="text-xs text-muted-foreground tracking-tight max-w-md leading-relaxed">
-              GPT-5.6 looks at past worlds and the ones you&apos;ve skipped, then
+              GPT-6 looks at past worlds and the ones you&apos;ve skipped, then
               proposes a fresh save-worthy one.
             </span>
             <motion.button

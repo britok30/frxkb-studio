@@ -77,11 +77,19 @@ export function estimateSeedVR(durationSec: number, fps: number = 24): number {
  *  output. Rounding error next to seedance; surfaced for completeness. */
 export const FAL_COMPOSE_PER_SECOND = 0.0002;
 
-/** OpenAI GPT-5.6 Sol (lib/llm.ts LLM_MODEL) — $5/MTok input, $30/MTok
- *  output, same rates as the gpt-5.5 it replaced. (Reasoning tokens bill as
- *  output; we run reasoning_effort=low so the per-call output stays modest.) */
-export const LLM_INPUT_PER_MTOK = 5;
-export const LLM_OUTPUT_PER_MTOK = 30;
+/** OpenAI GPT-6 Astra (lib/llm.ts LLM_MODEL) — $10/MTok input, $50/MTok
+ *  output for prompts ≤272K tokens (ours are ~2-5K). 2× the gpt-5.6-sol
+ *  rates it replaced 2026-09-08. (Reasoning tokens bill as output; we run
+ *  reasoning_effort=low so the per-call output stays modest.) */
+export const LLM_INPUT_PER_MTOK = 10;
+export const LLM_OUTPUT_PER_MTOK = 50;
+
+/** One gpt-image-2.5-sunburst virtual-staging edit (lib/openai-image.ts):
+ *  quality=high at a ~2048-class canvas (~12k image-output tokens at
+ *  $30/MTok) + the room photo and up to 8 furniture refs at high input
+ *  fidelity ($8/MTok). Token-billed by OpenAI — this is the ledger
+ *  estimate; reconcile against the OpenAI usage page after the first runs. */
+export const GPT_IMAGE_STAGING_USD = 0.4;
 
 /** OpenAI auto-caches stable prompt prefixes (our long system prompts) with no
  *  cache_control needed; cached input tokens bill at a steep discount. Averaged
@@ -147,6 +155,35 @@ export function estimateStylesGen(styleCount: number): number {
 export function estimateShowcaseCopy(imageCount: number): number {
   const n = Math.max(0, imageCount);
   return llmCost(1200 + n * 800, 300 + n * 120);
+}
+
+/** The staging-brief vision call: sees the room photo + N furniture refs,
+ *  writes the room read, furniture plan, and the edit instruction. */
+export function estimateStagingBrief(furnitureRefCount: number): number {
+  const refs = Math.max(0, furnitureRefCount);
+  return llmCost(1800 + 900 * (1 + refs), 1100);
+}
+
+/** The staging-metadata vision call: sees the before AND the after, writes
+ *  the captions, listing blurb, and client note. */
+export function estimateStagingMetadata(): number {
+  return llmCost(1600 + 900 * 2, 1400);
+}
+
+/** Cost of the staged "after" renders. One gpt-image-2.5 edit per after. */
+export function estimateStagingImages(afterCount: number): number {
+  return Math.max(0, afterCount) * GPT_IMAGE_STAGING_USD;
+}
+
+/** Format-aware image-batch estimate: staging renders through OpenAI, every
+ *  other format through fal nano-banana (see estimateImageBatch). */
+export function estimateImageBatchFor(
+  format: Format | string,
+  imageCount: number,
+  quality: "standard" | "hero" = "standard"
+): number {
+  if (format === "staging") return estimateStagingImages(imageCount);
+  return estimateImageBatch(imageCount, quality);
 }
 
 export function estimateSuggestWorld(): number {
@@ -264,6 +301,13 @@ export function estimateAnimateBatch(
  *  upload stays static — animating real photos invites uncanny artifacts),
  *  and the cover is just the after image (no fal call). */
 export function estimateProjectTotal(format: Format, sceneCount: number): number {
+  if (format === "staging") {
+    // The upload (free) + one gpt-image-2.5 staged after + the two vision
+    // GPT calls (brief at creation, captions at finalize). sceneCount is the
+    // 2-scene default; furniture refs add a little input on the brief call.
+    void sceneCount;
+    return estimateStagingBrief(0) + estimateStagingImages(1) + estimateStagingMetadata();
+  }
   if (format === "before-after") {
     // Stills-only since 2026-07-24: the upload (free) + 9 AI "after"
     // concepts via /edit (10 images total), plus the two GPT calls (slim

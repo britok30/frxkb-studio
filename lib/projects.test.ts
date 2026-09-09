@@ -42,6 +42,15 @@ const falMocks = vi.hoisted(() => ({
 const storageMocks = vi.hoisted(() => ({
   ensurePngStill: vi.fn(),
   storeFromUrl: vi.fn(),
+  storeBuffer: vi.fn(),
+}));
+
+const stagingMocks = vi.hoisted(() => ({
+  generateStagingBrief: vi.fn(),
+  generateStagingMetadata: vi.fn(),
+}));
+const openaiImageMocks = vi.hoisted(() => ({
+  stageImage: vi.fn(),
 }));
 
 // Default operator for all tests in this file. Individual tests can override
@@ -80,7 +89,14 @@ vi.mock("@/lib/fal", () => ({
 vi.mock("@/lib/storage", () => ({
   storeFromUrl: storageMocks.storeFromUrl,
   ensurePngStill: storageMocks.ensurePngStill,
+  storeBuffer: storageMocks.storeBuffer,
 }));
+vi.mock("@/lib/prompts/staging", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/prompts/staging")>()),
+  generateStagingBrief: stagingMocks.generateStagingBrief,
+  generateStagingMetadata: stagingMocks.generateStagingMetadata,
+}));
+vi.mock("@/lib/openai-image", () => ({ stageImage: openaiImageMocks.stageImage }));
 vi.mock("@/lib/operators", () => ({
   currentOperator: operatorMocks.currentOperator,
   pickAppLink: operatorMocks.pickAppLink,
@@ -133,6 +149,7 @@ vi.mock("@/lib/spend", () => ({
 
 import {
   applySceneAction,
+  createStagingProject,
   createBeforeAfterProject,
   createProject,
   createShowcaseProject,
@@ -185,6 +202,8 @@ beforeEach(() => {
   Object.values(claudeMocks).forEach((m) => m.mockReset());
   Object.values(falMocks).forEach((m) => m.mockReset());
   Object.values(storageMocks).forEach((m) => m.mockReset());
+  Object.values(stagingMocks).forEach((m) => m.mockReset());
+  Object.values(openaiImageMocks).forEach((m) => m.mockReset());
   // Default: base is already PNG — passthrough.
   storageMocks.ensurePngStill.mockImplementation(async (o) => o.url);
   // Dedupe defaults to "no matches" — individual tests can override.
@@ -2284,5 +2303,338 @@ describe("finalize auto-stitch", () => {
     expect(out.metadata).toBeTruthy();
     expect(out.autoStitch).toBe(true);
     expect(dbMocks.markProjectFinalized).toHaveBeenCalled();
+  });
+});
+
+// ── Virtual staging ─────────────────────────────────────────────────────────
+
+const stagingBrief = {
+  roomType: "Living room",
+  workingTitle: "Sunlit Oak-Floor Living Room",
+  hook: "A warm room a young family sees themselves in.",
+  roomRead: "14x18 living room, white oak floors, warm white walls, two south windows on the long wall, blank focal wall opposite.",
+  styleName: "Warm Transitional",
+  styleSubtitle: "Oatmeal linen, white oak, brushed brass",
+  furniturePlan: [
+    "Oatmeal linen sofa — focal wall",
+    "Cream bouclé armchairs — window end",
+    "Round white oak coffee table — centred",
+    "9x12 ivory flatweave rug — anchoring the seating",
+    "Brass arc floor lamp — behind the sofa",
+    "Ochre abstract canvas — above the sofa",
+    "Olive tree in stone planter — by the windows",
+  ],
+  stagingPrompt: "Furnish this living room as a Warm Transitional space: an oatmeal linen sofa on the focal wall, cream bouclé armchairs at the window end, a round white oak coffee table on an ivory flatweave rug, a brass arc floor lamp, one ochre abstract canvas above the sofa, and an olive tree by the windows.",
+  notes: "keep the window wall clear",
+};
+
+describe("createStagingProject", () => {
+  beforeEach(() => {
+    stagingMocks.generateStagingBrief.mockResolvedValue(stagingBrief);
+    dbMocks.insertProject.mockImplementation(async (values) => ({ ...values }));
+    dbMocks.insertScenes.mockImplementation(async (rows) => rows);
+  });
+
+  it("one vision call → before scene (the upload) + one pending after pinned to it", async () => {
+    const out = await createStagingProject({
+      beforeImageUrl: "https://blob.example/empty-room.jpg",
+      aspectRatio: "4:3",
+      roomType: "auto",
+      styleId: "auto",
+      furnitureReferenceUrls: ["https://blob.example/sofa.jpg"],
+      brief: "Young-family buyers.",
+    });
+
+    expect(stagingMocks.generateStagingBrief).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({
+        beforeImageUrl: "https://blob.example/empty-room.jpg",
+        furnitureReferenceUrls: ["https://blob.example/sofa.jpg"],
+        brief: "Young-family buyers.",
+      })
+    );
+    // Never the fal-backed concept/styles machinery.
+    expect(claudeMocks.generateConcept).not.toHaveBeenCalled();
+    expect(stylesMocks.generateStyles).not.toHaveBeenCalled();
+
+    const projectInsert = dbMocks.insertProject.mock.calls[0][0];
+    expect(projectInsert.format).toBe("staging");
+    expect(projectInsert.worldType).toBe("interior");
+    expect(projectInsert.aspectRatio).toBe("4:3");
+    // Furniture refs ride the moodboard column; the brief rides `staging`.
+    expect(projectInsert.referenceImageUrls).toEqual(["https://blob.example/sofa.jpg"]);
+    expect(projectInsert.staging).toEqual({
+      roomType: "Living room",
+      styleName: "Warm Transitional",
+      brief: "Young-family buyers.",
+      roomRead: stagingBrief.roomRead,
+      furnitureReferenceCount: 1,
+    });
+    expect(projectInsert.concept.objectSet).toEqual(stagingBrief.furniturePlan);
+    expect(projectInsert.worldSignature).toBeNull();
+
+    const rows = dbMocks.insertScenes.mock.calls[0][0];
+    expect(rows).toHaveLength(2);
+    expect(rows[0]).toMatchObject({
+      order: 1,
+      status: "generated",
+      imageUrl: "https://blob.example/empty-room.jpg",
+      referenceImageUrl: null,
+      styleName: "Before",
+    });
+    expect(rows[1]).toMatchObject({
+      order: 2,
+      status: "pending",
+      referenceImageUrl: "https://blob.example/empty-room.jpg",
+      prompt: stagingBrief.stagingPrompt,
+      styleName: "Warm Transitional",
+    });
+    expect(out.scenes).toHaveLength(2);
+    expect(spendMocks.recordSpend).toHaveBeenCalledWith(
+      expect.objectContaining({ kind: "llm", meta: expect.objectContaining({ stage: "staging-brief" }) })
+    );
+  });
+
+  it("refuses operators whose apps don't cover interiors", async () => {
+    operatorMocks.currentOperator.mockReturnValueOnce({
+      ...operatorMocks.fixture,
+      worldTypes: ["exterior"],
+    });
+    await expect(
+      createStagingProject({ beforeImageUrl: "https://blob.example/x.jpg", aspectRatio: "1:1" })
+    ).rejects.toThrow(/doesn't cover interior/);
+    expect(stagingMocks.generateStagingBrief).not.toHaveBeenCalled();
+  });
+});
+
+describe("generateAllImages — staging", () => {
+  const stagingProject = {
+    id: "p_1",
+    format: "staging",
+    worldType: "interior",
+    status: "scripting",
+    aspectRatio: "16:9",
+    quality: "standard",
+    referenceImageUrls: ["https://blob.example/sofa.jpg", "https://blob.example/lamp.jpg"],
+    staging: { roomType: "Living room", styleName: "Warm Transitional", brief: null, roomRead: "r", furnitureReferenceCount: 2 },
+  };
+  const beforeScene = {
+    ...fakeScene({ id: "s_1", order: 1, status: "generated", prompt: "(uploaded before) Living room, empty" }),
+    imageUrl: "https://blob.example/empty-room.jpg",
+    referenceImageUrl: null,
+  };
+  const afterScene = {
+    ...fakeScene({ id: "s_2", order: 2, status: "pending", prompt: stagingBrief.stagingPrompt }),
+    referenceImageUrl: "https://blob.example/empty-room.jpg",
+  };
+
+  beforeEach(() => {
+    dbMocks.selectProjectById.mockResolvedValue(stagingProject);
+    dbMocks.selectScenesByProject.mockResolvedValue([beforeScene, afterScene]);
+    dbMocks.tryAcquireGenerationLock.mockResolvedValue(true);
+    dbMocks.resetOrphanedScenes.mockResolvedValue(0);
+    openaiImageMocks.stageImage.mockResolvedValue({
+      buffer: Buffer.from("jpeg"),
+      contentType: "image/jpeg",
+      model: "gpt-image-2.5-sunburst",
+      size: "2048x1152",
+    });
+    storageMocks.storeBuffer.mockResolvedValue({
+      url: "https://blob.vercel-storage.com/images/p_1/after.jpg",
+      pathname: "images/p_1/after.jpg",
+    });
+  });
+
+  it("renders the after through OpenAI (room first, furniture refs after) and never touches fal", async () => {
+    const result = await generateAllImages("p_1");
+
+    expect(result).toEqual({ generated: 1, failed: 0, skipped: 1, reclaimed: 0 });
+    expect(falMocks.generateImage).not.toHaveBeenCalled();
+    expect(falMocks.editImage).not.toHaveBeenCalled();
+    expect(openaiImageMocks.stageImage).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({
+        beforeUrl: "https://blob.example/empty-room.jpg",
+        furnitureReferenceUrls: ["https://blob.example/sofa.jpg", "https://blob.example/lamp.jpg"],
+        aspectRatio: "16:9",
+      })
+    );
+    const prompt = openaiImageMocks.stageImage.mock.calls[0][0].prompt as string;
+    expect(prompt).toMatch(/^Virtually stage this real-estate photograph/);
+    expect(prompt).toContain(stagingBrief.stagingPrompt);
+    expect(prompt).toMatch(/2 images are the client's own furniture/);
+    expect(storageMocks.storeBuffer).toHaveBeenCalledWith(
+      expect.objectContaining({ kind: "images", projectId: "p_1", contentType: "image/jpeg" })
+    );
+    expect(dbMocks.markSceneGenerated).toHaveBeenCalledExactlyOnceWith(
+      "s_2",
+      expect.objectContaining({
+        imageUrl: "https://blob.vercel-storage.com/images/p_1/after.jpg",
+        falRequestId: "openai:gpt-image-2.5-sunburst",
+      })
+    );
+    expect(spendMocks.recordSpend).toHaveBeenCalledWith(
+      expect.objectContaining({ kind: "image-edit", amountUsd: 0.4 })
+    );
+    expect(dbMocks.updateProjectStatus).toHaveBeenCalledWith("p_1", "ready");
+  });
+
+  it("force=true still never re-renders the upload — only the after", async () => {
+    const result = await generateAllImages("p_1", { force: true });
+    expect(result.generated).toBe(1);
+    expect(openaiImageMocks.stageImage).toHaveBeenCalledTimes(1);
+    expect(dbMocks.markSceneGenerating).toHaveBeenCalledExactlyOnceWith("s_2");
+  });
+
+  it("marks the after failed (and retries once) when OpenAI throws", async () => {
+    openaiImageMocks.stageImage.mockRejectedValue(new Error("rate limited"));
+    const result = await generateAllImages("p_1");
+    expect(result).toEqual({ generated: 0, failed: 1, skipped: 1, reclaimed: 0 });
+    // First pass + the automatic retry pass.
+    expect(openaiImageMocks.stageImage).toHaveBeenCalledTimes(2);
+    expect(dbMocks.markSceneFailed).toHaveBeenCalledWith("s_2", expect.stringMatching(/rate limited/));
+  });
+});
+
+describe("applySceneAction regenerate — staging", () => {
+  beforeEach(() => {
+    dbMocks.selectProjectById.mockResolvedValue({
+      id: "p_1",
+      format: "staging",
+      worldType: "interior",
+      status: "ready",
+      aspectRatio: "4:3",
+      quality: "standard",
+      referenceImageUrls: null,
+    });
+    openaiImageMocks.stageImage.mockResolvedValue({
+      buffer: Buffer.from("jpeg"),
+      contentType: "image/jpeg",
+      model: "gpt-image-2.5-sunburst",
+      size: "2048x1536",
+    });
+    storageMocks.storeBuffer.mockResolvedValue({
+      url: "https://blob.vercel-storage.com/images/p_1/after-2.jpg",
+      pathname: "images/p_1/after-2.jpg",
+    });
+    dbMocks.selectSceneById.mockImplementation(async (id: string) =>
+      id === "s_1"
+        ? {
+            ...fakeScene({ id: "s_1", order: 1, status: "generated" }),
+            imageUrl: "https://blob.example/empty-room.jpg",
+            referenceImageUrl: null,
+          }
+        : {
+            ...fakeScene({ id: "s_2", order: 2, status: "generated", prompt: stagingBrief.stagingPrompt }),
+            imageUrl: "https://blob.vercel-storage.com/images/p_1/after-1.jpg",
+            referenceImageUrl: "https://blob.example/empty-room.jpg",
+          }
+    );
+  });
+
+  it("re-renders the after with the operator's direction layered onto the plan, archiving the old take", async () => {
+    await applySceneAction("p_1", "s_2", "regenerate", { designDirection: "swap the sofa for a sectional" });
+
+    expect(falMocks.editImage).not.toHaveBeenCalled();
+    const args = openaiImageMocks.stageImage.mock.calls[0][0];
+    expect(args.beforeUrl).toBe("https://blob.example/empty-room.jpg");
+    expect(args.furnitureReferenceUrls).toEqual([]);
+    expect(args.prompt).toMatch(/swap the sofa for a sectional/);
+    expect(dbMocks.insertSceneVersion).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sceneId: "s_2",
+        imageUrl: "https://blob.vercel-storage.com/images/p_1/after-1.jpg",
+        designDirection: "swap the sofa for a sectional",
+      })
+    );
+    expect(spendMocks.assertWithinDailyBudget).toHaveBeenCalledWith(0.4);
+  });
+
+  it("refuses to regenerate the upload", async () => {
+    await expect(applySceneAction("p_1", "s_1", "regenerate")).rejects.toThrow(
+      /before photo is your upload/
+    );
+    expect(openaiImageMocks.stageImage).not.toHaveBeenCalled();
+  });
+});
+
+describe("finalizeProject — staging", () => {
+  const rawStagingMetadata = {
+    kind: "staging" as const,
+    instagramCaption: "Empty, it read as a hallway.\nStaged: oatmeal sofa, oak table, brass lamp.\nKeep the olive tree? {APP_LINK}",
+    instagramHashtags: ["livingroom", "homestaging", "virtualstaging", "oakfloors", "warmtransitional"],
+    tiktokCaption: "Same oak floors, new sofa wall. Keep the lamp?",
+    tiktokHashtags: ["livingroom", "homestaging", "listingphotos"],
+    listingBlurb: "Light-filled living room with white oak floors. Photo virtually staged.",
+    clientNote: "Attached are the before and the virtually staged after for the living room. Please label the after as virtually staged.",
+    altText: "Living room with oatmeal sofa and oak coffee table in daylight",
+    disclosure: "Virtually staged. Furniture and decor shown are digital renderings for illustration and do not convey with the property.",
+  };
+
+  beforeEach(() => {
+    dbMocks.selectProjectById.mockResolvedValue({
+      id: "p_1",
+      format: "staging",
+      worldType: "interior",
+      status: "ready",
+      niche: "Living room · Warm Transitional",
+      concept: { workingTitle: "t", hook: "h", vibe: "v", notes: "", objectSet: stagingBrief.furniturePlan },
+      staging: { roomType: "Living room", styleName: "Warm Transitional", brief: null, roomRead: "r", furnitureReferenceCount: 0 },
+    });
+    dbMocks.selectScenesByProject.mockResolvedValue([
+      {
+        ...fakeScene({ id: "s_1", order: 1, status: "generated" }),
+        imageUrl: "https://blob.example/empty-room.jpg",
+        referenceImageUrl: null,
+        styleName: "Before",
+      },
+      {
+        ...fakeScene({ id: "s_2", order: 2, status: "generated" }),
+        imageUrl: "https://blob.vercel-storage.com/images/p_1/after.jpg",
+        referenceImageUrl: "https://blob.example/empty-room.jpg",
+        styleName: "Warm Transitional",
+      },
+    ]);
+    dbMocks.tryAcquireFinalizationLock.mockResolvedValue(true);
+    stagingMocks.generateStagingMetadata.mockResolvedValue(rawStagingMetadata);
+    operatorMocks.pickAppLink.mockReturnValue("https://www.architectgpt.io");
+  });
+
+  it("GPT sees before + after, then locks real-estate hashtags, appends the handle, substitutes {APP_LINK}", async () => {
+    const result = await finalizeProject("p_1");
+
+    expect(stagingMocks.generateStagingMetadata).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({
+        beforeImageUrl: "https://blob.example/empty-room.jpg",
+        afterImageUrl: "https://blob.vercel-storage.com/images/p_1/after.jpg",
+        roomType: "Living room",
+        furniturePlan: stagingBrief.furniturePlan,
+        appNames: ["ArchitectGPT", "CasaGPT"],
+      })
+    );
+    expect(claudeMocks.generateMetadata).not.toHaveBeenCalled();
+    const m = result.metadata;
+    if (m.kind !== "staging") throw new Error("expected staging metadata");
+    expect(m.instagramHashtags.slice(0, 2)).toEqual(["virtualstaging", "realestate"]);
+    expect(m.instagramHashtags).toHaveLength(5);
+    expect(m.tiktokHashtags.slice(0, 2)).toEqual(["virtualstaging", "realestate"]);
+    expect(m.instagramCaption).toContain("https://www.architectgpt.io");
+    expect(m.instagramCaption).not.toContain("{APP_LINK}");
+    expect(m.instagramCaption.endsWith("@architectgpt")).toBe(true);
+    expect(m.tiktokCaption.endsWith("@architectgpt")).toBe(true);
+    expect(m.disclosure).toMatch(/Virtually staged/);
+    expect(dbMocks.markProjectFinalized).toHaveBeenCalledWith("p_1", { metadata: m });
+    expect(result.autoStitch).toBeUndefined();
+  });
+
+  it("refuses to finalize before the after exists", async () => {
+    dbMocks.selectScenesByProject.mockResolvedValue([
+      {
+        ...fakeScene({ id: "s_1", order: 1, status: "generated" }),
+        imageUrl: "https://blob.example/empty-room.jpg",
+        referenceImageUrl: null,
+      },
+      { ...fakeScene({ id: "s_2", order: 2, status: "pending" }), referenceImageUrl: "https://blob.example/empty-room.jpg" },
+    ]);
+    await expect(finalizeProject("p_1")).rejects.toThrow(/Cannot finalize: the staged after/);
+    expect(stagingMocks.generateStagingMetadata).not.toHaveBeenCalled();
   });
 });

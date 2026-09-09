@@ -22,6 +22,7 @@ const FORMAT_LABEL: Record<string, string> = {
   carousel: "Carousel",
   "before-after": "Before / after",
   "style-explorer": "Style explorer",
+  staging: "Virtual staging",
 };
 
 export function ProjectCard({

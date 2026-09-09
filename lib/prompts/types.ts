@@ -1,6 +1,12 @@
 import { z } from "zod";
 
-export const FormatSchema = z.enum(["reel", "carousel", "before-after", "style-explorer"]);
+export const FormatSchema = z.enum([
+  "reel",
+  "carousel",
+  "before-after",
+  "style-explorer",
+  "staging",
+]);
 export type Format = z.infer<typeof FormatSchema>;
 
 /**
@@ -116,6 +122,12 @@ export function defaultsForFormat(format: Format): {
       // dimensions (1:1 here is a placeholder; the real value lives on
       // projects.aspectRatio).
       return { aspectRatio: "1:1", sceneCount: 10, sceneDurationSec: 0 };
+    case "staging":
+      // Virtual staging: the operator's empty-room photo (scene 1, free) +
+      // ONE furnished "after" rendered by gpt-image-2.5 (scene 2). Aspect is
+      // overridden per-project from the upload (4:3 is the MLS-photo
+      // placeholder). Stills only.
+      return { aspectRatio: "4:3", sceneCount: 2, sceneDurationSec: 0 };
     case "style-explorer":
       // N styled edits of one uploaded base, for a YouTube long-form "X styles
       // of this space" video. Like before-after, the real aspect comes from
@@ -127,3 +139,64 @@ export function defaultsForFormat(format: Format): {
       return { aspectRatio: "16:9", sceneCount: 15, sceneDurationSec: 0 };
   }
 }
+
+// ── Virtual staging ─────────────────────────────────────────────────────────
+
+/** Staging styles a listing agent actually asks for — the menu every virtual
+ *  staging vendor offers. "auto" lets the stager read the room and pick. */
+export const STAGING_STYLES = [
+  { id: "auto", name: "Let the stager decide", hint: "Reads the room's finishes, light, and likely buyer" },
+  { id: "modern", name: "Modern", hint: "Clean lines, low profiles, neutral with one accent" },
+  { id: "transitional", name: "Transitional", hint: "Classic shapes, current fabrics — the broadest buyer appeal" },
+  { id: "scandinavian", name: "Scandinavian", hint: "Light woods, white, wool, and paper light" },
+  { id: "mid-century", name: "Mid-Century Modern", hint: "Walnut, tapered legs, saturated accents" },
+  { id: "coastal", name: "Coastal", hint: "Linen, rattan, driftwood, blue-green accents" },
+  { id: "farmhouse", name: "Modern Farmhouse", hint: "Reclaimed wood, black metal, cream textiles" },
+  { id: "luxury", name: "Luxury Contemporary", hint: "Marble, velvet, brass, statement lighting" },
+  { id: "japandi", name: "Japandi", hint: "Low furniture, oak, stone, quiet palette" },
+  { id: "industrial", name: "Industrial", hint: "Leather, steel, exposed materials" },
+] as const;
+export type StagingStyleId = (typeof STAGING_STYLES)[number]["id"];
+export const StagingStyleIdSchema = z.enum(
+  STAGING_STYLES.map((s) => s.id) as [StagingStyleId, ...StagingStyleId[]]
+);
+
+export function getStagingStyle(id: string | null | undefined) {
+  return STAGING_STYLES.find((s) => s.id === id) ?? STAGING_STYLES[0];
+}
+
+/** Rooms the wizard offers. "auto" = the stager identifies it from the photo. */
+export const STAGING_ROOM_TYPES = [
+  "auto",
+  "Living room",
+  "Primary bedroom",
+  "Bedroom",
+  "Dining room",
+  "Kitchen",
+  "Home office",
+  "Family room",
+  "Kids room",
+  "Nursery",
+  "Basement",
+  "Patio / outdoor",
+  "Studio / open plan",
+] as const;
+
+/** Max client-furniture references a staging can carry. gpt-image-2.5's edit
+ *  endpoint takes 16 images total; one slot is the room photo. */
+export const STAGING_MAX_FURNITURE_REFS = 8;
+
+/** Persisted on projects.staging — what the stager read + was asked for. */
+export type StagingBrief = {
+  /** Room identified (or operator-chosen). */
+  roomType: string;
+  /** Staging style label actually used (Title Case). */
+  styleName: string;
+  /** Operator's free-text direction, if any. */
+  brief: string | null;
+  /** The stager's read of the empty room — flooring, walls, light, features.
+   *  Feeds the captions so they describe THIS room, not "a room". */
+  roomRead: string;
+  /** How many client-furniture reference photos were attached. */
+  furnitureReferenceCount: number;
+};

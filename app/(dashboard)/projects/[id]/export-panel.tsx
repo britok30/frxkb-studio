@@ -52,6 +52,7 @@ export function ExportPanel({
   canGenerateThumbnail?: boolean;
 }) {
   const { metadata, thumbnailUrl, scenes } = data;
+  const isStaging = data.format === "staging";
   const [downloading, setDownloading] = useState(false);
   const [downloadingVideo, setDownloadingVideo] = useState(false);
   const [progress, setProgress] = useState<{ done: number; total: number } | null>(null);
@@ -132,7 +133,9 @@ export function ExportPanel({
             <div>
               <CardTitle className="text-base">Export bundle</CardTitle>
               <CardDescription>
-                {scenes.length} scenes + cover + metadata, packed as a single zip.
+                {isStaging
+                  ? "Before + staged after (+ a side-by-side) with the captions, listing remarks, and client note, packed as a single zip."
+                  : `${scenes.length} scenes + cover + metadata, packed as a single zip.`}
               </CardDescription>
             </div>
             <Badge>Ready</Badge>
@@ -167,7 +170,9 @@ export function ExportPanel({
                     ? progress
                       ? `Packing ${progress.done}/${progress.total}…`
                       : "Packing…"
-                    : "Bundle — stills · thumbnails · copy"}
+                    : isStaging
+                      ? "Package — before · after · copy"
+                      : "Bundle — stills · thumbnails · copy"}
                 </motion.button>
                 {needsVideo && (
                   <motion.button
@@ -204,14 +209,32 @@ export function ExportPanel({
                     ))}
                   </div>
                 )}
-                <a
-                  className="text-xs text-muted-foreground hover:text-foreground tracking-tight"
-                  href={thumbnailUrl}
-                  target="_blank"
-                  rel="noreferrer"
-                >
-                  ↗ Open cover image
-                </a>
+                {isStaging ? (
+                  <div className="flex flex-col gap-1">
+                    {[...scenes]
+                      .sort((a, b) => a.order - b.order)
+                      .map((s, i, arr) => (
+                        <a
+                          key={s.order}
+                          className="text-xs text-muted-foreground hover:text-foreground tracking-tight"
+                          href={s.imageUrl}
+                          target="_blank"
+                          rel="noreferrer"
+                        >
+                          ↗ Open {i === 0 ? "before" : i === arr.length - 1 ? "staged after" : `scene ${s.order}`}
+                        </a>
+                      ))}
+                  </div>
+                ) : (
+                  <a
+                    className="text-xs text-muted-foreground hover:text-foreground tracking-tight"
+                    href={thumbnailUrl}
+                    target="_blank"
+                    rel="noreferrer"
+                  >
+                    ↗ Open cover image
+                  </a>
+                )}
               </>
             ) : (
               <p className="text-xs text-muted-foreground tracking-tight leading-relaxed">
@@ -251,6 +274,8 @@ function MetadataView({
       return <ReelMetadataView metadata={metadata} />;
     case "carousel":
       return <CarouselMetadataView metadata={metadata} />;
+    case "staging":
+      return <StagingMetadataView metadata={metadata} />;
     case "youtube":
       return (
         <YouTubeMetadataView
@@ -363,6 +388,44 @@ function CarouselMetadataView({ metadata }: { metadata: Extract<Metadata, { kind
           value={withTags(metadata.instagramCaption, metadata.instagramHashtags)}
           multiline
         />
+      </PlatformSection>
+    </div>
+  );
+}
+
+/** The staging package: two social captions, the MLS remarks, the note that
+ *  travels with the files, alt text, and the disclosure the agent must
+ *  publish with the after. */
+function StagingMetadataView({ metadata }: { metadata: Extract<Metadata, { kind: "staging" }> }) {
+  return (
+    <div className="flex flex-col gap-6">
+      <PlatformSection title="Instagram">
+        <CopyField
+          label="Caption + hashtags"
+          value={withTags(metadata.instagramCaption, metadata.instagramHashtags)}
+          multiline
+        />
+      </PlatformSection>
+      <Separator />
+      <PlatformSection title="TikTok">
+        <CopyField
+          label="Caption + hashtags"
+          value={withTags(metadata.tiktokCaption, metadata.tiktokHashtags)}
+          multiline
+        />
+      </PlatformSection>
+      <Separator />
+      <PlatformSection title="Listing remarks (MLS)">
+        <CopyField value={metadata.listingBlurb} multiline />
+      </PlatformSection>
+      <Separator />
+      <PlatformSection title="Note to the agent / homeowner">
+        <CopyField value={metadata.clientNote} multiline />
+      </PlatformSection>
+      <Separator />
+      <PlatformSection title="Publishing">
+        <CopyField label="Alt text (after image)" value={metadata.altText} multiline small />
+        <CopyField label="Required disclosure — publish with the after" value={metadata.disclosure} multiline small />
       </PlatformSection>
     </div>
   );

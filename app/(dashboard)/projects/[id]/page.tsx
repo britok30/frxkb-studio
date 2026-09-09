@@ -21,7 +21,7 @@ import { StitchPanel } from "./stitch-panel";
 import {
   estimateAnimateBatch,
   estimateBatchImages,
-  estimateImageBatch,
+  estimateImageBatchFor,
   formatCost,
 } from "@/lib/pricing";
 import { STYLE_EXPLORER_HOLD_SEC } from "@/lib/prompts/types";
@@ -316,14 +316,20 @@ export default async function ProjectPage({ params }: { params: Promise<{ id: st
                 generatedCount={counts.generated}
                 retryableCount={counts.pending + counts.rejected}
                 retryCostLabel={formatCost(
-                  estimateImageBatch(counts.pending + counts.rejected, project.quality)
+                  estimateImageBatchFor(
+                    project.format,
+                    counts.pending + counts.rejected,
+                    project.quality
+                  )
                 )}
                 jobInFlight={
                   project.status === "generating" || project.status === "finalizing"
                 }
               />
             )}
-            {scenes.length > 0 && isOwner && !project.uploadSourced && (
+            {/* Staging has one renderable scene — its card's Regenerate is
+                the whole story; a project-wide "regenerate all" only confuses. */}
+            {scenes.length > 0 && isOwner && !project.uploadSourced && project.format !== "staging" && (
               <RegenerateAllLink
                 projectId={project.id}
                 totalScenes={scenes.length}
@@ -470,7 +476,7 @@ function buildExportData(project: ProjectRow, scenes: SceneRow[]): ExportPanelDa
   // highest-order scene (the "after") as its visual payoff.
   const sortedAsc = [...renderableScenes].sort((a, b) => a.order - b.order);
   const cover =
-    project.format === "before-after"
+    project.format === "before-after" || project.format === "staging"
       ? sortedAsc[sortedAsc.length - 1]
       : sortedAsc[0];
 
@@ -518,6 +524,8 @@ function formatLabel(f: string) {
       return "Before / After";
     case "style-explorer":
       return "Style explorer";
+    case "staging":
+      return "Virtual staging";
     default:
       return f;
   }

@@ -2,6 +2,13 @@ import { nanoid } from "nanoid";
 import { generateBeforeAfterConcept, generateConcept } from "@/lib/prompts/concept";
 import { generateScenePrompts } from "@/lib/prompts/scenes";
 import { ARCHITECTURE_LOCK, ARCHITECTURE_LOCK_CLOSE, generateStyles } from "@/lib/prompts/styles";
+import {
+  buildStagingEditPrompt,
+  generateStagingBrief,
+  generateStagingMetadata,
+  STAGING_LOCKED_HASHTAGS,
+} from "@/lib/prompts/staging";
+import { stageImage } from "@/lib/openai-image";
 import { applyLookToPrompt, getLook, type LookId } from "@/lib/prompts/looks";
 import {
   assembleYouTubeMetadata,
@@ -15,9 +22,12 @@ import {
   SHOWCASE_SHOT_MAX_SEC,
   SHOWCASE_SHOT_MIN_SEC,
   STYLE_EXPLORER_HOLD_SEC,
+  STAGING_MAX_FURNITURE_REFS,
+  getStagingStyle,
   type Format,
   type AspectRatio,
   type PropertyType,
+  type StagingStyleId,
   type WorldType,
 } from "@/lib/prompts/types";
 import { editImage, generateImage, type Resolution } from "@/lib/fal";
@@ -40,6 +50,7 @@ import {
   completeLargeRehost,
   ensurePngStill,
   planLargeRehost,
+  storeBuffer,
   storeFromUrl,
   transferRehostParts,
   type RehostPart,
@@ -51,7 +62,12 @@ import {
   estimateAnimateBatch,
   estimateConceptGen,
   estimateImageBatch,
+  estimateImageBatchFor,
   estimateMetadataGen,
+  estimateStagingBrief,
+  estimateStagingImages,
+  estimateStagingMetadata,
+  GPT_IMAGE_STAGING_USD,
   estimateSceneGen,
   estimateShowcaseCopy,
   estimateStylesGen,
@@ -421,6 +437,210 @@ export async function createBeforeAfterProject(
   });
 
   return { project, scenes: insertedScenes };
+}
+
+/**
+ * Virtual staging — the listing-photo product. The operator uploads a photo
+ * of an EMPTY room (+ optionally the client's own furniture photos), GPT-6
+ * reads the room and plans the furniture, and gpt-image-2.5 composites the
+ * plan into the photo with everything that exists preserved. Distinct from
+ * before-after (9 restyle directions, finishes may change, nano-banana) in
+ * every way that matters to a buyer: ONE after, add-only, true edit.
+ */
+export type CreateStagingInput = {
+  /** Public Blob URL of the empty-room photo (already on Vercel Blob via
+   *  /api/upload). Becomes scene 1's imageUrl directly. */
+  beforeImageUrl: string;
+  /** Aspect detected from the upload — the after renders at the same shape. */
+  aspectRatio: AspectRatio;
+  /** Operator-chosen room, or "auto" (GPT identifies it). */
+  roomType?: string;
+  /** A STAGING_STYLES id, or "auto". */
+  styleId?: StagingStyleId | string;
+  /** Free-text direction (target buyer, must-haves, palette…). Optional. */
+  brief?: string;
+  /** Client furniture photos to place (public Blob URLs, ≤8). Optional. */
+  furnitureReferenceUrls?: string[];
+};
+
+export async function createStagingProject(input: CreateStagingInput): Promise<ProjectWithScenes> {
+  const op = currentOperator();
+  if (!op.worldTypes.includes("interior")) {
+    throw new Error(
+      `Operator ${op.email} doesn't cover interior content. Allowed: ${op.worldTypes.join(", ")}.`
+    );
+  }
+
+  const projectId = nanoid(12);
+  const furnitureRefs = (input.furnitureReferenceUrls ?? []).slice(0, STAGING_MAX_FURNITURE_REFS);
+  const brief = input.brief?.trim() || undefined;
+
+  // ONE vision call before any DB write (a failure leaves no orphan row):
+  // GPT-6 sees the room (+ furniture refs), returns the room read, the
+  // furniture plan, and the edit instruction the image model will follow.
+  const plan = await generateStagingBrief({
+    beforeImageUrl: input.beforeImageUrl,
+    furnitureReferenceUrls: furnitureRefs,
+    roomType: input.roomType,
+    styleId: input.styleId,
+    brief,
+  });
+
+  const style = getStagingStyle(input.styleId);
+  const project = await insertProject({
+    id: projectId,
+    title: plan.workingTitle,
+    // Niche doubles as the one-line summary on the dashboard.
+    niche: brief ? `${plan.roomType} · ${plan.styleName} · ${brief}` : `${plan.roomType} · ${plan.styleName}`,
+    format: "staging",
+    worldType: "interior",
+    propertyType: "residential",
+    aspectRatio: input.aspectRatio,
+    status: "scripting",
+    operatorEmail: op.email,
+    targetDurationSec: null,
+    // The furniture refs ride the existing moodboard column: every render
+    // of the after is conditioned on them (see renderStagingScene).
+    referenceImageUrls: furnitureRefs.length > 0 ? furnitureRefs : null,
+    staging: {
+      roomType: plan.roomType,
+      styleName: plan.styleName,
+      brief: brief ?? null,
+      roomRead: plan.roomRead,
+      furnitureReferenceCount: furnitureRefs.length,
+    },
+    concept: {
+      workingTitle: plan.workingTitle,
+      hook: plan.hook,
+      // The room read is the "vibe" — what the captions and any regen lean
+      // on; the plan's notes are the visual rules.
+      vibe: plan.roomRead,
+      notes: plan.notes,
+      objectSet: plan.furniturePlan,
+    },
+    worldSignature: null,
+    worldKeywords: null,
+  });
+
+  // Scene 1 = the upload itself, already "generated" (no vendor call).
+  // Scene 2 = the after — pending, pinned to the upload via
+  // referenceImageUrl so generate/regenerate route it through the OpenAI
+  // edit path. scene.prompt is the stager's PLAN; the preservation lock is
+  // wrapped around it at render time (buildStagingEditPrompt) so the card
+  // shows a readable plan and regen directions layer cleanly.
+  const insertedScenes = await insertScenes([
+    {
+      id: nanoid(12),
+      projectId,
+      order: 1,
+      prompt: `(uploaded before) ${plan.roomType}, empty`,
+      styleName: "Before",
+      styleSubtitle: `${plan.roomType} as photographed`,
+      durationSec: 0,
+      status: "generated",
+      imageUrl: input.beforeImageUrl,
+      referenceImageUrl: null,
+    },
+    {
+      id: nanoid(12),
+      projectId,
+      order: 2,
+      prompt: plan.stagingPrompt,
+      styleName: plan.styleName === style.name || style.id === "auto" ? plan.styleName : style.name,
+      styleSubtitle: plan.styleSubtitle,
+      durationSec: 0,
+      status: "pending" as const,
+      referenceImageUrl: input.beforeImageUrl,
+    },
+  ]);
+
+  await recordSpend({
+    projectId,
+    kind: "llm",
+    amountUsd: estimateStagingBrief(furnitureRefs.length),
+    meta: { stage: "staging-brief", furnitureRefs: furnitureRefs.length },
+  });
+
+  return { project, scenes: insertedScenes };
+}
+
+/**
+ * Render (or re-render) a staging project's after scene through OpenAI's
+ * image edit. Shared by the batch (generateAllImages) and per-scene regen.
+ * Marks the scene generating → generated/failed itself; the CALLER decides
+ * what a failure means for the batch. Returns the stored Blob URL.
+ */
+async function renderStagingScene(
+  project: Project,
+  scene: Scene,
+  direction?: string
+): Promise<string> {
+  if (!scene.referenceImageUrl) {
+    throw new Error(
+      "The before photo is your upload — it can't be regenerated. Start a new staging to use a different photo."
+    );
+  }
+  const aspectRatio = project.aspectRatio ?? defaultsForFormat(project.format).aspectRatio;
+  const furnitureRefs = project.referenceImageUrls ?? [];
+  const prompt = buildStagingEditPrompt({
+    plan: scene.prompt,
+    furnitureReferenceCount: furnitureRefs.length,
+    direction,
+  });
+
+  await markSceneGenerating(scene.id);
+  try {
+    const result = await stageImage({
+      beforeUrl: scene.referenceImageUrl,
+      furnitureReferenceUrls: furnitureRefs,
+      prompt,
+      aspectRatio,
+    });
+    const filename = `scene-${String(scene.order).padStart(3, "0")}-${nanoid(6)}.jpg`;
+    const stored = await storeBuffer({
+      buffer: result.buffer,
+      kind: "images",
+      projectId: project.id,
+      filename,
+      contentType: result.contentType,
+    });
+
+    // Non-destructive: the outgoing after goes into the variant history.
+    if (scene.imageUrl) {
+      await insertSceneVersion({
+        id: nanoid(12),
+        sceneId: scene.id,
+        imageUrl: scene.imageUrl,
+        prompt: scene.prompt,
+        seed: scene.seed,
+        designDirection: direction?.trim() || null,
+      });
+    }
+    await markSceneGenerated(scene.id, {
+      imageUrl: stored.url,
+      // No fal request behind this render — record the OpenAI model instead
+      // so the ledger/debug trail still says where the pixels came from.
+      falRequestId: `openai:${result.model}`,
+      invalidateAnimation: false,
+    });
+    await recordSpend({
+      projectId: project.id,
+      kind: "image-edit",
+      amountUsd: GPT_IMAGE_STAGING_USD,
+      meta: {
+        sceneOrder: scene.order,
+        model: result.model,
+        size: result.size,
+        furnitureRefs: furnitureRefs.length,
+        regen: !!scene.imageUrl,
+      },
+    });
+    return stored.url;
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : "unknown error";
+    await markSceneFailed(scene.id, msg);
+    throw err;
+  }
 }
 
 /**
@@ -818,13 +1038,22 @@ export async function generateAllImages(
 
   try {
     const allScenes = await selectScenesByProject(projectId);
-    const targets = allScenes.filter((s) =>
-      opts.force ? true : s.status === "pending" || s.status === "rejected"
+    // Upload-anchored formats (staging, before-after): scene 1 IS the
+    // operator's photo — it has no referenceImageUrl and must never be
+    // regenerated, not even by a force / regenerate-all pass.
+    const isUploadAnchored = project.format === "staging" || project.format === "before-after";
+    const targets = allScenes.filter(
+      (s) =>
+        (opts.force ? true : s.status === "pending" || s.status === "rejected") &&
+        !(isUploadAnchored && !s.referenceImageUrl)
     );
 
-    // Budget gate BEFORE any fal spend — a 120-scene batch at hero quality
-    // is real money, and the lock alone only prevents duplicates, not size.
-    await assertWithinDailyBudget(estimateImageBatch(targets.length, project.quality));
+    // Budget gate BEFORE any vendor spend — a 120-scene batch at hero
+    // quality is real money, and the lock alone only prevents duplicates,
+    // not size. Staging prices its OpenAI edit, everything else nano-banana.
+    await assertWithinDailyBudget(
+      estimateImageBatchFor(project.format, targets.length, project.quality)
+    );
 
     let generated = 0;
     let failed = 0;
@@ -840,6 +1069,9 @@ export async function generateAllImages(
     const moodboardRefs = project.referenceImageUrls ?? [];
 
     const renderScene = async (scene: Scene, referenceUrl: string | null) => {
+      // Staging renders through OpenAI's edit endpoint, not fal — the
+      // buyer's photo has to survive pixel-faithfully.
+      if (project.format === "staging") return await renderStagingScene(project, scene);
       await markSceneGenerating(scene.id);
       // Ref order matters — nano weights earlier images more, so the anchor
       // (world lock) leads and the moodboard follows.
@@ -1115,6 +1347,15 @@ async function regenerateScene(
 ): Promise<void> {
   const project = await selectProjectById(projectId);
   if (!project) throw new Error(`Project ${projectId} not found`);
+  // Staging: the after re-renders through OpenAI's edit with the operator's
+  // direction layered onto the plan. Looks and moodboard guidance don't
+  // apply — the "moodboard" refs ARE the client's furniture and the
+  // preservation lock governs the render.
+  if (project.format === "staging") {
+    await assertWithinDailyBudget(estimateStagingImages(1));
+    await renderStagingScene(project, scene, options.designDirection);
+    return;
+  }
   // Project-stored aspect (set per-upload for before-after) wins over the
   // format default — otherwise per-scene regen of an after image would
   // generate at 1:1 even if the upload was 16:9.
@@ -2415,6 +2656,64 @@ async function finalizeStyleExplorer(project: Project, scenes: Scene[]): Promise
 }
 
 /**
+ * Finalize a virtual staging: GPT-6 sees the empty room AND the staged
+ * render and writes the package copy about what is actually in them. Same
+ * lock/policy/CTA post-processing as the social formats.
+ */
+async function finalizeStaging(project: Project, scenes: Scene[]): Promise<FinalizeResult> {
+  const ordered = [...scenes].sort((a, b) => a.order - b.order);
+  const before = ordered.find((s) => !s.referenceImageUrl && !!s.imageUrl);
+  const after = ordered.find(
+    (s) =>
+      !!s.referenceImageUrl &&
+      !!s.imageUrl &&
+      (s.status === "generated" || s.status === "approved")
+  );
+  if (!before?.imageUrl) throw new Error("No generated scenes to finalize. The before photo is missing.");
+  if (!after?.imageUrl) {
+    throw new Error("Cannot finalize: the staged after hasn't been generated yet. Generate it first.");
+  }
+  const staging = project.staging;
+  if (!staging) throw new Error("Project has no concept brief");
+
+  const acquired = await tryAcquireFinalizationLock(project.id);
+  if (!acquired) throw new ProjectBusyError(project.id, "finalizing");
+
+  try {
+    const op = currentOperator();
+    const raw = await generateStagingMetadata({
+      beforeImageUrl: before.imageUrl,
+      afterImageUrl: after.imageUrl,
+      roomType: staging.roomType,
+      styleName: after.styleName ?? staging.styleName,
+      roomRead: staging.roomRead,
+      furniturePlan: project.concept?.objectSet ?? [],
+      brief: staging.brief,
+      hook: project.concept?.hook,
+      appNames: op.apps.map((a) => a.name),
+      instagramHandle: op.socials.instagram,
+    });
+    const handle = op.apps[0]?.handle ?? "";
+    const metadata = applyMetadataPolicies(
+      substituteAppLink(raw, project.niche),
+      project.worldType,
+      handle
+    );
+    await markProjectFinalized(project.id, { metadata });
+    await recordSpend({
+      projectId: project.id,
+      kind: "llm",
+      amountUsd: estimateStagingMetadata(),
+      meta: { stage: "finalize", format: "staging" },
+    });
+    return { metadata };
+  } catch (err) {
+    await updateProjectStatus(project.id, "ready");
+    throw err;
+  }
+}
+
+/**
  * Run the post-generation pipeline:
  *   1. Generate metadata via GPT-5.5.
  *   2. Generate a thumbnail image via fal (uploaded to Blob).
@@ -2433,6 +2732,11 @@ export async function finalizeProject(projectId: string): Promise<FinalizeResult
   // IG/TikTok social package — different shape, different generator.
   if (project.format === "style-explorer") {
     return await finalizeStyleExplorer(project, scenes);
+  }
+  // Staging finalizes to the listing package (captions + MLS blurb + client
+  // note), written by GPT-6 while LOOKING at the before and the after.
+  if (project.format === "staging") {
+    return await finalizeStaging(project, scenes);
   }
 
   if (!project.concept) throw new Error("Project has no concept brief");
@@ -2553,6 +2857,17 @@ function substituteAppLink(metadata: Metadata, niche: string): Metadata {
         ...metadata,
         instagramCaption: sub(metadata.instagramCaption),
       };
+    case "staging":
+      // The IG caption may close with one soft CTA; the listing blurb and
+      // client note are told never to mention the app, but substitute
+      // defensively everywhere a placeholder could land.
+      return {
+        ...metadata,
+        instagramCaption: sub(metadata.instagramCaption),
+        tiktokCaption: sub(metadata.tiktokCaption),
+        listingBlurb: sub(metadata.listingBlurb),
+        clientNote: sub(metadata.clientNote),
+      };
     case "youtube":
       // YouTube long-form assembles its CTA + real links in
       // finalizeStyleExplorer — there's no {APP_LINK} placeholder to swap.
@@ -2575,8 +2890,12 @@ const HASHTAG_TARGET_TOTAL = 5;
 
 /** Prepend the locked anchors to a hashtag array, dedup against case-insensitive
  *  matches, trim to 5 total. */
-function applyHashtagLocks(claudeTags: string[], worldType: WorldType): string[] {
-  const locked = LOCKED_HASHTAGS[worldType];
+function applyHashtagLocks(
+  claudeTags: string[],
+  worldType: WorldType,
+  lockedOverride?: string[]
+): string[] {
+  const locked = lockedOverride ?? LOCKED_HASHTAGS[worldType];
   const lockedLower = new Set(locked.map((t) => t.toLowerCase()));
   const claudeFiltered = claudeTags.filter(
     (t) => !lockedLower.has(t.toLowerCase())
@@ -2622,6 +2941,20 @@ function applyMetadataPolicies(
         ...metadata,
         instagramCaption: appendHandle(metadata.instagramCaption, handle),
         instagramHashtags: applyHashtagLocks(metadata.instagramHashtags, worldType),
+      };
+    case "staging":
+      // Staging posts anchor on the real-estate tags, not the design-feed
+      // lane locks — a staged listing photo lives in #virtualstaging.
+      return {
+        ...metadata,
+        instagramCaption: appendHandle(metadata.instagramCaption, handle),
+        instagramHashtags: applyHashtagLocks(
+          metadata.instagramHashtags,
+          worldType,
+          STAGING_LOCKED_HASHTAGS
+        ),
+        tiktokCaption: appendHandle(metadata.tiktokCaption, handle),
+        tiktokHashtags: applyHashtagLocks(metadata.tiktokHashtags, worldType, STAGING_LOCKED_HASHTAGS),
       };
     case "youtube":
       // Hashtag locks + @handle suffix are IG/TikTok policies. YouTube metadata

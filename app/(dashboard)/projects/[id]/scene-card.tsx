@@ -245,7 +245,7 @@ export function SceneCard({
                 onClick={() => run("approve")}
               />
             )}
-            {allowRegen && (
+            {allowRegen && !(format === "staging" && scene.order === 1) && (
               <ActionButton
                 label="Regenerate"
                 icon={<RotateCw className={`size-3.5 ${busy === "regenerate" ? "animate-spin" : ""}`} />}

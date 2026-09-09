@@ -1,19 +1,20 @@
 import OpenAI from "openai";
 import { currentOperator } from "@/lib/operators";
 
-// GPT-5.5 — OpenAI's flagship as of 2026-04. 1M context, image input,
-// function calling, automatic prompt caching. Pricing: $5/MTok in, $30/MTok out.
-// GPT-5.6 Sol — the flagship of the 5.6 family (GA 2026-07-09), same
-// $5/$30 per MTok as gpt-5.5 so the upgrade is a straight quality win.
-// Supports vision, tool calling, structured outputs, reasoning effort on
-// the Responses API. https://developers.openai.com/api/docs/models/gpt-5.6-sol
-export const LLM_MODEL = "gpt-5.6-sol";
+// GPT-6 Astra — OpenAI's flagship (released 2026-09-03). 1.05M context,
+// image input, function calling, structured outputs, prompt caching,
+// reasoning effort low|medium|high|xhigh|max ("none"/"minimal" are NOT
+// accepted — keep effort at "low" or above). Pricing: $10/MTok in,
+// $50/MTok out (≤272K input). Replaced gpt-5.6-sol ($5/$30) 2026-09-08.
+// https://developers.openai.com/api/docs/models/gpt-6-astra
+export const LLM_MODEL = "gpt-6-astra";
 
-// We use the Responses API (not Chat Completions): GPT-5.5 rejects function
-// tools + reasoning_effort together on /v1/chat/completions and points to
-// /v1/responses, which supports the combination natively.
+// We use the Responses API (not Chat Completions): the GPT-5.5+ family
+// rejects function tools + reasoning_effort together on /v1/chat/completions
+// and points to /v1/responses, which supports the combination natively.
+// gpt-6-astra also rejects temperature/top_p — never pass them.
 //
-// GPT-5.5 is a reasoning model — reasoning tokens bill as output and count
+// GPT-6 Astra is a reasoning model — reasoning tokens bill as output and count
 // against max_output_tokens. These structured generation tasks don't need deep
 // reasoning, so we keep effort low (quality stays high, cost/latency stay sane)
 // and pad the token cap with headroom for the reasoning pass.
