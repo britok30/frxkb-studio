@@ -52,7 +52,7 @@ const FORMAT_PRESETS: Record<
   reel: {
     label: "Reel",
     kicker: "Instagram · TikTok · YouTube Shorts",
-    hint: "Each scene animated via Seedance (2.0 or 2.5 — your pick) then upscaled with Topaz Proteus. Premium feel, slow cuts.",
+    hint: "Three AI scenes animated with Seedance and upscaled to 4K. Slow, premium cuts with your music bed.",
     sceneCount: 3,
     sceneDurationSec: 5,
     aspectClass: "aspect-[9/16]",
@@ -60,7 +60,7 @@ const FORMAT_PRESETS: Record<
   carousel: {
     label: "Carousel",
     kicker: "Instagram",
-    hint: "20 static slides built for slow-swipe scroll (IG's new carousel cap). No video — one image per slide.",
+    hint: "20 still slides on one anchored world, built for the slow swipe. No video.",
     sceneCount: 20,
     sceneDurationSec: 0,
     aspectClass: "aspect-square",
@@ -68,7 +68,7 @@ const FORMAT_PRESETS: Record<
   staging: {
     label: "Virtual staging",
     kicker: "Listings · Instagram · TikTok",
-    hint: "Upload a photo of an empty room (and, optionally, your client's own furniture). GPT-6 plans the staging; gpt-image-2.5 composites it in with the room preserved. Before + after + listing copy.",
+    hint: "Upload an empty or furnished room, optionally the client's own furniture. Staged with the room preserved — before, after, and listing copy.",
     sceneCount: 2, // before + one staged after
     sceneDurationSec: 0,
     aspectClass: "aspect-[4/3]", // overridden by the upload's actual aspect
@@ -76,7 +76,7 @@ const FORMAT_PRESETS: Record<
   "before-after": {
     label: "Before / after",
     kicker: "Instagram · TikTok",
-    hint: "Drop a real photo, describe the direction — the studio proposes 9 distinct \"after\" concepts as stills (10 images, a ready-made carousel). No video.",
+    hint: "Drop a real photo, describe the direction — nine distinct after concepts on the same camera. A ready-made carousel.",
     sceneCount: 10, // before + 9 after concepts
     sceneDurationSec: 0,
     aspectClass: "aspect-square", // overridden by uploaded image's actual aspect
@@ -84,7 +84,7 @@ const FORMAT_PRESETS: Record<
   showcase: {
     label: "Showcase",
     kicker: "Your images · IG · YouTube",
-    hint: "Bring your own photos or renders of one property. GPT names every shot, Seedance animates each into a cinematic clip — a paced reel (up to 90s, you direct each shot's seconds) or a chaptered YouTube tour.",
+    hint: "Your own photos or renders of one property, each animated into a clip — a paced reel or a chaptered YouTube tour.",
     sceneCount: 10,
     sceneDurationSec: 5,
     aspectClass: "aspect-[9/16]",
@@ -92,7 +92,7 @@ const FORMAT_PRESETS: Record<
   "style-explorer": {
     label: "Style explorer",
     kicker: "YouTube long-form",
-    hint: "Describe a space, render a base, then GPT-6 restyles that exact space into ~15 recognisable design styles. Optionally animate every style into real footage. SEO metadata + card copy included.",
+    hint: "Describe a space, render a base, then restyle that exact room into ~15 named design styles. SEO metadata and card copy included.",
     sceneCount: 15, // number of styles
     sceneDurationSec: 0, // static stills
     aspectClass: "aspect-video", // 16:9 for YouTube
@@ -478,9 +478,9 @@ export default function NewProjectPage() {
               <StepHeader
                 eyebrow="Where it lives"
                 title="Pick a format."
-                hint="Each format produces a different deliverable — a long ambient YouTube slideshow, a 15-second animated reel, or a static Instagram carousel."
+                hint="Each format is a different deliverable — an animated reel, a still carousel, a staged listing photo, a before/after set, a showcase of your own images, or a YouTube long-form."
               />
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 {(Object.keys(FORMAT_PRESETS) as Format[]).map((f) => (
                   <FormatCard
                     key={f}
@@ -493,6 +493,8 @@ export default function NewProjectPage() {
                     detail={
                       f === "staging"
                         ? "1 photo → 1 staged after"
+                        : f === "before-after"
+                        ? `${FORMAT_PRESETS[f].sceneCount} stills`
                         : f === "carousel"
                         ? `${FORMAT_PRESETS[f].sceneCount} slides`
                         : f === "style-explorer"
@@ -1141,7 +1143,7 @@ function FormatCard({
       }`}
     >
       {/* Proportional shape — visual proof of the aspect. Capped height so all three cards align. */}
-      <div className="h-28 flex items-center justify-center">
+      <div className="h-20 flex items-center justify-center">
         <div
           className={`${aspectClass} max-h-full max-w-full rounded-md border-2 transition-colors ${
             selected ? "border-foreground bg-foreground" : "border-foreground/30"
