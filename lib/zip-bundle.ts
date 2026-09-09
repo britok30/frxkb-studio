@@ -160,36 +160,39 @@ async function downloadStagingBundle(
   opts: { onProgress?: (done: number, total: number) => void } = {}
 ): Promise<void> {
   const ordered = [...data.scenes].sort((a, b) => a.order - b.order);
-  const before = ordered[0];
   const after = ordered[ordered.length - 1];
-  // Unfurnish projects carry the cleared room between them.
-  const cleared = ordered.length >= 3 ? ordered[1] : null;
+  // Unfurnish projects: original → cleared → staged. The published pair is
+  // CLEARED + staged (an honest empty room next to the staged one); the
+  // furnished original ships as context, not as "before".
+  const isUnfurnish = ordered.length >= 3;
+  const before = isUnfurnish ? ordered[1] : ordered[0];
+  const original = isUnfurnish ? ordered[0] : null;
   if (!before || !after || before === after) {
     throw new Error("Staging bundle needs both the before and the staged after.");
   }
-  const total = 3 + (cleared ? 1 : 0);
+  const total = 3 + (original ? 1 : 0);
   let done = 0;
   const tick = () => {
     done++;
     opts.onProgress?.(done, total);
   };
 
-  const [beforeBlob, afterBlob, clearedBlob] = await Promise.all([
+  const [beforeBlob, afterBlob, originalBlob] = await Promise.all([
     fetchAsBlob(before.imageUrl).then((b) => (tick(), b)),
     fetchAsBlob(after.imageUrl).then((b) => (tick(), b)),
-    cleared ? fetchAsBlob(cleared.imageUrl).then((b) => (tick(), b)) : Promise.resolve(null),
+    original ? fetchAsBlob(original.imageUrl).then((b) => (tick(), b)) : Promise.resolve(null),
   ]);
 
   const base = slugify(data.title) || "room";
-  const beforeName = `${base}-before.jpg`;
-  const clearedName = `${base}-cleared-unfurnished.jpg`;
+  const beforeName = isUnfurnish ? `${base}-before-cleared.jpg` : `${base}-before.jpg`;
+  const originalName = `${base}-original-furnished.jpg`;
   const afterName = `${base}-after-virtually-staged.jpg`;
   const sideBySideName = `${base}-before-after.jpg`;
 
   const zip = new JSZip();
   zip.file(beforeName, beforeBlob, { compression: "STORE" });
-  if (clearedBlob) zip.file(clearedName, clearedBlob, { compression: "STORE" });
   zip.file(afterName, afterBlob, { compression: "STORE" });
+  if (originalBlob) zip.file(originalName, originalBlob, { compression: "STORE" });
 
   // Side-by-side reveal — best effort (needs canvas; skipped where absent).
   let sideBySide: string | null = null;
@@ -212,8 +215,8 @@ async function downloadStagingBundle(
     format: data.format,
     generatedAt: new Date().toISOString(),
     before: beforeName,
-    cleared: clearedBlob ? clearedName : null,
     after: afterName,
+    originalFurnished: originalBlob ? originalName : null,
     sideBySide,
     metadata: data.metadata,
     stagingPlan: after.prompt,

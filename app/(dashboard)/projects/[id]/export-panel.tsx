@@ -134,7 +134,9 @@ export function ExportPanel({
               <CardTitle className="text-base">Export bundle</CardTitle>
               <CardDescription>
                 {isStaging
-                  ? `Before${scenes.length >= 3 ? " + cleared room" : ""} + staged after (+ a side-by-side) with the captions, listing remarks, and client note, packed as a single zip.`
+                  ? scenes.length >= 3
+                    ? "Before (the cleared room) + staged after (+ a side-by-side and the furnished original) with the captions, listing remarks, and client note, packed as a single zip."
+                    : "Before + staged after (+ a side-by-side) with the captions, listing remarks, and client note, packed as a single zip."
                   : `${scenes.length} scenes + cover + metadata, packed as a single zip.`}
               </CardDescription>
             </div>
@@ -221,7 +223,16 @@ export function ExportPanel({
                           target="_blank"
                           rel="noreferrer"
                         >
-                          ↗ Open {i === 0 ? "before" : i === arr.length - 1 ? "staged after" : "cleared room"}
+                          ↗ Open{" "}
+                          {arr.length >= 3
+                            ? i === 0
+                              ? "original (furnished)"
+                              : i === arr.length - 1
+                                ? "staged after"
+                                : "before (cleared)"
+                            : i === 0
+                              ? "before"
+                              : "staged after"}
                         </a>
                       ))}
                   </div>

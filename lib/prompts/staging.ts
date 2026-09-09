@@ -306,7 +306,7 @@ Fields:
 export function buildStagingMetadataUser(input: StagingMetadataInput): string {
   return [
     input.clearedImageUrl
-      ? "This was a RESTAGE: image 1 is the client's furnished room, image 2 is the room digitally cleared, image 3 is the virtual restaging. The captions may lean on the clear-then-restage angle (the old furniture fought the room; cleared, then staged for the buyer) — but stay specific to what is in the images."
+      ? "This was a RESTAGE: image 1 is the client's furnished room (context only), image 2 is the room digitally cleared, image 3 is the virtual restaging. The PUBLISHED before/after pair is image 2 (the cleared, empty room) and image 3 — write the captions as empty room → staged room. You may mention it was cleared first, but never describe the old furniture as if the viewer will see it."
       : "",
     `Room: ${input.roomType}`,
     `Staging style: ${input.styleName}`,
