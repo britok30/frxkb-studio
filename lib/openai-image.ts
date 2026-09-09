@@ -4,8 +4,7 @@
 // buyer's photo must survive pixel-faithfully with furniture composited in.
 // gpt-image-2.5-sunburst is OpenAI's editing-precision model (released
 // 2026-09-08): `images.edit` takes the room photo plus up to 15 more
-// reference images (client furniture), honours `input_fidelity: "high"` to
-// preserve the source, and renders at an arbitrary canvas so the after
+// reference images (client furniture) and renders at an arbitrary canvas so the after
 // matches the upload's aspect exactly.
 // https://developers.openai.com/api/docs/guides/image-generation
 
@@ -114,9 +113,9 @@ export async function stageImage(input: StageImageInput): Promise<StageImageResu
     // bind to image[0]; the furniture refs follow as guidance.
     image: [before, ...furniture],
     prompt: input.prompt,
-    // The whole point: keep the buyer's room. Low fidelity re-imagines
-    // finishes and window views; high keeps them.
-    input_fidelity: "high",
+    // NOTE: no `input_fidelity` — the gpt-image-2.5 models reject it
+    // ("does not support the 'input_fidelity' parameter", live 2026-09-08).
+    // Source preservation is carried by the prompt's lock instead.
     quality: input.quality ?? "high",
     size,
     output_format: "jpeg",

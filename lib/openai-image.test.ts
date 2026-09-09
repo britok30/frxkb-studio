@@ -61,7 +61,7 @@ describe("stagingSizeFor", () => {
 });
 
 describe("stageImage", () => {
-  it("edits with gpt-image-2.5-sunburst: room photo first, furniture refs after, high input fidelity", async () => {
+  it("edits with gpt-image-2.5-sunburst: room photo first, furniture refs after, no input_fidelity (2.5 rejects it)", async () => {
     editMock.mockResolvedValue({ data: [{ b64_json: Buffer.from("jpeg!").toString("base64") }] });
 
     const out = await withOperator(op, () =>
@@ -79,7 +79,7 @@ describe("stageImage", () => {
     expect(OpenAIMock).toHaveBeenCalledWith({ apiKey: "ok-britok" });
     const args = editMock.mock.calls[0][0];
     expect(args.model).toBe("gpt-image-2.5-sunburst");
-    expect(args.input_fidelity).toBe("high");
+    expect("input_fidelity" in args).toBe(false);
     expect(args.quality).toBe("high");
     expect(args.size).toBe("2048x1536");
     expect(args.output_format).toBe("jpeg");
