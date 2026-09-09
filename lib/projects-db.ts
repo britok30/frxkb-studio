@@ -353,6 +353,18 @@ export async function setProjectSceneReferences(
     );
 }
 
+/** Put a failed, never-rendered scene back to pending with its error
+ *  cleared (staging: the staged scene after a fresh clear lands). Scenes
+ *  that already have an image are left alone — they render on demand. */
+export async function resetFailedSceneToPending(sceneId: string): Promise<void> {
+  await getDb()
+    .update(scenes)
+    .set({ status: "pending", error: null, updatedAt: new Date() })
+    .where(
+      and(eq(scenes.id, sceneId), eq(scenes.status, "rejected"), sql`${scenes.imageUrl} IS NULL`)
+    );
+}
+
 /** Point ONE scene at a new reference image (staging: the staged scene
  *  follows the cleared room's latest render). Overwrites unconditionally. */
 export async function setSceneReferenceImage(

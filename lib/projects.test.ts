@@ -23,6 +23,7 @@ const dbMocks = vi.hoisted(() => ({
   insertSceneVersion: vi.fn(),
   setProjectSceneReferences: vi.fn(),
   setSceneReferenceImage: vi.fn(),
+  resetFailedSceneToPending: vi.fn(),
   setSceneMotionPreset: vi.fn(),
   markProjectFinalVideo: vi.fn(),
   updateStitchState: vi.fn(),
@@ -2740,6 +2741,8 @@ describe("virtual staging — unfurnish (clear, then restage)", () => {
     expect(call.prompt).toMatch(/^Remove ALL furniture/);
     expect(call.prompt).toMatch(/also remove the curtains/);
     expect(dbMocks.setSceneReferenceImage).toHaveBeenCalledWith("s_3", "https://blob.vercel-storage.com/images/p_1/render-1.jpg");
+    // A staged scene stranded by an earlier failed clear is unblocked.
+    expect(dbMocks.resetFailedSceneToPending).toHaveBeenCalledWith("s_3");
   });
 
   it("finalize sends before, cleared, and staged to the caption writer", async () => {

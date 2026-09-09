@@ -115,6 +115,7 @@ import {
   setProjectSceneReferences,
   setSceneMotionPreset,
   setSceneReferenceImage,
+  resetFailedSceneToPending,
   tryAcquireFinalizationLock,
   tryAcquireGenerationLock,
   updateProjectStatus,
@@ -686,7 +687,13 @@ async function renderStagingScene(
       const staged = siblings.find(
         (s) => stagingRoleFor(project.staging?.unfurnish, s.order) === "staged"
       );
-      if (staged) await setSceneReferenceImage(staged.id, stored.url);
+      if (staged) {
+        await setSceneReferenceImage(staged.id, stored.url);
+        // A staged scene that failed for lack of a clear ("Clear the room
+        // first…") is now unblocked — back to pending so the header's
+        // Generate button picks it up and the stale error disappears.
+        await resetFailedSceneToPending(staged.id);
+      }
     }
     return stored.url;
   } catch (err) {
