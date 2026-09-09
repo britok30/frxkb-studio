@@ -83,7 +83,7 @@ import {
   FAL_SEEDANCE_FAST_720P_PER_SECOND,
   FAL_SEEDANCE_PER_SECOND,
 } from "@/lib/pricing";
-import { currentOperator, pickAppLink } from "@/lib/operators";
+import { appsForFormat, currentOperator, pickAppLink } from "@/lib/operators";
 import { findSimilarProjects, type DuplicateMatch } from "@/lib/world-dedupe";
 import {
   deleteSceneVersion,
@@ -2737,7 +2737,7 @@ async function finalizeStyleExplorer(project: Project, scenes: Scene[]): Promise
       draft,
       styleNames,
       introLabel: firstName && firstName !== "Original" ? firstName : undefined,
-      appName: op.apps[0]?.name ?? "our app",
+      appName: appsForFormat(op, project.format)[0]?.name ?? "our app",
       instagram: op.socials.instagram,
       website: op.socials.website,
     });
@@ -2787,12 +2787,14 @@ async function finalizeStaging(project: Project, scenes: Scene[]): Promise<Final
       furniturePlan: project.concept?.objectSet ?? [],
       brief: staging.brief,
       hook: project.concept?.hook,
-      appNames: op.apps.map((a) => a.name),
+      // Staging pitches the staging platform (AI Virtual Stage for britok),
+      // not the general design app.
+      appNames: appsForFormat(op, "staging").map((a) => a.name),
       instagramHandle: op.socials.instagram,
     });
-    const handle = op.apps[0]?.handle ?? "";
+    const handle = appsForFormat(op, "staging")[0]?.handle ?? "";
     const metadata = applyMetadataPolicies(
-      substituteAppLink(raw, project.niche),
+      substituteAppLink(raw, project.niche, "staging"),
       project.worldType,
       handle
     );
@@ -2868,7 +2870,7 @@ export async function finalizeProject(projectId: string): Promise<FinalizeResult
       worldType: project.worldType,
       sceneCount: renderable.length,
       totalDurationSec,
-      appNames: op.apps.map((a) => a.name),
+      appNames: appsForFormat(op, project.format).map((a) => a.name),
       // Before-after: the named "after" concepts (swipe order) so the caption
       // can reference them and ask the concrete "which one?" vote.
       conceptNames:
@@ -2884,9 +2886,9 @@ export async function finalizeProject(projectId: string): Promise<FinalizeResult
     //      niche-routed app URL.
     //   2. applyMetadataPolicies: enforce locked hashtags per worldType +
     //      append the operator's @handle to each platform caption.
-    const handle = op.apps[0]?.handle ?? "";
+    const handle = appsForFormat(op, project.format)[0]?.handle ?? "";
     const metadata = applyMetadataPolicies(
-      substituteAppLink(rawMetadata, project.niche),
+      substituteAppLink(rawMetadata, project.niche, project.format),
       project.worldType,
       handle
     );
@@ -2928,9 +2930,9 @@ export async function finalizeProject(projectId: string): Promise<FinalizeResult
  * lib/operators.ts. If the resolved URL is empty, leave the placeholder intact
  * so the operator notices and pastes a link manually.
  */
-function substituteAppLink(metadata: Metadata, niche: string): Metadata {
+function substituteAppLink(metadata: Metadata, niche: string, format?: Format): Metadata {
   const op = currentOperator();
-  const link = pickAppLink(op, niche);
+  const link = pickAppLink(op, niche, format);
   if (!link) return metadata;
   const sub = (s: string) => s.split("{APP_LINK}").join(link);
   switch (metadata.kind) {

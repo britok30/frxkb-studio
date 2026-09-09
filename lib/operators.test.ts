@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach } from "vitest";
 import {
+  appsForFormat,
   currentOperator,
   getOperator,
   pickAppLink,
@@ -38,7 +39,7 @@ describe("getOperator", () => {
     expect(getOperator("britok30@gmail.com")).toBeNull(); // still missing fal
   });
 
-  it("returns britok30 with ArchitectGPT only + interior+exterior lanes", () => {
+  it("returns britok30 with ArchitectGPT (+ the staging-only AI Virtual Stage) + interior+exterior lanes", () => {
     process.env.FAL_KEY_BRITOK30 = "fk-britok";
     process.env.OPENAI_KEY_BRITOK30 = "ak-britok";
     process.env.APP_LINK_ARCHITECTGPT = "https://architectgpt.example/";
@@ -50,8 +51,11 @@ describe("getOperator", () => {
       falKey: "fk-britok",
       openaiKey: "ak-britok",
     });
-    expect(op?.apps.map((a) => a.name)).toEqual(["ArchitectGPT"]);
+    expect(op?.apps.map((a) => a.name)).toEqual(["ArchitectGPT", "AI Virtual Stage"]);
     expect(op?.apps[0].url).toBe("https://architectgpt.example/");
+    // The staging platform is scoped to the staging format only.
+    expect(op?.apps[1]).toMatchObject({ url: "https://www.aivirtualstage.io", formats: ["staging"] });
+    expect(appsForFormat(op!, "reel").map((a) => a.name)).toEqual(["ArchitectGPT"]);
     expect(op?.worldTypes).toEqual(["interior", "exterior"]);
     expect(op?.propertyTypes).toEqual(["residential", "commercial"]);
   });
@@ -186,5 +190,33 @@ describe("withOperator / currentOperator", () => {
 
     expect(a).toBe("A");
     expect(b).toBe("B");
+  });
+});
+
+describe("appsForFormat — format-scoped apps", () => {
+  const op: Operator = {
+    email: "britok30@gmail.com",
+    falKey: "f",
+    openaiKey: "o",
+    apps: [
+      { name: "ArchitectGPT", url: "https://architectgpt.io", handle: "architectgpt" },
+      { name: "AI Virtual Stage", url: "https://www.aivirtualstage.io", handle: "", formats: ["staging"] },
+    ],
+    worldTypes: ["interior", "exterior"],
+    propertyTypes: ["residential", "commercial"],
+    socials: { instagram: "architectgpt", website: "https://www.architectgpt.io" },
+  };
+
+  it("staging gets ONLY the staging platform; other formats never see it", () => {
+    expect(appsForFormat(op, "staging").map((a) => a.name)).toEqual(["AI Virtual Stage"]);
+    expect(appsForFormat(op, "reel").map((a) => a.name)).toEqual(["ArchitectGPT"]);
+    expect(appsForFormat(op, "before-after").map((a) => a.name)).toEqual(["ArchitectGPT"]);
+    expect(appsForFormat(op).map((a) => a.name)).toEqual(["ArchitectGPT"]);
+  });
+
+  it("pickAppLink follows the same scoping", () => {
+    expect(pickAppLink(op, "living room", "staging")).toBe("https://www.aivirtualstage.io");
+    expect(pickAppLink(op, "living room", "reel")).toBe("https://architectgpt.io");
+    expect(pickAppLink(op, "living room")).toBe("https://architectgpt.io");
   });
 });

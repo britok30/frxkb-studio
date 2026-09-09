@@ -276,10 +276,18 @@ export type StagingMetadataInput = {
 /** Anchor tags for staging posts — enforced server-side too (projects.ts). */
 export const STAGING_LOCKED_HASHTAGS = ["virtualstaging", "realestate"];
 
+/** What each app IS, so the CTA reads true. */
+const STAGING_APP_BLURBS: Record<string, string> = {
+  "AI Virtual Stage":
+    "AI Virtual Stage — a virtual staging platform for listing agents: upload an empty (or furnished) room photo and get it staged like this one. The natural CTA shape is an invitation to stage their own listing (\"Stage your own listing at {APP_LINK}\").",
+  ArchitectGPT: "ArchitectGPT — an AI design app that reimagines spaces and exteriors.",
+  InteriorGPT: "InteriorGPT — an AI interior design assistant.",
+};
+
 export function buildStagingMetadataSystem(appNames: string[]): string {
   const app = appNames[0];
   const cta = app
-    ? `The operator runs ${app}, an AI design app. The Instagram caption may close with ONE soft, value-led invitation to try it, using the literal placeholder "{APP_LINK}" exactly once at the very end (the operator substitutes the real URL). Never open with it, never make it salesy. TikTok, the listing blurb, and the client note never mention the app.`
+    ? `The operator runs ${STAGING_APP_BLURBS[app] ?? `${app}, an AI design app.`} The Instagram caption may close with ONE soft, value-led invitation to try it, naming ${app} and using the literal placeholder "{APP_LINK}" exactly once at the very end (the operator substitutes the real URL). Never open with it, never make it salesy. TikTok, the listing blurb, and the client note never mention the app.`
     : `No app CTA — write copy that stands on its own. Never write "{APP_LINK}".`;
   return `You write the copy that ships with a virtual-staging before/after for a real-estate listing. You can SEE the images in this message: image 1 is the room as the client photographed it (if it was furnished, image 2 is the same room digitally CLEARED of all furniture and the LAST image is the restaged result; if it was already empty there are just two images — the empty room and the staged room). Everything you write must be about THESE images — the actual flooring, the actual light, the actual pieces placed — so that nothing you write could be pasted onto a different room.
 

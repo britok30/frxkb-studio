@@ -99,7 +99,8 @@ vi.mock("@/lib/prompts/staging", async (importOriginal) => ({
   generateStagingMetadata: stagingMocks.generateStagingMetadata,
 }));
 vi.mock("@/lib/openai-image", () => ({ stageImage: openaiImageMocks.stageImage }));
-vi.mock("@/lib/operators", () => ({
+vi.mock("@/lib/operators", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/operators")>()),
   currentOperator: operatorMocks.currentOperator,
   pickAppLink: operatorMocks.pickAppLink,
 }));
@@ -1457,7 +1458,8 @@ describe("finalizeProject", () => {
     // Routing is delegated entirely to operators.pickAppLink — confirmed it was called with the niche.
     expect(operatorMocks.pickAppLink).toHaveBeenCalledWith(
       operatorMocks.fixture,
-      "modernist exteriors"
+      "modernist exteriors",
+      "reel"
     );
   });
 
@@ -2626,6 +2628,30 @@ describe("finalizeProject — staging", () => {
     expect(m.disclosure).toMatch(/Virtually staged/);
     expect(dbMocks.markProjectFinalized).toHaveBeenCalledWith("p_1", { metadata: m });
     expect(result.autoStitch).toBeUndefined();
+  });
+
+  it("britok's staging CTA is AI Virtual Stage, not ArchitectGPT — and other formats never see it", async () => {
+    operatorMocks.currentOperator.mockReturnValue({
+      ...operatorMocks.fixture,
+      apps: [
+        ...operatorMocks.fixture.apps,
+        { name: "AI Virtual Stage", url: "https://www.aivirtualstage.io", handle: "", formats: ["staging" as const] },
+      ] as unknown as typeof operatorMocks.fixture.apps,
+    });
+    try {
+      const result = await finalizeProject("p_1");
+      expect(stagingMocks.generateStagingMetadata).toHaveBeenCalledWith(
+        expect.objectContaining({ appNames: ["AI Virtual Stage"] })
+      );
+      // Link substitution is asked for the staging format specifically.
+      expect(operatorMocks.pickAppLink).toHaveBeenCalledWith(expect.anything(), expect.any(String), "staging");
+      const m = result.metadata;
+      if (m.kind !== "staging") throw new Error("expected staging metadata");
+      // No handle on the staging app → no @ line appended.
+      expect(m.instagramCaption).not.toMatch(/@architectgpt/);
+    } finally {
+      operatorMocks.currentOperator.mockReturnValue(operatorMocks.fixture);
+    }
   });
 
   it("refuses to finalize before the after exists", async () => {

@@ -1,5 +1,5 @@
 import { AsyncLocalStorage } from "node:async_hooks";
-import type { PropertyType, WorldType } from "@/lib/prompts/types";
+import type { Format, PropertyType, WorldType } from "@/lib/prompts/types";
 
 // ── Operator config ──────────────────────────────────────────────────────────
 //
@@ -9,7 +9,7 @@ import type { PropertyType, WorldType } from "@/lib/prompts/types";
 
 export type AppLink = {
   /** Display name (used in metadata prompt context). */
-  name: "ArchitectGPT" | "CasaGPT" | "InteriorGPT";
+  name: "ArchitectGPT" | "CasaGPT" | "InteriorGPT" | "AI Virtual Stage";
   /** The full URL we substitute into {APP_LINK} placeholders. May be empty. */
   url: string;
   /** Social handle (no @ prefix) appended to captions on IG / TikTok / Shorts
@@ -19,6 +19,11 @@ export type AppLink = {
   /** Niche keywords that prefer this app. First match wins; if no app
    *  matches, the operator's first-listed app is the fallback. */
   pattern?: RegExp;
+  /** Formats this app is FOR. When set, the app is only offered as the CTA
+   *  on those formats (and, on those formats, it wins over the general
+   *  apps). Unset = general app, offered on every format that has no
+   *  format-specific app. */
+  formats?: Format[];
 };
 
 export type Operator = {
@@ -77,6 +82,14 @@ export function getOperator(email: string | null | undefined): Operator | null {
           url: process.env.APP_LINK_ARCHITECTGPT ?? "",
           handle: "architectgpt",
         },
+        // Virtual staging posts sell the staging platform, not ArchitectGPT.
+        // No social handle of its own yet — captions carry no @ line.
+        {
+          name: "AI Virtual Stage",
+          url: process.env.APP_LINK_AIVIRTUALSTAGE ?? "https://www.aivirtualstage.io",
+          handle: "",
+          formats: ["staging"],
+        },
       ],
       // ArchitectGPT covers both interior and exterior architecture. Add
       // "landscape" here when that vertical ships.
@@ -121,12 +134,25 @@ export function getOperator(email: string | null | undefined): Operator | null {
 
 /** Pick the operator's app URL most relevant to the given niche. Returns the
  *  first-listed app's URL as a fallback when nothing matches. */
-export function pickAppLink(operator: Operator, niche: string): string {
+/**
+ * The apps that may be pitched on a given format. Format-specific apps win
+ * outright on their formats; everywhere else only the general apps apply.
+ */
+export function appsForFormat(operator: Operator, format?: Format | string): AppLink[] {
+  const specific = format
+    ? operator.apps.filter((a) => a.formats?.includes(format as Format))
+    : [];
+  if (specific.length > 0) return specific;
+  return operator.apps.filter((a) => !a.formats);
+}
+
+export function pickAppLink(operator: Operator, niche: string, format?: Format | string): string {
+  const apps = appsForFormat(operator, format);
   const lower = niche.toLowerCase();
-  for (const app of operator.apps) {
+  for (const app of apps) {
     if (app.pattern && app.pattern.test(lower)) return app.url;
   }
-  return operator.apps[0]?.url ?? "";
+  return apps[0]?.url ?? "";
 }
 
 // ── Per-request operator context ─────────────────────────────────────────────
