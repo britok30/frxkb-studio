@@ -27,6 +27,16 @@ import type { FalQueuedRequest } from "@/lib/fal-queue";
 import { REHOST_PARTS_PER_STEP, type RehostPart, type RehostPlan } from "@/lib/storage";
 import { getOperator, withOperator } from "@/lib/operators";
 import { cleanupOrphanedUploads } from "@/lib/cleanup";
+import {
+  checkPublishContainer,
+  createPublishContainer,
+  failPublish,
+  finishPublish,
+  preparePublish,
+} from "@/lib/publish";
+import { listAllSocialAccounts, updateSocialAccountToken } from "@/lib/social-db";
+import { refreshLongLived } from "@/lib/instagram";
+import { decryptSecret } from "@/lib/social-crypto";
 import type { AspectRatio } from "@/lib/prompts/types";
 
 /**
@@ -359,4 +369,80 @@ export const cleanupUploads = inngest.createFunction(
 );
 
 /** Every function we want Inngest to discover at /api/inngest. */
-export const functions = [generateProject, animateProject, stitchProject, cleanupUploads];
+type PublishEvent = { data: { postId: string; projectId: string; operatorEmail: string } };
+
+/**
+ * `project/publish.requested` — publish one social_posts row to Instagram.
+ * Container creation and the publish call are each their own memoized step,
+ * and the function has NO retries: a duplicate post is worse than a failed
+ * one the operator can re-run. Any failure marks the row failed with the
+ * Instagram error text.
+ */
+export async function handlePublish({ event }: { event: PublishEvent }, step: StepRunner) {
+  const { postId, operatorEmail } = event.data;
+  const operator = getOperator(operatorEmail);
+  if (!operator) throw new Error(`Operator not configured for ${operatorEmail}.`);
+  const run = <T>(name: string, fn: () => Promise<T>) =>
+    step.run(name, () => withOperator(operator, fn));
+  try {
+    const prepared = await run("prepare", () => preparePublish(postId));
+    const containerId = await run("create-container", () =>
+      createPublishContainer(postId, prepared.mediaUrls, prepared.alts)
+    );
+    // Instagram processes the container asynchronously — poll with durable
+    // sleeps (no serverless time burned waiting). Images usually finish in
+    // seconds; give it up to ~2 minutes.
+    let ready = false;
+    for (let i = 0; i < 12 && !ready; i++) {
+      const state = await run(`status-${i}`, () => checkPublishContainer(postId, containerId));
+      if (state === "ready") ready = true;
+      else await step.sleep(`wait-${i}`, "10s");
+    }
+    if (!ready) throw new Error("Instagram is still processing the media after 2 minutes. Try again.");
+    return await run("publish", () => finishPublish(postId, containerId));
+  } catch (err) {
+    const message = err instanceof Error ? err.message : "Unknown error";
+    await step.run("fail", () => withOperator(operator, () => failPublish(postId, message)));
+    return { failed: true, error: message };
+  }
+}
+
+export const publishProject = inngest.createFunction(
+  { id: "publish-project", retries: 0, triggers: [{ event: "project/publish.requested" }] },
+  async ({ event, step }) =>
+    handlePublish({ event: event as unknown as PublishEvent }, step as unknown as StepRunner)
+);
+
+/** Weekly: refresh Instagram long-lived tokens (60-day life) so a connected
+ *  account never silently expires. Refresh needs the token to be ≥24h old. */
+export const refreshSocialTokens = inngest.createFunction(
+  { id: "refresh-social-tokens", retries: 1, triggers: [{ cron: "0 7 * * 2" }] },
+  async ({ step }) => {
+    const accounts = await step.run("list", () => listAllSocialAccounts());
+    let refreshed = 0;
+    for (const a of accounts) {
+      if (a.platform !== "instagram") continue;
+      const ageMs = Date.now() - new Date(a.updatedAt).getTime();
+      if (ageMs < 24 * 60 * 60 * 1000) continue;
+      try {
+        await step.run(`refresh-${a.id}`, async () => {
+          const next = await refreshLongLived(decryptSecret(a.accessTokenEnc));
+          await updateSocialAccountToken(a.id, next.access_token, next.expires_in);
+        });
+        refreshed++;
+      } catch (err) {
+        console.warn(`[social] token refresh failed for @${a.username}:`, err);
+      }
+    }
+    return { refreshed, total: accounts.length };
+  }
+);
+
+export const functions = [
+  generateProject,
+  animateProject,
+  stitchProject,
+  cleanupUploads,
+  publishProject,
+  refreshSocialTokens,
+];

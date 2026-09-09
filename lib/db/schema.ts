@@ -282,6 +282,55 @@ export const appSettings = pgTable("app_settings", {
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
+/** Connected social accounts (Instagram first). One row per connected
+ *  professional account per operator; the token is AES-GCM encrypted with
+ *  SOCIAL_TOKEN_KEY before it lands here. */
+export const socialAccounts = pgTable(
+  "social_accounts",
+  {
+    id: text("id").primaryKey(),
+    operatorEmail: text("operator_email").notNull(),
+    platform: text("platform", { enum: ["instagram"] }).notNull().default("instagram"),
+    /** Instagram professional account id (the {ig-user-id} in Graph calls). */
+    platformUserId: text("platform_user_id").notNull(),
+    username: text("username").notNull(),
+    accountType: text("account_type"),
+    /** Encrypted long-lived token (base64 iv:tag:ciphertext). */
+    accessTokenEnc: text("access_token_enc").notNull(),
+    tokenExpiresAt: timestamp("token_expires_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index("social_accounts_operator_idx").on(t.operatorEmail)]
+);
+
+/** One row per publish attempt of a project to a connected account. */
+export const socialPosts = pgTable(
+  "social_posts",
+  {
+    id: text("id").primaryKey(),
+    projectId: text("project_id")
+      .notNull()
+      .references(() => projects.id, { onDelete: "cascade" }),
+    accountId: text("account_id")
+      .notNull()
+      .references(() => socialAccounts.id, { onDelete: "cascade" }),
+    status: text("status", { enum: ["queued", "publishing", "published", "failed"] })
+      .notNull()
+      .default("queued"),
+    /** The exact caption sent (operator may have edited it). */
+    caption: text("caption").notNull(),
+    /** Public JPEG URLs actually sent, in order. */
+    mediaUrls: jsonb("media_urls").$type<string[]>(),
+    platformMediaId: text("platform_media_id"),
+    permalink: text("permalink"),
+    error: text("error"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    publishedAt: timestamp("published_at", { withTimezone: true }),
+  },
+  (t) => [index("social_posts_project_idx").on(t.projectId, t.createdAt)]
+);
+
 export const projectsRelations = relations(projects, ({ many }) => ({
   scenes: many(scenes),
   assets: many(assets),
@@ -316,3 +365,5 @@ export type NewSpendEvent = typeof spendEvents.$inferInsert;
 export type Asset = typeof assets.$inferSelect;
 export type Export = typeof exports_.$inferSelect;
 export type Thumbnail = typeof thumbnails.$inferSelect;
+export type SocialAccount = typeof socialAccounts.$inferSelect;
+export type SocialPost = typeof socialPosts.$inferSelect;

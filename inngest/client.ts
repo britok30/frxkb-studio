@@ -40,4 +40,7 @@ export type StudioEvents = {
       concurrency?: number;
     };
   };
+  "project/publish.requested": {
+    data: { postId: string; projectId: string; operatorEmail: string };
+  };
 };

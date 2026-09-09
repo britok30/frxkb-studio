@@ -12,14 +12,39 @@ import {
 import { TimeoutToggle } from "../timeout-toggle";
 import { BudgetEditor, type BudgetRow } from "./budget-editor";
 import { UpscalerToggle } from "./upscaler-toggle";
+import { InstagramAccounts, type InstagramAccountRow } from "./instagram-accounts";
+import { listSocialAccounts } from "@/lib/social-db";
 
 export const dynamic = "force-dynamic";
 
 /** Kelvin-only admin settings. Non-admin sessions 404 — the page's existence
  *  never leaks (same policy as the settings APIs behind it). */
-export default async function AdminPage() {
+export default async function AdminPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ ig_connected?: string; ig_error?: string }>;
+}) {
   const session = await auth().catch(() => null);
   if (session?.user?.email !== ADMIN_EMAIL) notFound();
+  const sp = await searchParams;
+
+  let instagram: InstagramAccountRow[] = [];
+  let instagramError: string | null = null;
+  try {
+    instagram = (await listSocialAccounts(ADMIN_EMAIL)).map((a) => ({
+      id: a.id,
+      username: a.username,
+      accountType: a.accountType,
+      tokenExpiresAt: a.tokenExpiresAt ? a.tokenExpiresAt.toISOString() : null,
+    }));
+  } catch (err) {
+    instagramError = err instanceof Error ? err.message : "Couldn't load accounts";
+  }
+  const instagramConfigured = !!(
+    process.env.INSTAGRAM_APP_ID &&
+    process.env.INSTAGRAM_APP_SECRET &&
+    process.env.SOCIAL_TOKEN_KEY
+  );
 
   let timeout: TimeoutSetting | null = null;
   try {
@@ -62,6 +87,14 @@ export default async function AdminPage() {
           Only your account can see this page.
         </p>
       </header>
+
+      <InstagramAccounts
+        initial={instagram}
+        configured={instagramConfigured}
+        loadError={instagramError}
+        justConnected={sp.ig_connected ?? null}
+        connectError={sp.ig_error ?? null}
+      />
 
       <UpscalerToggle initial={upscaler} />
 

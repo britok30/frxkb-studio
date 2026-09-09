@@ -18,6 +18,9 @@ import { AutoRefresh } from "./auto-refresh";
 import { BatchActions } from "./batch-actions";
 import { JobNotifier } from "./job-notifier";
 import { StitchPanel } from "./stitch-panel";
+import { PublishPanel, type PublishAccount, type PublishPostRow } from "./publish-panel";
+import { listSocialAccounts, listSocialPosts } from "@/lib/social-db";
+import { defaultInstagramCaption } from "@/lib/publish";
 import {
   estimateAnimateBatch,
   estimateBatchImages,
@@ -92,6 +95,33 @@ export default async function ProjectPage({ params }: { params: Promise<{ id: st
   // stay owner-gated), one-directional by design.
   const isOwner = !project.operatorEmail || project.operatorEmail === sessionEmail;
   const canViewExports = isOwner || sessionEmail === ADMIN_EMAIL;
+
+  // Instagram publishing (v1: staging only, owner only). Soft-fails to
+  // "no accounts" so a missing table never breaks the page.
+  let publishAccounts: PublishAccount[] = [];
+  let publishPosts: PublishPostRow[] = [];
+  let publishCaption = "";
+  const canPublish = isOwner && project.format === "staging" && !!project.metadata && !!sessionEmail;
+  if (canPublish) {
+    try {
+      publishAccounts = (await listSocialAccounts(sessionEmail as string)).map((a) => ({
+        id: a.id,
+        username: a.username,
+      }));
+      publishPosts = (await listSocialPosts(project.id)).map((p) => ({
+        id: p.id,
+        accountId: p.accountId,
+        status: p.status,
+        permalink: p.permalink,
+        error: p.error,
+        createdAt: p.createdAt.toISOString(),
+      }));
+      publishCaption = defaultInstagramCaption(project);
+    } catch {
+      publishAccounts = [];
+    }
+  }
+  const publishInFlight = publishPosts.some((p) => p.status === "queued" || p.status === "publishing");
   const concept = project.concept;
   const counts = countByStatus(scenes);
   const exportData = buildExportData(project, scenes);
@@ -122,7 +152,8 @@ export default async function ProjectPage({ params }: { params: Promise<{ id: st
   const isBusy =
     project.status === "generating" ||
     project.status === "finalizing" ||
-    counts.generating > 0;
+    counts.generating > 0 ||
+    publishInFlight;
 
   return (
     <div className="mx-auto max-w-6xl px-6 pt-10 pb-16 flex flex-col gap-8">
@@ -297,6 +328,20 @@ export default async function ProjectPage({ params }: { params: Promise<{ id: st
           data={exportData}
           canDownload={canViewExports}
           canGenerateThumbnail={isOwner && project.format === "style-explorer"}
+        />
+      )}
+
+      {canPublish && exportData && (
+        <PublishPanel
+          projectId={project.id}
+          accounts={publishAccounts}
+          posts={publishPosts}
+          defaultCaption={publishCaption}
+          mediaSummary={
+            project.staging?.unfurnish
+              ? "Carousel — before (cleared room) + staged after"
+              : "Carousel — before + staged after"
+          }
         />
       )}
 
