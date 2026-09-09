@@ -10,6 +10,7 @@ import {
   ensureBlurbDisclosure,
   generateStagingBrief,
   generateStagingMetadata,
+  UNFURNISH_PROMPT,
   STAGING_DISCLOSURE,
   STAGING_LOCK,
   STAGING_LOCK_CLOSE,
@@ -171,5 +172,48 @@ describe("ensureBlurbDisclosure", () => {
       "Great room. Photo virtually staged."
     );
     expect(ensureBlurbDisclosure("Great room.  ")).toBe("Great room. Photo virtually staged.");
+  });
+});
+
+describe("unfurnish", () => {
+  it("the clear prompt removes freestanding items and keeps the property", () => {
+    expect(UNFURNISH_PROMPT).toMatch(/Remove ALL furniture/);
+    expect(UNFURNISH_PROMPT).toMatch(/KEEP everything that is part of the property/);
+    expect(UNFURNISH_PROMPT).toMatch(/reconstruct the floor, wall, baseboard/);
+  });
+
+  it("brief user prompt tells the stager the photo is furnished and to ignore what's in it", () => {
+    const out = buildStagingBriefUser({ beforeImageUrl: "https://blob.example/room.jpg", furnished: true });
+    expect(out).toMatch(/currently FURNISHED/);
+    expect(out).toMatch(/plan the furniture from scratch/);
+  });
+
+  it("metadata sees before → cleared → staged when a cleared image exists", async () => {
+    llmMocks.generateJSON.mockResolvedValue({
+      instagramCaption: "Cleared, then restaged for the buyer.\nOak table, brass lamp on the window wall.\nKeep it? {APP_LINK}",
+      instagramHashtags: ["livingroom", "homestaging", "virtualstaging"],
+      tiktokCaption: "Cleared then restaged — same oak floors. Keep the lamp?",
+      tiktokHashtags: ["livingroom", "homestaging", "virtualstaging"],
+      listingBlurb: "Bright living room with oak floors; the restaged layout shows the full seating group. Photo virtually staged.",
+      clientNote: "Attached are the original, the cleared room, and the restaged after for the living room. Please label the after as virtually staged wherever it appears.",
+      altText: "Living room with oak table and brass lamp",
+    });
+    await generateStagingMetadata({
+      beforeImageUrl: "https://blob.example/furnished.jpg",
+      clearedImageUrl: "https://blob.example/cleared.jpg",
+      afterImageUrl: "https://blob.example/staged.jpg",
+      roomType: "Living room",
+      styleName: "Warm Transitional",
+      roomRead: "r",
+      furniturePlan: ["Oak table — centred"],
+      appNames: [],
+    });
+    const args = llmMocks.generateJSON.mock.calls[0][0];
+    expect(args.images).toEqual([
+      "https://blob.example/furnished.jpg",
+      "https://blob.example/cleared.jpg",
+      "https://blob.example/staged.jpg",
+    ]);
+    expect(args.user).toMatch(/RESTAGE/);
   });
 });

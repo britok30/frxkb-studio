@@ -22,6 +22,7 @@ const dbMocks = vi.hoisted(() => ({
   heartbeatGenerationLock: vi.fn(),
   insertSceneVersion: vi.fn(),
   setProjectSceneReferences: vi.fn(),
+  setSceneReferenceImage: vi.fn(),
   setSceneMotionPreset: vi.fn(),
   markProjectFinalVideo: vi.fn(),
   updateStitchState: vi.fn(),
@@ -2368,6 +2369,7 @@ describe("createStagingProject", () => {
       brief: "Young-family buyers.",
       roomRead: stagingBrief.roomRead,
       furnitureReferenceCount: 1,
+      unfurnish: false,
     });
     expect(projectInsert.concept.objectSet).toEqual(stagingBrief.furniturePlan);
     expect(projectInsert.worldSignature).toBeNull();
@@ -2636,5 +2638,136 @@ describe("finalizeProject — staging", () => {
     ]);
     await expect(finalizeProject("p_1")).rejects.toThrow(/Cannot finalize: the staged after/);
     expect(stagingMocks.generateStagingMetadata).not.toHaveBeenCalled();
+  });
+});
+
+describe("virtual staging — unfurnish (clear, then restage)", () => {
+  const unfurnishProject = {
+    id: "p_1",
+    format: "staging",
+    worldType: "interior",
+    status: "scripting",
+    aspectRatio: "4:3",
+    quality: "standard",
+    referenceImageUrls: ["https://blob.example/sofa.jpg"],
+    staging: { roomType: "Living room", styleName: "Warm Transitional", brief: null, roomRead: "r", furnitureReferenceCount: 1, unfurnish: true },
+  };
+  const original = {
+    ...fakeScene({ id: "s_1", order: 1, status: "generated", prompt: "(uploaded before) Living room, furnished" }),
+    imageUrl: "https://blob.example/furnished.jpg",
+    referenceImageUrl: null,
+  };
+  const cleared = {
+    ...fakeScene({ id: "s_2", order: 2, status: "pending", prompt: "unfurnish" }),
+    referenceImageUrl: "https://blob.example/furnished.jpg",
+  };
+  const staged = {
+    ...fakeScene({ id: "s_3", order: 3, status: "pending", prompt: stagingBrief.stagingPrompt }),
+    referenceImageUrl: null,
+  };
+
+  beforeEach(() => {
+    dbMocks.selectProjectById.mockResolvedValue(unfurnishProject);
+    dbMocks.selectScenesByProject.mockResolvedValue([original, cleared, staged]);
+    dbMocks.tryAcquireGenerationLock.mockResolvedValue(true);
+    dbMocks.resetOrphanedScenes.mockResolvedValue(0);
+    dbMocks.insertProject.mockImplementation(async (values) => ({ ...values }));
+    dbMocks.insertScenes.mockImplementation(async (rows) => rows);
+    stagingMocks.generateStagingBrief.mockResolvedValue(stagingBrief);
+    openaiImageMocks.stageImage.mockResolvedValue({
+      buffer: Buffer.from("jpeg"),
+      contentType: "image/jpeg",
+      model: "gpt-image-2.5-sunburst",
+      size: "2048x1536",
+    });
+    let n = 0;
+    storageMocks.storeBuffer.mockImplementation(async () => {
+      n++;
+      return { url: `https://blob.vercel-storage.com/images/p_1/render-${n}.jpg`, pathname: `images/p_1/render-${n}.jpg` };
+    });
+  });
+
+  it("create: original → cleared (pinned to the upload) → staged (unpinned until cleared exists); brief told the room is furnished", async () => {
+    await createStagingProject({
+      beforeImageUrl: "https://blob.example/furnished.jpg",
+      aspectRatio: "4:3",
+      unfurnish: true,
+    });
+    expect(stagingMocks.generateStagingBrief).toHaveBeenCalledWith(expect.objectContaining({ furnished: true }));
+    expect(dbMocks.insertProject.mock.calls[0][0].staging.unfurnish).toBe(true);
+    const rows = dbMocks.insertScenes.mock.calls[0][0];
+    expect(rows.map((r: { order: number; styleName: string; referenceImageUrl: string | null }) => [r.order, r.styleName, r.referenceImageUrl])).toEqual([
+      [1, "Before", null],
+      [2, "Cleared", "https://blob.example/furnished.jpg"],
+      [3, "Warm Transitional", null],
+    ]);
+    expect(rows[1].prompt).toMatch(/^Remove ALL furniture and decor/);
+  });
+
+  it("generate: clears first (no furniture refs), re-anchors the staged scene to the cleared render, then stages it", async () => {
+    const result = await generateAllImages("p_1");
+
+    expect(result).toEqual({ generated: 2, failed: 0, skipped: 1, reclaimed: 0 });
+    expect(openaiImageMocks.stageImage).toHaveBeenCalledTimes(2);
+    const [clearCall, stageCall] = openaiImageMocks.stageImage.mock.calls.map((c) => c[0]);
+    expect(clearCall.beforeUrl).toBe("https://blob.example/furnished.jpg");
+    expect(clearCall.furnitureReferenceUrls).toEqual([]);
+    expect(clearCall.prompt).toMatch(/^Remove ALL furniture and decor/);
+    // The stage pass builds on the CLEARED render, with the client's furniture.
+    expect(stageCall.beforeUrl).toBe("https://blob.vercel-storage.com/images/p_1/render-1.jpg");
+    expect(stageCall.furnitureReferenceUrls).toEqual(["https://blob.example/sofa.jpg"]);
+    expect(stageCall.prompt).toMatch(/^Virtually stage this real-estate photograph/);
+    expect(dbMocks.setSceneReferenceImage).toHaveBeenCalledWith("s_3", "https://blob.vercel-storage.com/images/p_1/render-1.jpg");
+    expect(dbMocks.markSceneGenerated).toHaveBeenCalledTimes(2);
+  });
+
+  it("generate: when the clear fails, the staged scene is marked failed instead of rendering from nothing", async () => {
+    openaiImageMocks.stageImage.mockRejectedValueOnce(new Error("boom"));
+    const result = await generateAllImages("p_1");
+    expect(result).toEqual({ generated: 0, failed: 2, skipped: 1, reclaimed: 0 });
+    expect(openaiImageMocks.stageImage).toHaveBeenCalledTimes(1);
+    expect(dbMocks.markSceneFailed).toHaveBeenCalledWith("s_3", expect.stringMatching(/Clear the room first/));
+  });
+
+  it("regenerate the cleared room → the staged scene follows the new clear", async () => {
+    dbMocks.selectSceneById.mockResolvedValue({
+      ...cleared,
+      status: "generated",
+      imageUrl: "https://blob.vercel-storage.com/images/p_1/old-clear.jpg",
+    });
+    await applySceneAction("p_1", "s_2", "regenerate", { designDirection: "also remove the curtains" });
+    const call = openaiImageMocks.stageImage.mock.calls[0][0];
+    expect(call.prompt).toMatch(/^Remove ALL furniture/);
+    expect(call.prompt).toMatch(/also remove the curtains/);
+    expect(dbMocks.setSceneReferenceImage).toHaveBeenCalledWith("s_3", "https://blob.vercel-storage.com/images/p_1/render-1.jpg");
+  });
+
+  it("finalize sends before, cleared, and staged to the caption writer", async () => {
+    dbMocks.selectProjectById.mockResolvedValue({ ...unfurnishProject, status: "ready", niche: "n", concept: { workingTitle: "t", hook: "h", vibe: "v", notes: "", objectSet: [] } });
+    dbMocks.selectScenesByProject.mockResolvedValue([
+      original,
+      { ...cleared, status: "generated", imageUrl: "https://blob.example/cleared.jpg" },
+      { ...staged, status: "generated", imageUrl: "https://blob.example/staged.jpg", referenceImageUrl: "https://blob.example/cleared.jpg" },
+    ]);
+    dbMocks.tryAcquireFinalizationLock.mockResolvedValue(true);
+    stagingMocks.generateStagingMetadata.mockResolvedValue({
+      kind: "staging",
+      instagramCaption: "Cleared, then restaged.\nOak table, brass lamp.\nKeep it?",
+      instagramHashtags: ["a", "b", "c"],
+      tiktokCaption: "Cleared then restaged — keep it?",
+      tiktokHashtags: ["a", "b", "c"],
+      listingBlurb: "Bright room with oak floors. Photo virtually staged.",
+      clientNote: "Attached: original, cleared, and restaged files for the living room. Label the after as virtually staged.",
+      altText: "Living room staged with oak table",
+      disclosure: "Virtually staged.",
+    });
+    await finalizeProject("p_1");
+    expect(stagingMocks.generateStagingMetadata).toHaveBeenCalledWith(
+      expect.objectContaining({
+        beforeImageUrl: "https://blob.example/furnished.jpg",
+        clearedImageUrl: "https://blob.example/cleared.jpg",
+        afterImageUrl: "https://blob.example/staged.jpg",
+      })
+    );
   });
 });

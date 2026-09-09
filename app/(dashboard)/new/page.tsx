@@ -218,6 +218,8 @@ export default function NewProjectPage() {
   const [stagingStyleId, setStagingStyleId] = useState<string>("auto");
   const [stagingBrief, setStagingBrief] = useState("");
   const [stagingFurnitureUrls, setStagingFurnitureUrls] = useState<string[]>([]);
+  // Furnished upload → clear it first (extra gpt-image-2.5 pass), then stage.
+  const [stagingUnfurnish, setStagingUnfurnish] = useState(false);
 
   // Showcase-only state: the operator's own images (presentation order) and
   // the target deliverable shape.
@@ -309,6 +311,7 @@ export default function NewProjectPage() {
             brief: stagingBrief.trim() || undefined,
             furnitureReferenceUrls:
               stagingFurnitureUrls.length > 0 ? stagingFurnitureUrls : undefined,
+            unfurnish: stagingUnfurnish || undefined,
           }),
         });
         if (!res.ok) {
@@ -573,6 +576,8 @@ export default function NewProjectPage() {
                   onBriefChange={setStagingBrief}
                   furnitureUrls={stagingFurnitureUrls}
                   onFurnitureChange={setStagingFurnitureUrls}
+                  unfurnish={stagingUnfurnish}
+                  onUnfurnishChange={setStagingUnfurnish}
                 />
               ) : format === "before-after" ? (
                 <BeforeAfterStep
@@ -747,6 +752,15 @@ export default function NewProjectPage() {
                       onEdit={() => go(2)}
                     />
                     <ReviewRow
+                      label="Currently"
+                      value={
+                        stagingUnfurnish
+                          ? "Furnished — clear everything first, then restage (+1 render)"
+                          : "Empty — stage as-is"
+                      }
+                      onEdit={() => go(2)}
+                    />
+                    <ReviewRow
                       label="Room"
                       value={stagingRoomType === "auto" ? "Stager identifies it" : stagingRoomType}
                       onEdit={() => go(2)}
@@ -885,7 +899,12 @@ export default function NewProjectPage() {
                   value={
                     format === "showcase"
                       ? `~${formatCost(estimateShowcaseCopy(showcaseImageUrls.length))} now + animate on the next screen`
-                      : `~${formatCost(estimateProjectTotal(format, sceneCount))} all-in`
+                      : `~${formatCost(
+                          estimateProjectTotal(
+                            format,
+                            format === "staging" && stagingUnfurnish ? 3 : sceneCount
+                          )
+                        )} all-in`
                   }
                 />
                 {format !== "before-after" && format !== "staging" && operatorNotes.trim() && (
@@ -1966,6 +1985,8 @@ function StagingStep({
   onBriefChange,
   furnitureUrls,
   onFurnitureChange,
+  unfurnish,
+  onUnfurnishChange,
 }: {
   beforeImageUrl: string | null;
   beforeAspect: AspectRatio | null;
@@ -1978,6 +1999,8 @@ function StagingStep({
   onBriefChange: (s: string) => void;
   furnitureUrls: string[];
   onFurnitureChange: (urls: string[]) => void;
+  unfurnish: boolean;
+  onUnfurnishChange: (v: boolean) => void;
 }) {
   const [uploading, setUploading] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -2054,6 +2077,38 @@ function StagingStep({
             </div>
           </div>
         )}
+      </div>
+
+      <div className="flex flex-col gap-2">
+        <span className="text-[10px] uppercase tracking-[0.22em] text-muted-foreground">
+          The photo is
+        </span>
+        <div className="grid grid-cols-2 gap-2">
+          <button
+            type="button"
+            onClick={() => onUnfurnishChange(false)}
+            aria-pressed={!unfurnish}
+            className={`rounded-md border px-3 py-2.5 text-left transition-colors ${
+              !unfurnish ? "border-foreground" : "hover:border-foreground/40"
+            }`}
+          >
+            <div className="text-sm tracking-tight">Already empty</div>
+            <div className="text-[11px] text-muted-foreground tracking-tight">Stage it as-is</div>
+          </button>
+          <button
+            type="button"
+            onClick={() => onUnfurnishChange(true)}
+            aria-pressed={unfurnish}
+            className={`rounded-md border px-3 py-2.5 text-left transition-colors ${
+              unfurnish ? "border-foreground" : "hover:border-foreground/40"
+            }`}
+          >
+            <div className="text-sm tracking-tight">Furnished — unfurnish first</div>
+            <div className="text-[11px] text-muted-foreground tracking-tight">
+              Clears every piece, reconstructs floors and walls, then restages. +1 render.
+            </div>
+          </button>
+        </div>
       </div>
 
       <div className="flex flex-col gap-2">

@@ -27,6 +27,8 @@ const Body = z.object({
   styleId: StagingStyleIdSchema.optional(),
   brief: z.string().max(1000).optional(),
   furnitureReferenceUrls: z.array(z.string().url()).max(STAGING_MAX_FURNITURE_REFS).optional(),
+  /** The photo is furnished — clear it first, then stage. */
+  unfurnish: z.boolean().optional(),
 });
 
 /**
@@ -56,7 +58,7 @@ export async function POST(req: Request): Promise<Response> {
       // Whole-package estimate up front: the brief call happens in this
       // request, the render right after it in the background.
       try {
-        await assertWithinDailyBudget(estimateProjectTotal("staging", 2));
+        await assertWithinDailyBudget(estimateProjectTotal("staging", parsed.data.unfurnish ? 3 : 2));
       } catch (budgetErr) {
         if (budgetErr instanceof BudgetExceededError) {
           return NextResponse.json({ error: budgetErr.message }, { status: 402 });

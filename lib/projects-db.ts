@@ -353,6 +353,18 @@ export async function setProjectSceneReferences(
     );
 }
 
+/** Point ONE scene at a new reference image (staging: the staged scene
+ *  follows the cleared room's latest render). Overwrites unconditionally. */
+export async function setSceneReferenceImage(
+  sceneId: string,
+  referenceImageUrl: string
+): Promise<void> {
+  await getDb()
+    .update(scenes)
+    .set({ referenceImageUrl, updatedAt: new Date() })
+    .where(eq(scenes.id, sceneId));
+}
+
 /** Persist the generated YouTube thumbnail (gpt-image-2, 1280x720) for a
  *  style-explorer project. Regenerating overwrites. */
 export async function setProjectThumbnail(id: string, thumbnailUrl: string): Promise<void> {

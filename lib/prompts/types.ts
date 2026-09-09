@@ -199,4 +199,15 @@ export type StagingBrief = {
   roomRead: string;
   /** How many client-furniture reference photos were attached. */
   furnitureReferenceCount: number;
+  /** The upload was FURNISHED: scene 2 is the cleared (unfurnished) room,
+   *  scene 3 the staged after. Undefined/false = upload was already empty. */
+  unfurnish?: boolean;
 };
+
+/** Scene roles inside a staging project, derived from order + unfurnish. */
+export type StagingRole = "original" | "cleared" | "staged";
+export function stagingRoleFor(unfurnish: boolean | undefined, order: number): StagingRole {
+  if (order === 1) return "original";
+  if (unfurnish && order === 2) return "cleared";
+  return "staged";
+}

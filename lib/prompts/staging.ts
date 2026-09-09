@@ -58,6 +58,14 @@ export function buildStagingEditPrompt(opts: {
   ].join("");
 }
 
+/**
+ * The unfurnish edit. Everything freestanding goes; the architecture is
+ * reconstructed where things were. This is the "restage" prep: the output
+ * becomes the empty room the staging pass furnishes.
+ */
+export const UNFURNISH_PROMPT =
+  "Remove ALL furniture and decor from this real-estate photograph so the room is completely empty and ready to be staged from scratch. Take out every freestanding and movable item: sofas, chairs, tables, beds, dressers, desks, shelving units, rugs, lamps, wall art, mirrors, TVs and wall-mounted screens, curtains and drapes that hang on rods, plants, cushions, boxes, clutter, cables, and every personal item. KEEP everything that is part of the property: walls and their paint colour, flooring, ceiling, trim and baseboards, doors, windows and blinds or shutters that are fitted to the window, built-in cabinetry and shelving, kitchen and bathroom fixtures, fireplace, radiators, vents, outlets, switches, ceiling and wall light fixtures. Keep the EXACT same photograph: identical camera position, lens, framing, crop, and perspective; identical daylight, shadows from the windows, and colour. Where an item is removed, reconstruct the floor, wall, baseboard, and any partially hidden window or door behind it so they continue seamlessly, matching the visible material, grain direction, and colour — no smudges, no ghost outlines, no invented features. The result must look like an honest listing photo of the same vacant room. No people, no text, no watermarks.";
+
 /** Deterministic MLS disclosure — the line every staged listing photo needs. */
 export const STAGING_DISCLOSURE =
   "Virtually staged. Furniture and decor shown are digital renderings for illustration and do not convey with the property.";
@@ -88,6 +96,9 @@ export type StagingBriefInput = {
   /** Free-text direction: target buyer, must-haves, palette, "keep the
    *  desk on the window wall", etc. */
   brief?: string;
+  /** The photo is currently FURNISHED and will be emptied before staging —
+   *  read the architecture, ignore the existing furniture. */
+  furnished?: boolean;
 };
 
 export function buildStagingBriefSystem(): string {
@@ -125,7 +136,9 @@ export function buildStagingBriefUser(input: StagingBriefInput): string {
   const refs = input.furnitureReferenceUrls ?? [];
   const style = getStagingStyle(input.styleId);
   const lines: string[] = [
-    "Plan the virtual staging for the empty room photographed in image 1.",
+    input.furnished
+      ? "Plan the virtual staging for the room photographed in image 1. NOTE: the photo is currently FURNISHED. Every freestanding item in it will be digitally removed BEFORE your plan is rendered, so read ONLY the architecture — floors, walls, ceiling, windows, doors, built-ins, light — and plan the furniture from scratch as if the room were empty. Do not describe, keep, or reuse the existing furniture in roomRead or the plan (the roomRead should describe the room as it will look once cleared)."
+      : "Plan the virtual staging for the empty room photographed in image 1.",
     "",
     input.roomType && input.roomType !== "auto"
       ? `Room type (operator's choice — stage it as this): ${input.roomType}`
@@ -245,6 +258,8 @@ export async function generateStagingBrief(
 
 export type StagingMetadataInput = {
   beforeImageUrl: string;
+  /** Unfurnish projects: the cleared room between before and after. */
+  clearedImageUrl?: string | null;
   afterImageUrl: string;
   roomType: string;
   styleName: string;
@@ -266,7 +281,7 @@ export function buildStagingMetadataSystem(appNames: string[]): string {
   const cta = app
     ? `The operator runs ${app}, an AI design app. The Instagram caption may close with ONE soft, value-led invitation to try it, using the literal placeholder "{APP_LINK}" exactly once at the very end (the operator substitutes the real URL). Never open with it, never make it salesy. TikTok, the listing blurb, and the client note never mention the app.`
     : `No app CTA — write copy that stands on its own. Never write "{APP_LINK}".`;
-  return `You write the copy that ships with a virtual-staging before/after for a real-estate listing. You can SEE both images in this message: image 1 is the empty room as photographed, image 2 is the same room virtually staged. Everything you write must be about THESE two images — the actual flooring, the actual light, the actual pieces placed — so that nothing you write could be pasted onto a different room.
+  return `You write the copy that ships with a virtual-staging before/after for a real-estate listing. You can SEE the images in this message: image 1 is the room as the client photographed it (if it was furnished, image 2 is the same room digitally CLEARED of all furniture and the LAST image is the restaged result; if it was already empty there are just two images — the empty room and the staged room). Everything you write must be about THESE images — the actual flooring, the actual light, the actual pieces placed — so that nothing you write could be pasted onto a different room.
 
 Before writing, look at both: what was the room's problem when empty (scale hard to read, no purpose, cold), and what did the staging do (named pieces, where they went, how the room now reads)? Reference at least three specific things visible in the after (a piece, its material or colour, its placement) and at least one true thing about the original room (floor, light, window, proportions).
 
@@ -290,6 +305,9 @@ Fields:
 
 export function buildStagingMetadataUser(input: StagingMetadataInput): string {
   return [
+    input.clearedImageUrl
+      ? "This was a RESTAGE: image 1 is the client's furnished room, image 2 is the room digitally cleared, image 3 is the virtual restaging. The captions may lean on the clear-then-restage angle (the old furniture fought the room; cleared, then staged for the buyer) — but stay specific to what is in the images."
+      : "",
     `Room: ${input.roomType}`,
     `Staging style: ${input.styleName}`,
     input.hook ? `Stager's hook: ${input.hook}` : "",
@@ -357,7 +375,11 @@ export async function generateStagingMetadata(
   const raw = await generateJSON<Record<string, unknown>>({
     system: buildStagingMetadataSystem(input.appNames),
     user: buildStagingMetadataUser(input),
-    images: [input.beforeImageUrl, input.afterImageUrl],
+    images: [
+      input.beforeImageUrl,
+      ...(input.clearedImageUrl ? [input.clearedImageUrl] : []),
+      input.afterImageUrl,
+    ],
     schema: STAGING_METADATA_TOOL_SCHEMA as unknown as Record<string, unknown>,
     toolName: "submit_staging_metadata",
     maxTokens: 3000,

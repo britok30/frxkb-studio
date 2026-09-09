@@ -302,11 +302,11 @@ export function estimateAnimateBatch(
  *  and the cover is just the after image (no fal call). */
 export function estimateProjectTotal(format: Format, sceneCount: number): number {
   if (format === "staging") {
-    // The upload (free) + one gpt-image-2.5 staged after + the two vision
-    // GPT calls (brief at creation, captions at finalize). sceneCount is the
-    // 2-scene default; furniture refs add a little input on the brief call.
-    void sceneCount;
-    return estimateStagingBrief(0) + estimateStagingImages(1) + estimateStagingMetadata();
+    // The upload (free) + one gpt-image-2.5 edit per generated scene (the
+    // staged after; plus the cleared room when unfurnishing → sceneCount 3)
+    // + the two vision GPT calls (brief at creation, captions at finalize).
+    const edits = Math.max(1, sceneCount - 1);
+    return estimateStagingBrief(0) + estimateStagingImages(edits) + estimateStagingMetadata();
   }
   if (format === "before-after") {
     // Stills-only since 2026-07-24: the upload (free) + 9 AI "after"

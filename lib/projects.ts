@@ -7,6 +7,7 @@ import {
   generateStagingBrief,
   generateStagingMetadata,
   STAGING_LOCKED_HASHTAGS,
+  UNFURNISH_PROMPT,
 } from "@/lib/prompts/staging";
 import { stageImage } from "@/lib/openai-image";
 import { applyLookToPrompt, getLook, type LookId } from "@/lib/prompts/looks";
@@ -24,6 +25,7 @@ import {
   STYLE_EXPLORER_HOLD_SEC,
   STAGING_MAX_FURNITURE_REFS,
   getStagingStyle,
+  stagingRoleFor,
   type Format,
   type AspectRatio,
   type PropertyType,
@@ -112,6 +114,7 @@ import {
   selectScenesByProject,
   setProjectSceneReferences,
   setSceneMotionPreset,
+  setSceneReferenceImage,
   tryAcquireFinalizationLock,
   tryAcquireGenerationLock,
   updateProjectStatus,
@@ -461,6 +464,9 @@ export type CreateStagingInput = {
   brief?: string;
   /** Client furniture photos to place (public Blob URLs, ≤8). Optional. */
   furnitureReferenceUrls?: string[];
+  /** The photo is furnished: clear it first (extra gpt-image-2.5 pass), then
+   *  stage the cleared room. Scenes become original → cleared → staged. */
+  unfurnish?: boolean;
 };
 
 export async function createStagingProject(input: CreateStagingInput): Promise<ProjectWithScenes> {
@@ -474,6 +480,7 @@ export async function createStagingProject(input: CreateStagingInput): Promise<P
   const projectId = nanoid(12);
   const furnitureRefs = (input.furnitureReferenceUrls ?? []).slice(0, STAGING_MAX_FURNITURE_REFS);
   const brief = input.brief?.trim() || undefined;
+  const unfurnish = !!input.unfurnish;
 
   // ONE vision call before any DB write (a failure leaves no orphan row):
   // GPT-6 sees the room (+ furniture refs), returns the room read, the
@@ -484,6 +491,7 @@ export async function createStagingProject(input: CreateStagingInput): Promise<P
     roomType: input.roomType,
     styleId: input.styleId,
     brief,
+    furnished: unfurnish,
   });
 
   const style = getStagingStyle(input.styleId);
@@ -508,6 +516,7 @@ export async function createStagingProject(input: CreateStagingInput): Promise<P
       brief: brief ?? null,
       roomRead: plan.roomRead,
       furnitureReferenceCount: furnitureRefs.length,
+      unfurnish,
     },
     concept: {
       workingTitle: plan.workingTitle,
@@ -528,29 +537,52 @@ export async function createStagingProject(input: CreateStagingInput): Promise<P
   // edit path. scene.prompt is the stager's PLAN; the preservation lock is
   // wrapped around it at render time (buildStagingEditPrompt) so the card
   // shows a readable plan and regen directions layer cleanly.
+  // Unfurnish: a "cleared" scene sits between them, pinned to the upload;
+  // the staged scene's reference is set to the cleared render once it
+  // exists (generateAllImages sequences the two).
   const insertedScenes = await insertScenes([
     {
       id: nanoid(12),
       projectId,
       order: 1,
-      prompt: `(uploaded before) ${plan.roomType}, empty`,
+      prompt: unfurnish
+        ? `(uploaded before) ${plan.roomType}, furnished`
+        : `(uploaded before) ${plan.roomType}, empty`,
       styleName: "Before",
-      styleSubtitle: `${plan.roomType} as photographed`,
+      styleSubtitle: unfurnish
+        ? `${plan.roomType} as photographed — furnished`
+        : `${plan.roomType} as photographed`,
       durationSec: 0,
       status: "generated",
       imageUrl: input.beforeImageUrl,
       referenceImageUrl: null,
     },
+    ...(unfurnish
+      ? [
+          {
+            id: nanoid(12),
+            projectId,
+            order: 2,
+            prompt: UNFURNISH_PROMPT,
+            styleName: "Cleared",
+            styleSubtitle: `${plan.roomType} emptied — ready to restage`,
+            durationSec: 0,
+            status: "pending" as const,
+            referenceImageUrl: input.beforeImageUrl,
+          },
+        ]
+      : []),
     {
       id: nanoid(12),
       projectId,
-      order: 2,
+      order: unfurnish ? 3 : 2,
       prompt: plan.stagingPrompt,
       styleName: plan.styleName === style.name || style.id === "auto" ? plan.styleName : style.name,
       styleSubtitle: plan.styleSubtitle,
       durationSec: 0,
       status: "pending" as const,
-      referenceImageUrl: input.beforeImageUrl,
+      // Pinned to the cleared render once it exists; null until then.
+      referenceImageUrl: unfurnish ? null : input.beforeImageUrl,
     },
   ]);
 
@@ -575,18 +607,28 @@ async function renderStagingScene(
   scene: Scene,
   direction?: string
 ): Promise<string> {
-  if (!scene.referenceImageUrl) {
+  const role = stagingRoleFor(project.staging?.unfurnish, scene.order);
+  if (role === "original") {
     throw new Error(
       "The before photo is your upload — it can't be regenerated. Start a new staging to use a different photo."
     );
   }
+  if (!scene.referenceImageUrl) {
+    throw new Error("Clear the room first — the staged after renders from the cleared photo.");
+  }
   const aspectRatio = project.aspectRatio ?? defaultsForFormat(project.format).aspectRatio;
-  const furnitureRefs = project.referenceImageUrls ?? [];
-  const prompt = buildStagingEditPrompt({
-    plan: scene.prompt,
-    furnitureReferenceCount: furnitureRefs.length,
-    direction,
-  });
+  // The clear pass carries no furniture refs and no plan — just the
+  // deterministic unfurnish instruction (+ any operator direction).
+  const furnitureRefs = role === "cleared" ? [] : (project.referenceImageUrls ?? []);
+  const trimmedDirection = direction?.trim();
+  const prompt =
+    role === "cleared"
+      ? `${UNFURNISH_PROMPT}${trimmedDirection ? ` Additional direction from the operator (never overrides the preservation rules): ${trimmedDirection}.` : ""}`
+      : buildStagingEditPrompt({
+          plan: scene.prompt,
+          furnitureReferenceCount: furnitureRefs.length,
+          direction,
+        });
 
   await markSceneGenerating(scene.id);
   try {
@@ -629,12 +671,23 @@ async function renderStagingScene(
       amountUsd: GPT_IMAGE_STAGING_USD,
       meta: {
         sceneOrder: scene.order,
+        role,
         model: result.model,
         size: result.size,
         furnitureRefs: furnitureRefs.length,
         regen: !!scene.imageUrl,
       },
     });
+    // A fresh clear re-anchors the staged scene: its next render (batch or
+    // regen) builds on THIS cleared photo. The existing staged image stays
+    // until the operator re-renders it.
+    if (role === "cleared") {
+      const siblings = await selectScenesByProject(project.id);
+      const staged = siblings.find(
+        (s) => stagingRoleFor(project.staging?.unfurnish, s.order) === "staged"
+      );
+      if (staged) await setSceneReferenceImage(staged.id, stored.url);
+    }
     return stored.url;
   } catch (err) {
     const msg = err instanceof Error ? err.message : "unknown error";
@@ -1045,7 +1098,7 @@ export async function generateAllImages(
     const targets = allScenes.filter(
       (s) =>
         (opts.force ? true : s.status === "pending" || s.status === "rejected") &&
-        !(isUploadAnchored && !s.referenceImageUrl)
+        !(isUploadAnchored && s.order === 1)
     );
 
     // Budget gate BEFORE any vendor spend — a 120-scene batch at hero
@@ -1067,6 +1120,41 @@ export async function generateAllImages(
     // conditioned on them; the deterministic suffix tells nano the refs are
     // material/palette/mood guidance while the prompt supplies the room.
     const moodboardRefs = project.referenceImageUrls ?? [];
+
+    // ── Unfurnish staging: clear, THEN stage the cleared photo ──────────
+    // Strictly sequential — the staged scene's reference is the cleared
+    // render, which doesn't exist until the first pass lands.
+    if (project.format === "staging" && project.staging?.unfurnish) {
+      let generated = 0;
+      let failed = 0;
+      const cleared = allScenes.find((s) => stagingRoleFor(true, s.order) === "cleared");
+      const staged = allScenes.find((s) => stagingRoleFor(true, s.order) === "staged");
+      let clearedUrl = cleared?.imageUrl ?? null;
+      if (cleared && targets.some((t) => t.id === cleared.id)) {
+        try {
+          clearedUrl = await renderStagingScene(project, cleared);
+          generated++;
+        } catch {
+          failed++;
+          clearedUrl = null;
+        }
+      }
+      if (staged && targets.some((t) => t.id === staged.id)) {
+        if (!clearedUrl) {
+          await markSceneFailed(staged.id, "Clear the room first — the staged after renders from the cleared photo.");
+          failed++;
+        } else {
+          try {
+            await renderStagingScene(project, { ...staged, referenceImageUrl: clearedUrl });
+            generated++;
+          } catch {
+            failed++;
+          }
+        }
+      }
+      await updateProjectStatus(projectId, "ready");
+      return { generated, failed, skipped: allScenes.length - targets.length, reclaimed };
+    }
 
     const renderScene = async (scene: Scene, referenceUrl: string | null) => {
       // Staging renders through OpenAI's edit endpoint, not fal — the
@@ -2661,20 +2749,21 @@ async function finalizeStyleExplorer(project: Project, scenes: Scene[]): Promise
  * lock/policy/CTA post-processing as the social formats.
  */
 async function finalizeStaging(project: Project, scenes: Scene[]): Promise<FinalizeResult> {
+  const staging = project.staging;
+  if (!staging) throw new Error("Project has no concept brief");
   const ordered = [...scenes].sort((a, b) => a.order - b.order);
-  const before = ordered.find((s) => !s.referenceImageUrl && !!s.imageUrl);
-  const after = ordered.find(
-    (s) =>
-      !!s.referenceImageUrl &&
-      !!s.imageUrl &&
-      (s.status === "generated" || s.status === "approved")
-  );
+  const roleOf = (s: Scene) => stagingRoleFor(staging.unfurnish, s.order);
+  const isDone = (s: Scene) => !!s.imageUrl && (s.status === "generated" || s.status === "approved");
+  const before = ordered.find((s) => roleOf(s) === "original" && !!s.imageUrl);
+  const cleared = ordered.find((s) => roleOf(s) === "cleared" && isDone(s));
+  const after = ordered.find((s) => roleOf(s) === "staged" && isDone(s));
   if (!before?.imageUrl) throw new Error("No generated scenes to finalize. The before photo is missing.");
+  if (staging.unfurnish && !cleared?.imageUrl) {
+    throw new Error("Cannot finalize: the cleared room hasn't been generated yet. Generate it first.");
+  }
   if (!after?.imageUrl) {
     throw new Error("Cannot finalize: the staged after hasn't been generated yet. Generate it first.");
   }
-  const staging = project.staging;
-  if (!staging) throw new Error("Project has no concept brief");
 
   const acquired = await tryAcquireFinalizationLock(project.id);
   if (!acquired) throw new ProjectBusyError(project.id, "finalizing");
@@ -2683,6 +2772,7 @@ async function finalizeStaging(project: Project, scenes: Scene[]): Promise<Final
     const op = currentOperator();
     const raw = await generateStagingMetadata({
       beforeImageUrl: before.imageUrl,
+      clearedImageUrl: cleared?.imageUrl ?? null,
       afterImageUrl: after.imageUrl,
       roomType: staging.roomType,
       styleName: after.styleName ?? staging.styleName,
