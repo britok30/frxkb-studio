@@ -159,6 +159,11 @@ export default function NewProjectPage() {
   ]);
   const [propertyType, setPropertyType] = useState<PropertyType>("residential");
 
+  // Staging: which app the package's captions promote. Offered only when the operator
+  // has more than one eligible app (britok: AI Virtual Stage / ArchitectGPT).
+  const [stagingCtaApps, setStagingCtaApps] = useState<string[]>([]);
+  const [stagingCtaApp, setStagingCtaApp] = useState<string | null>(null);
+
   useEffect(() => {
     void (async () => {
       try {
@@ -225,10 +230,6 @@ export default function NewProjectPage() {
   const [stagingFurnitureUrls, setStagingFurnitureUrls] = useState<string[]>([]);
   // Furnished upload → clear it first (extra gpt-image-2.5 pass), then stage.
   const [stagingUnfurnish, setStagingUnfurnish] = useState(false);
-  // Which app the package's captions promote. Offered only when the operator
-  // has more than one eligible app (britok: AI Virtual Stage / ArchitectGPT).
-  const [stagingCtaApps, setStagingCtaApps] = useState<string[]>([]);
-  const [stagingCtaApp, setStagingCtaApp] = useState<string | null>(null);
 
   // Showcase-only state: the operator's own images (presentation order) and
   // the target deliverable shape.
